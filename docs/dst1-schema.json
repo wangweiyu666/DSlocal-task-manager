@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-task-manager.invalid/schema/dst1-v1.json",
+  "title": "DST1 v1 task batch",
+  "description": "Canonical JSON payload transported inside a DST1 envelope. Cross-record uniqueness, ordering, NFC, compressed size, and implementation capability checks are specified in docs/dst1-test-vectors.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "b"],
+  "properties": {
+    "v": { "const": 1 },
+    "b": { "$ref": "#/$defs/id" },
+    "d": { "$ref": "#/$defs/text50Empty" },
+    "m": { "$ref": "#/$defs/text500" },
+    "g": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/group" }
+    },
+    "t": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/task" }
+    },
+    "z": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    }
+  },
+  "anyOf": [
+    { "required": ["d"] },
+    { "required": ["g"] },
+    { "required": ["t"] },
+    { "required": ["z"] }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16}$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "dateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+    },
+    "text50": { "type": "string", "minLength": 1, "maxLength": 50 },
+    "text50Empty": { "type": "string", "maxLength": 50 },
+    "text100": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "text500": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "text500Empty": { "type": "string", "maxLength": 500 },
+    "text2000Empty": { "type": "string", "maxLength": 2000 },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["i"],
+      "properties": {
+        "i": { "$ref": "#/$defs/id" },
+        "n": { "$ref": "#/$defs/text50" },
+        "cm": { "$ref": "#/$defs/text500Empty" },
+        "im": { "$ref": "#/$defs/text500Empty" },
+        "t": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/task" }
+        }
+      },
+      "anyOf": [
+        { "required": ["n"] },
+        { "required": ["cm"] },
+        { "required": ["im"] },
+        { "required": ["t"] }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "r"],
+      "properties": {
+        "n": { "$ref": "#/$defs/text100" },
+        "r": { "type": "integer", "enum": [0, 1] }
+      }
+    },
+    "recurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["f"],
+      "properties": {
+        "f": { "type": "integer", "enum": [1, 2] },
+        "s": { "$ref": "#/$defs/date" },
+        "e": { "$ref": "#/$defs/date" },
+        "c": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "w": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 7 }
+        },
+        "t": {
+          "oneOf": [
+            { "$ref": "#/$defs/time" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "not": { "required": ["e", "c"] },
+      "allOf": [
+        {
+          "if": { "properties": { "f": { "const": 1 } }, "required": ["f"] },
+          "then": { "not": { "required": ["w"] } }
+        },
+        {
+          "if": { "properties": { "f": { "const": 2 } }, "required": ["f"] },
+          "then": { "required": ["w"] }
+        }
+      ]
+    },
+    "reminders": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 0, "maximum": 10080 }
+    },
+    "execution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["k", "a", "v"],
+          "properties": {
+            "k": { "const": 1 },
+            "a": { "type": "integer", "enum": [1, 2] },
+            "v": { "type": "integer", "minimum": 1, "maximum": 999 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["k", "v"],
+          "properties": {
+            "k": { "const": 2 },
+            "v": { "type": "integer", "minimum": 1, "maximum": 3600 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["k"],
+          "properties": {
+            "k": { "const": 3 }
+          }
+        }
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["i", "n", "r"],
+      "properties": {
+        "i": { "$ref": "#/$defs/id" },
+        "n": { "$ref": "#/$defs/text100" },
+        "r": { "type": "integer", "enum": [0, 1] },
+        "d": { "$ref": "#/$defs/text2000Empty" },
+        "y": { "$ref": "#/$defs/date" },
+        "l": {
+          "oneOf": [
+            { "$ref": "#/$defs/date" },
+            { "$ref": "#/$defs/dateTime" },
+            { "type": "null" }
+          ]
+        },
+        "p": { "type": "integer", "minimum": 0, "maximum": 9999 },
+        "o": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "s": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/step" }
+        },
+        "x": { "$ref": "#/$defs/recurrence" },
+        "m": { "$ref": "#/$defs/text500Empty" },
+        "h": { "$ref": "#/$defs/reminders" },
+        "u": { "$ref": "#/$defs/execution" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "l": { "type": "null" } }, "required": ["l"] },
+          "then": { "not": { "required": ["h"] } }
+        }
+      ]
+    }
+  }
+}

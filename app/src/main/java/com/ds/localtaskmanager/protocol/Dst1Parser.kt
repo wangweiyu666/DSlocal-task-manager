@@ -17,8 +17,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 
-class Dst1ValidationException(message: String) : IllegalArgumentException(message)
-
 class Dst1Parser {
     private val json = Json { isLenient = false }
     private val idPattern = Regex("[A-Za-z0-9_-]{16}")
@@ -26,50 +24,72 @@ class Dst1Parser {
         .withResolverStyle(ResolverStyle.STRICT)
     private val dateTimeFormatter = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm")
         .withResolverStyle(ResolverStyle.STRICT)
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+        .withResolverStyle(ResolverStyle.STRICT)
 
     fun parse(jsonText: String, importedAt: LocalDateTime): DstBatch {
         val root = try {
             json.parseToJsonElement(jsonText) as? JsonObject
-                ?: invalid("顶层 JSON 必须是对象")
+                ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, "$", "顶层 JSON 必须是对象")
         } catch (error: Dst1ValidationException) {
             throw error
         } catch (error: Exception) {
-            throw Dst1ValidationException("JSON 解析失败：${error.message}")
+            throw Dst1ValidationException(
+                Dst1ErrorCode.INVALID_JSON,
+                "$",
+                "JSON 解析失败：${error.message}",
+            )
         }
         root.requireKeys(TOP_KEYS, "顶层")
 
         val version = root.requiredInt("v", "顶层")
-        if (version != 1) invalid("不支持的 JSON 协议版本：$version")
+        if (version != 1) {
+            invalid(Dst1ErrorCode.INVALID_VALUE, "v", "不支持的 JSON 协议版本：$version")
+        }
         val batchId = root.requiredId("b", "顶层")
         val domName = root.optionalTextField("d", 50, allowEmpty = true, context = "顶层")
         val note = root.optionalText("m", 500, allowEmpty = false, context = "顶层")
-        val groups = root.optionalArray("g", "顶层")
+        val groups = root.optionalNonEmptyArray("g", "顶层")
             ?.mapIndexed { index, element -> parseGroup(element, index, importedAt) }
             ?: emptyList()
-        if (groups.size > 50) invalid("积分组条目不能超过 50 个")
-        val ungrouped = root.optionalArray("t", "顶层")
+        if (groups.size > 50) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "g", "积分组条目不能超过 50 个")
+        }
+        val ungrouped = root.optionalNonEmptyArray("t", "顶层")
             ?.mapIndexed { index, element -> parseTask(element, "t[$index]", null, importedAt) }
             ?: emptyList()
-        val cancelled = root.optionalArray("z", "顶层")
+        val cancelled = root.optionalNonEmptyArray("z", "顶层")
             ?.mapIndexed { index, element -> element.asId("z[$index]") }
             ?: emptyList()
-        if (cancelled.size > 100) invalid("撤销任务 ID 不能超过 100 个")
+        if (cancelled.size > 100) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "z", "撤销任务 ID 不能超过 100 个")
+        }
 
         if (groups.map { it.groupId }.toSet().size != groups.size) {
-            invalid("同一批次不能重复出现 groupId")
+            invalid(Dst1ErrorCode.DUPLICATE_VALUE, "g", "同一批次不能重复出现 groupId")
         }
         val tasks = groups.flatMap { it.tasks } + ungrouped
-        if (tasks.size > 100) invalid("任务总数不能超过 100 个")
-        if (tasks.map { it.taskId }.toSet().size != tasks.size) {
-            invalid("同一批次不能重复出现 taskId")
+        if (tasks.size > 100) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "t", "任务总数不能超过 100 个")
         }
-        if (cancelled.toSet().size != cancelled.size) invalid("z 中不能包含重复 taskId")
+        if (tasks.map { it.taskId }.toSet().size != tasks.size) {
+            invalid(Dst1ErrorCode.DUPLICATE_VALUE, "t", "同一批次不能重复出现 taskId")
+        }
+        if (cancelled.toSet().size != cancelled.size) {
+            invalid(Dst1ErrorCode.DUPLICATE_VALUE, "z", "z 中不能包含重复 taskId")
+        }
         if (tasks.any { it.taskId in cancelled }) {
-            invalid("同一 taskId 不能同时出现在任务列表和 z 中")
+            invalid(
+                Dst1ErrorCode.CONFLICTING_FIELDS,
+                "z",
+                "同一 taskId 不能同时出现在任务列表和 z 中",
+            )
         }
         val hasOperation = root.containsKey("d") || groups.isNotEmpty() ||
             ungrouped.isNotEmpty() || cancelled.isNotEmpty()
-        if (!hasOperation) invalid("批次不包含实际操作")
+        if (!hasOperation) {
+            invalid(Dst1ErrorCode.EMPTY_OPERATION, "$", "批次不包含实际操作")
+        }
 
         return DstBatch(version, batchId, domName, note, groups, ungrouped, cancelled)
     }
@@ -86,7 +106,7 @@ class Dst1Parser {
         val name = objectValue.optionalTextField("n", 50, allowEmpty = false, context)
         val completeMessage = objectValue.optionalTextField("cm", 500, allowEmpty = true, context)
         val incompleteMessage = objectValue.optionalTextField("im", 500, allowEmpty = true, context)
-        val tasks = objectValue.optionalArray("t", context)
+        val tasks = objectValue.optionalNonEmptyArray("t", context)
             ?.mapIndexed { taskIndex, task ->
                 parseTask(task, "$context.t[$taskIndex]", groupId, importedAt)
             }
@@ -94,7 +114,7 @@ class Dst1Parser {
         if (name is Field.Missing && completeMessage is Field.Missing &&
             incompleteMessage is Field.Missing && tasks.isEmpty()
         ) {
-            invalid("$context 没有实际更新内容")
+            invalid(Dst1ErrorCode.EMPTY_OPERATION, context, "$context 没有实际更新内容")
         }
         return DstGroupPatch(groupId, name, completeMessage, incompleteMessage, tasks)
     }
@@ -107,26 +127,31 @@ class Dst1Parser {
     ): DstTask {
         val task = element.asObject(context)
         task.requireKeys(TASK_KEYS, context)
-        listOf("x", "h", "u").firstOrNull(task::containsKey)?.let {
-            invalid("$context.$it 属于当前测试版本尚未实现的功能")
-        }
         val taskId = task.requiredId("i", context)
         val name = task.requiredText("n", 100, context)
         val requiredFlag = task.requiredInt("r", context)
-        if (requiredFlag !in 0..1) invalid("$context.r 只能是 0 或 1")
+        if (requiredFlag !in 0..1) {
+            invalid(Dst1ErrorCode.INVALID_VALUE, "$context.r", "$context.r 只能是 0 或 1")
+        }
         val description = task.optionalText("d", 2_000, allowEmpty = true, context) ?: ""
         val explicitTaskDate = task.optionalDate("y", context)
         val deadline = parseDeadline(task, explicitTaskDate, importedAt, context)
         val taskDate = explicitTaskDate ?: deriveTaskDate(task["l"], deadline, importedAt)
         val points = task.optionalInt("p", context) ?: 0
-        if (points !in 0..999) invalid("$context.p 必须在 0..999")
+        if (points !in 0..9_999) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.p", "$context.p 必须在 0..9999")
+        }
         val sortOrder = task.optionalInt("o", context)
-        val steps = task.optionalArray("s", context)
+        val steps = task.optionalNonEmptyArray("s", context)
             ?.mapIndexed { stepIndex, step -> parseStep(step, "$context.s[$stepIndex]") }
             ?: emptyList()
-        if (steps.size > 50) invalid("$context.s 不能超过 50 个步骤")
+        if (steps.size > 50) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.s", "$context.s 不能超过 50 个步骤")
+        }
         val completionMessage = task.optionalText("m", 500, allowEmpty = true, context)
             ?: "任务已完成"
+
+        validateFutureCapabilities(task, context)
         return DstTask(
             taskId = taskId,
             name = name,
@@ -146,7 +171,9 @@ class Dst1Parser {
         val step = element.asObject(context)
         step.requireKeys(STEP_KEYS, context)
         val requiredFlag = step.requiredInt("r", context)
-        if (requiredFlag !in 0..1) invalid("$context.r 只能是 0 或 1")
+        if (requiredFlag !in 0..1) {
+            invalid(Dst1ErrorCode.INVALID_VALUE, "$context.r", "$context.r 只能是 0 或 1")
+        }
         return DstStep(step.requiredText("n", 100, context), requiredFlag == 1)
     }
 
@@ -181,23 +208,154 @@ class Dst1Parser {
         else -> TaskDay.from(importedAt)
     }
 
+    private fun validateFutureCapabilities(task: JsonObject, context: String) {
+        task["x"]?.let { validateRecurrence(it, "$context.x") }
+        task["h"]?.let { validateReminders(it, task["l"], "$context.h") }
+        task["u"]?.let { validateExecution(it, "$context.u") }
+        listOf("x", "h", "u").firstOrNull(task::containsKey)?.let { key ->
+            invalid(
+                Dst1ErrorCode.CAPABILITY_NOT_IMPLEMENTED,
+                "$context.$key",
+                "$context.$key 属于当前测试版本尚未实现的功能",
+            )
+        }
+    }
+
+    private fun validateRecurrence(element: JsonElement, context: String) {
+        val recurrence = element.asObject(context)
+        recurrence.requireKeys(RECURRENCE_KEYS, context)
+        val frequency = recurrence.requiredInt("f", context)
+        if (frequency !in 1..2) {
+            invalid(Dst1ErrorCode.INVALID_VALUE, "$context.f", "$context.f 只能是 1 或 2")
+        }
+        recurrence.optionalDate("s", context)
+        recurrence.optionalDate("e", context)
+        val count = recurrence.optionalInt("c", context)
+        if (count != null && count <= 0) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.c", "$context.c 必须是正整数")
+        }
+        if (recurrence.containsKey("e") && recurrence.containsKey("c")) {
+            invalid(Dst1ErrorCode.CONFLICTING_FIELDS, context, "$context.e 和 $context.c 互斥")
+        }
+        val weekdays = recurrence.optionalArray("w", context)?.mapIndexed { index, value ->
+            value.asInt("$context.w[$index]").also {
+                if (it !in 1..7) {
+                    invalid(
+                        Dst1ErrorCode.VALUE_OUT_OF_RANGE,
+                        "$context.w[$index]",
+                        "$context.w[$index] 必须在 1..7",
+                    )
+                }
+            }
+        }
+        if (frequency == 1 && weekdays != null) {
+            invalid(Dst1ErrorCode.CONFLICTING_FIELDS, "$context.w", "每日重复不能包含 $context.w")
+        }
+        if (frequency == 2 && weekdays.isNullOrEmpty()) {
+            invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, "$context.w", "每周重复必须包含非空 $context.w")
+        }
+        if (weekdays != null && (weekdays.distinct() != weekdays || weekdays.sorted() != weekdays)) {
+            invalid(Dst1ErrorCode.DUPLICATE_VALUE, "$context.w", "$context.w 必须唯一并升序")
+        }
+        recurrence["t"]?.let { value ->
+            if (value != JsonNull) parseTime(value.asString("$context.t"), "$context.t")
+        }
+    }
+
+    private fun validateReminders(
+        element: JsonElement,
+        rawDeadline: JsonElement?,
+        context: String,
+    ) {
+        val reminders = (element as? JsonArray)
+            ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, context, "$context 必须是数组")
+        if (reminders.isEmpty() || reminders.size > 5) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, context, "$context 必须包含 1..5 个提醒")
+        }
+        val values = reminders.mapIndexed { index, value ->
+            value.asInt("$context[$index]").also {
+                if (it !in 0..10_080) {
+                    invalid(
+                        Dst1ErrorCode.VALUE_OUT_OF_RANGE,
+                        "$context[$index]",
+                        "$context[$index] 必须在 0..10080",
+                    )
+                }
+            }
+        }
+        if (values.distinct() != values || values.sortedDescending() != values) {
+            invalid(Dst1ErrorCode.DUPLICATE_VALUE, context, "$context 必须唯一并降序")
+        }
+        if (rawDeadline == JsonNull) {
+            invalid(Dst1ErrorCode.CONFLICTING_FIELDS, context, "永不截止的任务不能设置提醒")
+        }
+    }
+
+    private fun validateExecution(element: JsonElement, context: String) {
+        val execution = element.asObject(context)
+        execution.requireKeys(EXECUTION_KEYS, context)
+        when (val kind = execution.requiredInt("k", context)) {
+            1 -> {
+                val action = execution.requiredInt("a", context)
+                if (action !in 1..2) {
+                    invalid(Dst1ErrorCode.INVALID_VALUE, "$context.a", "$context.a 只能是 1 或 2")
+                }
+                val target = execution.requiredInt("v", context)
+                if (target !in 1..999) {
+                    invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.v", "$context.v 必须在 1..999")
+                }
+            }
+            2 -> {
+                if (execution.containsKey("a")) {
+                    invalid(Dst1ErrorCode.CONFLICTING_FIELDS, "$context.a", "计时任务不能包含 $context.a")
+                }
+                val target = execution.requiredInt("v", context)
+                if (target !in 1..3_600) {
+                    invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.v", "$context.v 必须在 1..3600")
+                }
+            }
+            3 -> {
+                val forbidden = listOf("a", "v").firstOrNull(execution::containsKey)
+                if (forbidden != null) {
+                    invalid(
+                        Dst1ErrorCode.CONFLICTING_FIELDS,
+                        "$context.$forbidden",
+                        "信息告知任务不能包含 $context.$forbidden",
+                    )
+                }
+            }
+            else -> invalid(
+                Dst1ErrorCode.INVALID_VALUE,
+                "$context.k",
+                "$context.k 是未知执行类型：$kind",
+            )
+        }
+    }
+
     private fun JsonObject.requireKeys(allowed: Set<String>, context: String) {
         val unknown = keys - allowed
-        if (unknown.isNotEmpty()) invalid("$context 包含未知字段：${unknown.sorted().joinToString()}")
+        if (unknown.isNotEmpty()) {
+            val key = unknown.sorted().first()
+            val path = if (context == "顶层") key else "$context.$key"
+            invalid(Dst1ErrorCode.UNKNOWN_FIELD, path, "$context 包含未知字段：$key")
+        }
     }
 
     private fun JsonObject.requiredId(key: String, context: String): String =
-        get(key)?.asId("$context.$key") ?: invalid("$context 缺少必填字段 $key")
+        get(key)?.asId(path(context, key))
+            ?: invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, path(context, key), "$context 缺少必填字段 $key")
 
     private fun JsonElement.asId(context: String): String {
         val value = asString(context)
-        if (!idPattern.matches(value)) invalid("$context 必须是 16 位 Base64URL ID")
+        if (!idPattern.matches(value)) {
+            invalid(Dst1ErrorCode.INVALID_VALUE, context, "$context 必须是 16 位 Base64URL ID")
+        }
         return value
     }
 
     private fun JsonObject.requiredText(key: String, max: Int, context: String): String =
-        get(key)?.let { normalizeText(it.asString("$context.$key"), max, false, "$context.$key") }
-            ?: invalid("$context 缺少必填字段 $key")
+        get(key)?.let { normalizeText(it.asString(path(context, key)), max, false, path(context, key)) }
+            ?: invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, path(context, key), "$context 缺少必填字段 $key")
 
     private fun JsonObject.optionalText(
         key: String,
@@ -205,8 +363,10 @@ class Dst1Parser {
         allowEmpty: Boolean,
         context: String,
     ): String? = get(key)?.let {
-        if (it == JsonNull) invalid("$context.$key 不允许为 null")
-        normalizeText(it.asString("$context.$key"), max, allowEmpty, "$context.$key")
+        if (it == JsonNull) {
+            invalid(Dst1ErrorCode.TYPE_MISMATCH, path(context, key), "${path(context, key)} 不允许为 null")
+        }
+        normalizeText(it.asString(path(context, key)), max, allowEmpty, path(context, key))
     }
 
     private fun JsonObject.optionalTextField(
@@ -218,64 +378,96 @@ class Dst1Parser {
         Field.Missing
     } else {
         Field.Value(
-            normalizeText(getValue(key).asString("$context.$key"), max, allowEmpty, "$context.$key"),
+            normalizeText(getValue(key).asString(path(context, key)), max, allowEmpty, path(context, key)),
         )
     }
 
     private fun normalizeText(value: String, max: Int, allowEmpty: Boolean, context: String): String {
-        val normalized = Normalizer.normalize(value.trim(), Normalizer.Form.NFC)
-        if (!allowEmpty && normalized.isEmpty()) invalid("$context 不允许为空")
-        if (normalized.codePointCount(0, normalized.length) > max) {
-            invalid("$context 超过 $max 个字符")
+        val trimmed = value.trim()
+        if (!Normalizer.isNormalized(trimmed, Normalizer.Form.NFC)) {
+            invalid(Dst1ErrorCode.NON_CANONICAL_TEXT, context, "$context 必须使用 Unicode NFC")
         }
-        return normalized
+        if (!allowEmpty && trimmed.isEmpty()) {
+            invalid(Dst1ErrorCode.INVALID_VALUE, context, "$context 不允许为空")
+        }
+        if (trimmed.codePointCount(0, trimmed.length) > max) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, context, "$context 超过 $max 个字符")
+        }
+        return trimmed
     }
 
     private fun JsonObject.requiredInt(key: String, context: String): Int =
-        get(key)?.asInt("$context.$key") ?: invalid("$context 缺少必填字段 $key")
+        get(key)?.asInt(path(context, key))
+            ?: invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, path(context, key), "$context 缺少必填字段 $key")
 
     private fun JsonObject.optionalInt(key: String, context: String): Int? =
-        get(key)?.asInt("$context.$key")
+        get(key)?.asInt(path(context, key))
 
     private fun JsonElement.asInt(context: String): Int =
         (this as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
-            ?: invalid("$context 必须是整数")
+            ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, context, "$context 必须是整数")
 
     private fun JsonElement.asString(context: String): String =
         (this as? JsonPrimitive)?.takeIf { it.isString }?.content
-            ?: invalid("$context 必须是字符串")
+            ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, context, "$context 必须是字符串")
 
     private fun JsonElement.asObject(context: String): JsonObject =
-        this as? JsonObject ?: invalid("$context 必须是对象")
+        this as? JsonObject ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, context, "$context 必须是对象")
 
     private fun JsonObject.optionalArray(key: String, context: String): JsonArray? =
-        get(key)?.let { it as? JsonArray ?: invalid("$context.$key 必须是数组") }
+        get(key)?.let {
+            it as? JsonArray
+                ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, path(context, key), "${path(context, key)} 必须是数组")
+        }
+
+    private fun JsonObject.optionalNonEmptyArray(key: String, context: String): JsonArray? =
+        optionalArray(key, context)?.also {
+            if (it.isEmpty()) {
+                invalid(
+                    Dst1ErrorCode.VALUE_OUT_OF_RANGE,
+                    path(context, key),
+                    "${path(context, key)} 存在时不能为空数组",
+                )
+            }
+        }
 
     private fun JsonObject.optionalDate(key: String, context: String): LocalDate? =
-        get(key)?.let { parseDate(it.asString("$context.$key"), "$context.$key") }
+        get(key)?.let { parseDate(it.asString(path(context, key)), path(context, key)) }
 
     private fun parseDate(value: String, context: String): LocalDate = try {
         LocalDate.parse(value, dateFormatter)
     } catch (_: DateTimeException) {
-        invalid("$context 不是有效的 YYYY-MM-DD 日期")
+        invalid(Dst1ErrorCode.INVALID_DATE, context, "$context 不是有效的 YYYY-MM-DD 日期")
     }
 
     private fun parseDateTime(value: String, context: String): LocalDateTime = try {
         val parsed = LocalDateTime.parse(value, dateTimeFormatter)
         if (parsed.toLocalTime() == LocalTime.MIDNIGHT && value.endsWith("24:00")) {
-            invalid("$context 不允许 24:00")
+            invalid(Dst1ErrorCode.INVALID_DATE, context, "$context 不允许 24:00")
         }
         parsed
     } catch (_: DateTimeException) {
-        invalid("$context 不是有效的 YYYY-MM-DDTHH:mm 时间")
+        invalid(Dst1ErrorCode.INVALID_DATE, context, "$context 不是有效的 YYYY-MM-DDTHH:mm 时间")
     }
 
-    private fun invalid(message: String): Nothing = throw Dst1ValidationException(message)
+    private fun parseTime(value: String, context: String): LocalTime = try {
+        LocalTime.parse(value, timeFormatter)
+    } catch (_: DateTimeException) {
+        invalid(Dst1ErrorCode.INVALID_DATE, context, "$context 不是有效的 HH:mm 时间")
+    }
+
+    private fun path(context: String, key: String): String =
+        if (context == "顶层") key else "$context.$key"
+
+    private fun invalid(code: Dst1ErrorCode, path: String?, message: String): Nothing =
+        throw Dst1ValidationException(code, path, message)
 
     private companion object {
         val TOP_KEYS = setOf("v", "b", "d", "m", "g", "t", "z")
         val GROUP_KEYS = setOf("i", "n", "cm", "im", "t")
         val TASK_KEYS = setOf("i", "n", "r", "d", "y", "l", "p", "o", "s", "x", "m", "h", "u")
         val STEP_KEYS = setOf("n", "r")
+        val RECURRENCE_KEYS = setOf("f", "s", "e", "c", "w", "t")
+        val EXECUTION_KEYS = setOf("k", "a", "v")
     }
 }

@@ -1,7 +1,11 @@
 # DST1 protocol test vectors
 
-These fixtures are shared protocol inputs for the Android Sub implementation and the future Dom web implementation.
+These fixtures are the shared contract for the Android Sub implementation and the future Dom web implementation.
 
-The `0.1.0-alpha` test phase recognizes DST1 v1 but deliberately rejects repeat (`x`), reminder (`h`), and specialized execution (`u`) fields until those capabilities are implemented. Unknown fields are rejected.
+- `manifest.json` is the only test inventory and records both protocol and current Android expectations.
+- `valid/` contains vectors accepted by the current Android build.
+- `future-valid/` contains valid DST1 v1 capabilities that Android currently reports as `CAPABILITY_NOT_IMPLEMENTED`.
+- `invalid/` contains envelope, field, combination, and boundary failures with stable error codes.
+- Large limit cases are generated deterministically from manifest entries instead of being committed as giant files.
 
-Temporary points rule: when a task moves groups, existing ledger entries retain their original `groupId`; future completions use the new group. The formal requirement to transfer historical points and recalculate historical results remains deferred.
+Unknown fields and non-NFC ordinary text are rejected. See `docs/dst1-test-vectors.md` and `docs/dst1-schema.json` for the normative rules.
