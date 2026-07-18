@@ -1,47 +1,16 @@
-package com.ds.localtaskmanager.data
+package com.ds.localtaskmanager.data.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
+import com.ds.localtaskmanager.data.InstanceStepEntity
+import com.ds.localtaskmanager.data.TaskInstanceEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
-interface AppDao {
-    @Query("SELECT * FROM app_profile WHERE id = 1")
-    suspend fun getProfile(): AppProfileEntity?
-
-    @Upsert
-    suspend fun upsertProfile(profile: AppProfileEntity)
-
-    @Query("SELECT EXISTS(SELECT 1 FROM import_batch WHERE batchId = :batchId)")
-    suspend fun hasBatch(batchId: String): Boolean
-
-    @Insert(onConflict = OnConflictStrategy.ABORT)
-    suspend fun insertBatch(batch: ImportBatchEntity)
-
-    @Query("SELECT * FROM task_group WHERE groupId IN (:ids)")
-    suspend fun getGroups(ids: List<String>): List<TaskGroupEntity>
-
-    @Upsert
-    suspend fun upsertGroups(groups: List<TaskGroupEntity>)
-
-    @Query("SELECT * FROM task_definition WHERE taskId IN (:ids)")
-    suspend fun getDefinitions(ids: List<String>): List<TaskDefinitionEntity>
-
-    @Query("SELECT * FROM task_definition WHERE taskId = :taskId")
-    suspend fun getDefinition(taskId: String): TaskDefinitionEntity?
-
-    @Upsert
-    suspend fun upsertDefinitions(definitions: List<TaskDefinitionEntity>)
-
-    @Query("DELETE FROM task_step_definition WHERE taskId IN (:taskIds)")
-    suspend fun deleteStepDefinitions(taskIds: List<String>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertStepDefinitions(steps: List<TaskStepDefinitionEntity>)
-
+interface InstanceDao {
     @Query("SELECT * FROM task_instance WHERE taskId IN (:ids) AND occurrenceKey = 'once'")
     suspend fun getOnceInstances(ids: List<String>): List<TaskInstanceEntity>
 
@@ -64,7 +33,10 @@ interface AppDao {
         ORDER BY position
         """,
     )
-    suspend fun getInstanceSteps(taskId: String, occurrenceKey: String = "once"): List<InstanceStepEntity>
+    suspend fun getInstanceSteps(
+        taskId: String,
+        occurrenceKey: String = "once",
+    ): List<InstanceStepEntity>
 
     @Query(
         """
@@ -112,28 +84,4 @@ interface AppDao {
         completed: Boolean,
         updatedAt: Long,
     ): Int
-
-    @Insert
-    suspend fun insertLedger(entry: PointsLedgerEntity)
-
-    @Query(
-        """
-        SELECT * FROM points_ledger
-        WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey
-        ORDER BY createdAtEpochMillis, ledgerId
-        """,
-    )
-    suspend fun getLedger(taskId: String, occurrenceKey: String = "once"): List<PointsLedgerEntity>
-
-    @Insert
-    suspend fun insertLogs(logs: List<ActionLogEntity>)
-
-    @Query(
-        """
-        SELECT * FROM action_log
-        WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey
-        ORDER BY createdAtEpochMillis, eventId
-        """,
-    )
-    suspend fun getLogs(taskId: String, occurrenceKey: String = "once"): List<ActionLogEntity>
 }

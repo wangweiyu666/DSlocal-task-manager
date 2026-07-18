@@ -1,4 +1,4 @@
-package com.ds.localtaskmanager.ui
+package com.ds.localtaskmanager.ui.today
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -9,9 +9,9 @@ import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.data.TaskRepository
 import com.ds.localtaskmanager.domain.TaskDay
 import java.time.LocalDateTime
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch

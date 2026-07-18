@@ -36,8 +36,8 @@ class ImportAndExecutionServiceTest {
         database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        importService = ImportService(database, Dst1Parser(), clock, ids)
-        executionService = TaskExecutionService(database, clock, ids)
+        importService = RoomImportService(database, Dst1Parser(), clock, ids)
+        executionService = RoomTaskExecutionService(database, clock, ids)
     }
 
     @After
@@ -52,13 +52,15 @@ class ImportAndExecutionServiceTest {
         val preview = importService.preview(encoded)
         importService.import(preview)
 
-        val dao = database.appDao()
+        val definitionDao = database.definitionDao()
+        val instanceDao = database.instanceDao()
+        val profileDao = database.profileDao()
         assertEquals(setOf(ImportChangeType.NEW), preview.taskChanges.single().types)
-        assertEquals("Daily", dao.getGroups(listOf("GroupId123456789")).single().name)
-        assertEquals("Drink water", dao.getDefinition("TaskId1234567890")?.name)
-        assertEquals(TaskStatus.PENDING.name, dao.getInstance("TaskId1234567890")?.status)
-        assertEquals("Pour water", dao.getInstanceSteps("TaskId1234567890").single().name)
-        assertEquals(true, dao.hasBatch("BatchId123456789"))
+        assertEquals("Daily", definitionDao.getGroups(listOf("GroupId123456789")).single().name)
+        assertEquals("Drink water", definitionDao.getDefinition("TaskId1234567890")?.name)
+        assertEquals(TaskStatus.PENDING.name, instanceDao.getInstance("TaskId1234567890")?.status)
+        assertEquals("Pour water", instanceDao.getInstanceSteps("TaskId1234567890").single().name)
+        assertEquals(true, profileDao.hasBatch("BatchId123456789"))
     }
 
     @Test
@@ -82,12 +84,11 @@ class ImportAndExecutionServiceTest {
         executionService.complete("TaskId1234567890")
         executionService.undoCompletion("TaskId1234567890")
 
-        val dao = database.appDao()
-        assertEquals(TaskStatus.PENDING.name, dao.getInstance("TaskId1234567890")?.status)
-        assertEquals(listOf(5, -5), dao.getLedger("TaskId1234567890").map { it.delta })
+        assertEquals(TaskStatus.PENDING.name, database.instanceDao().getInstance("TaskId1234567890")?.status)
+        assertEquals(listOf(5, -5), database.auditDao().getLedger("TaskId1234567890").map { it.delta })
         assertEquals(
             listOf("COMPLETED", "COMPLETION_UNDONE"),
-            dao.getLogs("TaskId1234567890").map { it.action }.filter { it in setOf("COMPLETED", "COMPLETION_UNDONE") },
+            database.auditDao().getLogs("TaskId1234567890").map { it.action }.filter { it in setOf("COMPLETED", "COMPLETION_UNDONE") },
         )
     }
 
@@ -103,7 +104,7 @@ class ImportAndExecutionServiceTest {
         importService.import(preview)
         executionService.complete("TaskId1234567890")
 
-        val ledger = database.appDao().getLedger("TaskId1234567890")
+        val ledger = database.auditDao().getLedger("TaskId1234567890")
         assertEquals(
             listOf("GroupId123456789", "GroupId123456789", "SecondGroup12345"),
             ledger.map { it.groupId },
@@ -120,15 +121,15 @@ class ImportAndExecutionServiceTest {
 
         importService.import(importService.preview(encodeDst1ForTest(cancellation)))
 
-        assertEquals(TaskStatus.COMPLETED.name, database.appDao().getInstance("TaskId1234567890")?.status)
-        assertEquals(listOf(5), database.appDao().getLedger("TaskId1234567890").map { it.delta })
-        assertEquals(true, database.appDao().getDefinition("TaskId1234567890")?.cancelled)
+        assertEquals(TaskStatus.COMPLETED.name, database.instanceDao().getInstance("TaskId1234567890")?.status)
+        assertEquals(listOf(5), database.auditDao().getLedger("TaskId1234567890").map { it.delta })
+        assertEquals(true, database.definitionDao().getDefinition("TaskId1234567890")?.cancelled)
     }
 
     @Test
     fun `transaction rolls back every write when a later log insert fails`() = runTest {
         val duplicateId = RecordIdGenerator { "SameRecordId0001" }
-        val failingService = ImportService(database, Dst1Parser(), clock, duplicateId)
+        val failingService = RoomImportService(database, Dst1Parser(), clock, duplicateId)
         val json = """{"v":1,"b":"AtomicBatch12345","t":[{"i":"FirstTask1234567","n":"First","r":1},{"i":"SecondTask123456","n":"Second","r":1}]}"""
         val preview = failingService.preview(encodeDst1ForTest(json))
 
@@ -136,8 +137,8 @@ class ImportAndExecutionServiceTest {
             kotlinx.coroutines.runBlocking { failingService.import(preview) }
         }
 
-        assertFalse(database.appDao().hasBatch("AtomicBatch12345"))
-        assertEquals(emptyList<TaskDefinitionEntity>(), database.appDao().getDefinitions(listOf("FirstTask1234567", "SecondTask123456")))
+        assertFalse(database.profileDao().hasBatch("AtomicBatch12345"))
+        assertEquals(emptyList<TaskDefinitionEntity>(), database.definitionDao().getDefinitions(listOf("FirstTask1234567", "SecondTask123456")))
     }
 
     private fun resource(path: String): String =

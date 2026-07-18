@@ -1,25 +1,27 @@
 package com.ds.localtaskmanager.data
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
+import androidx.room.PrimaryKey
 
 @Entity(tableName = "app_profile")
 data class AppProfileEntity(
-    @androidx.room.PrimaryKey val id: Int = 1,
+    @PrimaryKey val id: Int = 1,
     val domName: String = "",
     val updatedAtEpochMillis: Long,
 )
 
 @Entity(tableName = "import_batch")
 data class ImportBatchEntity(
-    @androidx.room.PrimaryKey val batchId: String,
+    @PrimaryKey val batchId: String,
     val note: String?,
     val importedAtEpochMillis: Long,
 )
 
 @Entity(tableName = "task_group")
 data class TaskGroupEntity(
-    @androidx.room.PrimaryKey val groupId: String,
+    @PrimaryKey val groupId: String,
     val name: String,
     val completeMessage: String,
     val incompleteMessage: String,
@@ -30,10 +32,18 @@ data class TaskGroupEntity(
 
 @Entity(
     tableName = "task_definition",
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskGroupEntity::class,
+            parentColumns = ["groupId"],
+            childColumns = ["groupId"],
+            onDelete = ForeignKey.SET_NULL,
+        ),
+    ],
     indices = [Index("groupId"), Index("taskDate")],
 )
 data class TaskDefinitionEntity(
-    @androidx.room.PrimaryKey val taskId: String,
+    @PrimaryKey val taskId: String,
     val name: String,
     val description: String,
     val groupId: String?,
@@ -47,11 +57,29 @@ data class TaskDefinitionEntity(
     val cancelled: Boolean,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    val recurrenceFrequency: Int? = null,
+    val recurrenceStartDate: String? = null,
+    val recurrenceEndDate: String? = null,
+    val recurrenceCount: Int? = null,
+    val recurrenceWeekdaysMask: Int? = null,
+    val recurrenceDeadlineTime: String? = null,
+    val executionKind: String = "NORMAL",
+    val executionAction: Int? = null,
+    val executionTarget: Int? = null,
+    val reminderMinutesJson: String? = null,
 )
 
 @Entity(
     tableName = "task_step_definition",
     primaryKeys = ["taskId", "position"],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskDefinitionEntity::class,
+            parentColumns = ["taskId"],
+            childColumns = ["taskId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
     indices = [Index("taskId")],
 )
 data class TaskStepDefinitionEntity(
@@ -64,7 +92,20 @@ data class TaskStepDefinitionEntity(
 @Entity(
     tableName = "task_instance",
     primaryKeys = ["taskId", "occurrenceKey"],
-    indices = [Index("taskDate"), Index("status"), Index("groupId")],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskDefinitionEntity::class,
+            parentColumns = ["taskId"],
+            childColumns = ["taskId"],
+        ),
+        ForeignKey(
+            entity = TaskGroupEntity::class,
+            parentColumns = ["groupId"],
+            childColumns = ["groupId"],
+            onDelete = ForeignKey.SET_NULL,
+        ),
+    ],
+    indices = [Index("taskId"), Index("taskDate"), Index("status"), Index("groupId")],
 )
 data class TaskInstanceEntity(
     val taskId: String,
@@ -82,11 +123,25 @@ data class TaskInstanceEntity(
     val completedAtEpochMillis: Long?,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    val category: String = "TEMPORARY",
+    val executionKind: String = "NORMAL",
+    val executionAction: Int? = null,
+    val executionTarget: Int? = null,
+    val reminderMinutesJson: String? = null,
+    val publishedAtEpochMillis: Long = createdAtEpochMillis,
 )
 
 @Entity(
     tableName = "instance_step",
     primaryKeys = ["taskId", "occurrenceKey", "position"],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskInstanceEntity::class,
+            parentColumns = ["taskId", "occurrenceKey"],
+            childColumns = ["taskId", "occurrenceKey"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
     indices = [Index(value = ["taskId", "occurrenceKey"])],
 )
 data class InstanceStepEntity(
@@ -100,11 +155,89 @@ data class InstanceStepEntity(
 )
 
 @Entity(
+    tableName = "execution_progress",
+    primaryKeys = ["taskId", "occurrenceKey"],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskInstanceEntity::class,
+            parentColumns = ["taskId", "occurrenceKey"],
+            childColumns = ["taskId", "occurrenceKey"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["taskId", "occurrenceKey"])],
+)
+data class ExecutionProgressEntity(
+    val taskId: String,
+    val occurrenceKey: String,
+    val executionKind: String,
+    val counterValue: Int?,
+    val elapsedMillis: Long?,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "information_submission",
+    primaryKeys = ["taskId", "occurrenceKey"],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskInstanceEntity::class,
+            parentColumns = ["taskId", "occurrenceKey"],
+            childColumns = ["taskId", "occurrenceKey"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["taskId", "occurrenceKey"])],
+)
+data class InformationSubmissionEntity(
+    val taskId: String,
+    val occurrenceKey: String,
+    val content: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+    val submittedAtEpochMillis: Long?,
+)
+
+@Entity(
+    tableName = "task_note",
+    primaryKeys = ["taskId", "occurrenceKey"],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskInstanceEntity::class,
+            parentColumns = ["taskId", "occurrenceKey"],
+            childColumns = ["taskId", "occurrenceKey"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["taskId", "occurrenceKey"])],
+)
+data class TaskNoteEntity(
+    val taskId: String,
+    val occurrenceKey: String,
+    val content: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
     tableName = "points_ledger",
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskInstanceEntity::class,
+            parentColumns = ["taskId", "occurrenceKey"],
+            childColumns = ["taskId", "occurrenceKey"],
+        ),
+        ForeignKey(
+            entity = TaskGroupEntity::class,
+            parentColumns = ["groupId"],
+            childColumns = ["groupId"],
+        ),
+    ],
     indices = [Index(value = ["taskId", "occurrenceKey"]), Index("groupId")],
 )
 data class PointsLedgerEntity(
-    @androidx.room.PrimaryKey val ledgerId: String,
+    @PrimaryKey val ledgerId: String,
     val taskId: String,
     val occurrenceKey: String,
     val groupId: String?,
@@ -115,14 +248,85 @@ data class PointsLedgerEntity(
 
 @Entity(
     tableName = "action_log",
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskInstanceEntity::class,
+            parentColumns = ["taskId", "occurrenceKey"],
+            childColumns = ["taskId", "occurrenceKey"],
+        ),
+        ForeignKey(
+            entity = ImportBatchEntity::class,
+            parentColumns = ["batchId"],
+            childColumns = ["batchId"],
+        ),
+    ],
     indices = [Index(value = ["taskId", "occurrenceKey"]), Index("batchId")],
 )
 data class ActionLogEntity(
-    @androidx.room.PrimaryKey val eventId: String,
+    @PrimaryKey val eventId: String,
     val taskId: String?,
     val occurrenceKey: String?,
     val batchId: String?,
     val action: String,
     val detail: String?,
     val createdAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "result_revision",
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskGroupEntity::class,
+            parentColumns = ["groupId"],
+            childColumns = ["groupId"],
+        ),
+        ForeignKey(
+            entity = ImportBatchEntity::class,
+            parentColumns = ["batchId"],
+            childColumns = ["batchId"],
+        ),
+    ],
+    indices = [Index(value = ["taskDate", "scope"]), Index("groupId"), Index("batchId")],
+)
+data class ResultRevisionEntity(
+    @PrimaryKey val revisionId: String,
+    val taskDate: String,
+    val scope: String,
+    val groupId: String?,
+    val oldStatus: String?,
+    val newStatus: String?,
+    val oldPoints: Int?,
+    val newPoints: Int?,
+    val reason: String,
+    val batchId: String?,
+    val relatedTaskIdsJson: String,
+    val createdAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "reminder_record",
+    primaryKeys = ["taskId", "occurrenceKey", "minutesBeforeDeadline"],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskInstanceEntity::class,
+            parentColumns = ["taskId", "occurrenceKey"],
+            childColumns = ["taskId", "occurrenceKey"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["taskId", "occurrenceKey"]),
+        Index("scheduledForEpochMillis"),
+        Index("state"),
+    ],
+)
+data class ReminderRecordEntity(
+    val taskId: String,
+    val occurrenceKey: String,
+    val minutesBeforeDeadline: Int,
+    val scheduledForEpochMillis: Long,
+    val state: String,
+    val deliveredAtEpochMillis: Long?,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
 )

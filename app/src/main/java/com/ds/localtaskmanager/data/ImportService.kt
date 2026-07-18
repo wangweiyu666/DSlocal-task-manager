@@ -1,6 +1,10 @@
 package com.ds.localtaskmanager.data
 
 import androidx.room.withTransaction
+import com.ds.localtaskmanager.data.dao.AuditDao
+import com.ds.localtaskmanager.data.dao.DefinitionDao
+import com.ds.localtaskmanager.data.dao.InstanceDao
+import com.ds.localtaskmanager.data.dao.ProfileDao
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.StepFingerprint
 import com.ds.localtaskmanager.domain.TaskStateMachine
@@ -52,35 +56,43 @@ data class ImportPreview(
 class DuplicateBatchException(batchId: String) :
     IllegalStateException("批次 $batchId 已经导入")
 
-class ImportService(
+interface ImportService {
+    suspend fun preview(encoded: String): ImportPreview
+    suspend fun import(preview: ImportPreview): ImportPreview
+}
+
+class RoomImportService(
     private val database: AppDatabase,
     private val parser: Dst1Parser,
     private val clock: Clock,
     private val idGenerator: RecordIdGenerator,
-) {
-    private val dao: AppDao get() = database.appDao()
+) : ImportService {
+    private val profileDao: ProfileDao get() = database.profileDao()
+    private val definitionDao: DefinitionDao get() = database.definitionDao()
+    private val instanceDao: InstanceDao get() = database.instanceDao()
+    private val auditDao: AuditDao get() = database.auditDao()
 
-    suspend fun preview(encoded: String): ImportPreview {
+    override suspend fun preview(encoded: String): ImportPreview {
         val batch = parser.parse(Dst1Decoder.decode(encoded.trim()), nowDateTime())
         return preview(batch)
     }
 
-    suspend fun import(preview: ImportPreview): ImportPreview = database.withTransaction {
-        if (dao.hasBatch(preview.batch.batchId)) throw DuplicateBatchException(preview.batch.batchId)
+    override suspend fun import(preview: ImportPreview): ImportPreview = database.withTransaction {
+        if (profileDao.hasBatch(preview.batch.batchId)) throw DuplicateBatchException(preview.batch.batchId)
         val freshPreview = preview(preview.batch)
         applyBatch(freshPreview)
         freshPreview
     }
 
     private suspend fun preview(batch: DstBatch): ImportPreview {
-        if (dao.hasBatch(batch.batchId)) throw DuplicateBatchException(batch.batchId)
+        if (profileDao.hasBatch(batch.batchId)) throw DuplicateBatchException(batch.batchId)
         val tasks = batch.allTasks()
         val ids = (tasks.map { it.taskId } + batch.cancelledTaskIds).distinct()
         val oldDefinitions = if (ids.isEmpty()) emptyMap() else {
-            dao.getDefinitions(ids).associateBy { it.taskId }
+            definitionDao.getDefinitions(ids).associateBy { it.taskId }
         }
         val oldInstances = if (ids.isEmpty()) emptyMap() else {
-            dao.getOnceInstances(ids).associateBy { it.taskId }
+            instanceDao.getOnceInstances(ids).associateBy { it.taskId }
         }
         val changes = tasks.map { task ->
             val oldDefinition = oldDefinitions[task.taskId]
@@ -123,21 +135,21 @@ class ImportService(
     private suspend fun applyBatch(preview: ImportPreview) {
         val batch = preview.batch
         val now = nowMillis()
+        profileDao.insertBatch(ImportBatchEntity(batch.batchId, batch.note, now))
         applyProfile(batch, now)
         applyGroups(batch.groups, now)
         applyTasks(batch, now)
         applyCancellations(batch, now)
-        dao.insertBatch(ImportBatchEntity(batch.batchId, batch.note, now))
     }
 
     private suspend fun applyProfile(batch: DstBatch, now: Long) {
         val domName = (batch.domName as? Field.Value)?.value ?: return
-        dao.upsertProfile(AppProfileEntity(domName = domName, updatedAtEpochMillis = now))
+        profileDao.upsertProfile(AppProfileEntity(domName = domName, updatedAtEpochMillis = now))
     }
 
     private suspend fun applyGroups(groups: List<DstGroupPatch>, now: Long) {
         if (groups.isEmpty()) return
-        val old = dao.getGroups(groups.map { it.groupId }).associateBy { it.groupId }
+        val old = definitionDao.getGroups(groups.map { it.groupId }).associateBy { it.groupId }
         val entities = groups.map { patch ->
             val existing = old[patch.groupId]
             TaskGroupEntity(
@@ -156,19 +168,19 @@ class ImportService(
                 updatedAtEpochMillis = now,
             )
         }
-        dao.upsertGroups(entities)
+        definitionDao.upsertGroups(entities)
     }
 
     private suspend fun applyTasks(batch: DstBatch, now: Long) {
         val tasks = batch.allTasks()
         if (tasks.isEmpty()) return
         val ids = tasks.map { it.taskId }
-        val oldDefinitions = dao.getDefinitions(ids).associateBy { it.taskId }
-        val oldInstances = dao.getOnceInstances(ids).associateBy { it.taskId }
+        val oldDefinitions = definitionDao.getDefinitions(ids).associateBy { it.taskId }
+        val oldInstances = instanceDao.getOnceInstances(ids).associateBy { it.taskId }
         val definitions = tasks.map { it.toDefinition(oldDefinitions[it.taskId], now) }
-        dao.upsertDefinitions(definitions)
-        dao.deleteStepDefinitions(ids)
-        dao.insertStepDefinitions(tasks.flatMap { task ->
+        definitionDao.upsertDefinitions(definitions)
+        definitionDao.deleteStepDefinitions(ids)
+        definitionDao.insertStepDefinitions(tasks.flatMap { task ->
             task.steps.mapIndexed { index, step ->
                 TaskStepDefinitionEntity(task.taskId, index, step.name, step.required)
             }
@@ -185,10 +197,10 @@ class ImportService(
                 preserveCompleted -> oldInstance.copy(updatedAtEpochMillis = now)
                 else -> task.toInstance(oldInstance, restored, now)
             }
-            dao.upsertInstances(listOf(instance))
+            instanceDao.upsertInstances(listOf(instance))
             if (oldInstance == null || restored || fingerprintChanged) {
-                dao.deleteInstanceSteps(task.taskId)
-                dao.insertInstanceSteps(task.steps.mapIndexed { index, step ->
+                instanceDao.deleteInstanceSteps(task.taskId)
+                instanceDao.insertInstanceSteps(task.steps.mapIndexed { index, step ->
                     InstanceStepEntity(
                         taskId = task.taskId,
                         occurrenceKey = "once",
@@ -200,7 +212,7 @@ class ImportService(
                     )
                 })
             }
-            dao.insertLogs(
+            auditDao.insertLogs(
                 listOf(
                     ActionLogEntity(
                         eventId = idGenerator.next(),
@@ -218,15 +230,15 @@ class ImportService(
 
     private suspend fun applyCancellations(batch: DstBatch, now: Long) {
         if (batch.cancelledTaskIds.isEmpty()) return
-        val definitions = dao.getDefinitions(batch.cancelledTaskIds)
-        dao.upsertDefinitions(definitions.map { it.copy(cancelled = true, updatedAtEpochMillis = now) })
-        val instances = dao.getOnceInstances(batch.cancelledTaskIds)
-        dao.upsertInstances(instances.map {
+        val definitions = definitionDao.getDefinitions(batch.cancelledTaskIds)
+        definitionDao.upsertDefinitions(definitions.map { it.copy(cancelled = true, updatedAtEpochMillis = now) })
+        val instances = instanceDao.getOnceInstances(batch.cancelledTaskIds)
+        instanceDao.upsertInstances(instances.map {
             if (it.status == TaskStatus.COMPLETED.name) it else {
                 it.copy(status = TaskStatus.CANCELLED.name, updatedAtEpochMillis = now)
             }
         })
-        dao.insertLogs(instances.map {
+        auditDao.insertLogs(instances.map {
             ActionLogEntity(
                 eventId = idGenerator.next(),
                 taskId = it.taskId,

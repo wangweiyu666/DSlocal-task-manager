@@ -7,8 +7,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ds.localtaskmanager.ui.DstApp
-import com.ds.localtaskmanager.ui.TodayViewModel
-import com.ds.localtaskmanager.ui.TodayViewModelFactory
+import com.ds.localtaskmanager.ui.today.TodayViewModel
+import com.ds.localtaskmanager.ui.today.TodayViewModelFactory
 import com.ds.localtaskmanager.ui.theme.DstTheme
 
 class MainActivity : ComponentActivity() {
