@@ -6,12 +6,22 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [TaskInstanceEntity::class],
-    version = 1,
-    exportSchema = true,
+    entities = [
+        AppProfileEntity::class,
+        ImportBatchEntity::class,
+        TaskGroupEntity::class,
+        TaskDefinitionEntity::class,
+        TaskStepDefinitionEntity::class,
+        TaskInstanceEntity::class,
+        InstanceStepEntity::class,
+        PointsLedgerEntity::class,
+        ActionLogEntity::class,
+    ],
+    version = 2,
+    exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun taskDao(): TaskDao
+    abstract fun appDao(): AppDao
 
     companion object {
         fun create(context: Context): AppDatabase =
@@ -19,6 +29,8 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "dst-sub.db",
-            ).build()
+            )
+                .fallbackToDestructiveMigration()
+                .build()
     }
 }

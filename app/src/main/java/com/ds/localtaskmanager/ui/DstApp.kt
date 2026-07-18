@@ -9,12 +9,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -42,6 +47,7 @@ fun DstApp(todayViewModel: TodayViewModel) {
     val navController = rememberNavController()
     val entry by navController.currentBackStackEntryAsState()
     val currentRoute = entry?.destination?.route
+    val importState by todayViewModel.importState.collectAsStateWithLifecycle()
 
     Scaffold(
         bottomBar = {
@@ -67,7 +73,7 @@ fun DstApp(todayViewModel: TodayViewModel) {
         floatingActionButton = {
             if (currentRoute == Destination.Today.route) {
                 ExtendedFloatingActionButton(
-                    onClick = { /* Import preview flow is the next implementation slice. */ },
+                    onClick = todayViewModel::openImport,
                     text = { Text("导入任务") },
                     icon = { Text("+") },
                 )
@@ -90,6 +96,64 @@ fun DstApp(todayViewModel: TodayViewModel) {
             }
         }
     }
+
+    if (importState.visible) {
+        ImportDialog(
+            state = importState,
+            onInputChange = todayViewModel::updateImportInput,
+            onPreview = todayViewModel::previewImport,
+            onConfirm = todayViewModel::confirmImport,
+            onDismiss = todayViewModel::closeImport,
+        )
+    }
+}
+
+@Composable
+private fun ImportDialog(
+    state: ImportUiState,
+    onInputChange: (String) -> Unit,
+    onPreview: () -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (!state.working) onDismiss() },
+        title = { Text(if (state.preview == null) "导入 DST1 任务" else "确认导入") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (state.preview == null) {
+                    OutlinedTextField(
+                        value = state.input,
+                        onValueChange = onInputChange,
+                        label = { Text("粘贴任务字符串") },
+                        minLines = 5,
+                        maxLines = 10,
+                        enabled = !state.working,
+                    )
+                } else {
+                    Text(state.preview.summary)
+                    state.preview.taskChanges.forEach { change ->
+                        Text("${change.name}：${change.types.joinToString()}")
+                    }
+                }
+                state.error?.let { error ->
+                    Text(error, color = MaterialTheme.colorScheme.error)
+                }
+                if (state.working) CircularProgressIndicator()
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = if (state.preview == null) onPreview else onConfirm,
+                enabled = !state.working && (state.preview != null || state.input.isNotBlank()),
+            ) {
+                Text(if (state.preview == null) "校验并预览" else "确认导入")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !state.working) { Text("取消") }
+        },
+    )
 }
 
 @Composable

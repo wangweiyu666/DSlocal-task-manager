@@ -4,6 +4,8 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.Base64
 import java.util.Locale
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.util.zip.CRC32
 import java.util.zip.InflaterInputStream
 
@@ -26,6 +28,10 @@ object Dst1Decoder {
         val expectedChecksum = parts[2]
         if (!expectedChecksum.matches(Regex("[0-9A-F]{8}"))) {
             throw Dst1DecodeException("CRC32 格式无效")
+        }
+
+        if (!parts[1].matches(Regex("[A-Za-z0-9_-]+"))) {
+            throw Dst1DecodeException("payload 不是无填充 Base64URL")
         }
 
         val compressed = try {
@@ -64,6 +70,14 @@ object Dst1Decoder {
         } catch (error: Exception) {
             throw Dst1DecodeException("zlib 解压失败", error)
         }
-        return output.toString(Charsets.UTF_8.name())
+        return try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(output.toByteArray()))
+                .toString()
+        } catch (error: Exception) {
+            throw Dst1DecodeException("JSON 不是有效的 UTF-8", error)
+        }
     }
 }

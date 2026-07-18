@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
     private fun AppContent() {
         val application = application as DstApplication
         val todayViewModel: TodayViewModel = viewModel(
-            factory = TodayViewModelFactory(application.taskRepository),
+            factory = TodayViewModelFactory(application.taskRepository, application.importService),
         )
         DstTheme {
             DstApp(todayViewModel = todayViewModel)
