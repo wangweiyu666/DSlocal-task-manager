@@ -1,6 +1,11 @@
 package com.ds.localtaskmanager.protocol
 
 import com.ds.localtaskmanager.domain.TaskDay
+import com.ds.localtaskmanager.domain.execution.CounterAction
+import com.ds.localtaskmanager.domain.execution.ExecutionSpec
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceDeadline
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceSpec
+import java.time.DayOfWeek
 import java.text.Normalizer
 import java.time.DateTimeException
 import java.time.LocalDate
@@ -151,6 +156,8 @@ class Dst1Parser {
         val completionMessage = task.optionalText("m", 500, allowEmpty = true, context)
             ?: "任务已完成"
 
+        val execution = parseExecution(task["u"], "$context.u")
+        val recurrence = parseRecurrence(task["x"], "$context.x")
         validateFutureCapabilities(task, context)
         return DstTask(
             taskId = taskId,
@@ -164,6 +171,8 @@ class Dst1Parser {
             steps = steps,
             completionMessage = completionMessage,
             groupId = groupId,
+            execution = execution,
+            recurrence = recurrence,
         )
     }
 
@@ -209,10 +218,8 @@ class Dst1Parser {
     }
 
     private fun validateFutureCapabilities(task: JsonObject, context: String) {
-        task["x"]?.let { validateRecurrence(it, "$context.x") }
         task["h"]?.let { validateReminders(it, task["l"], "$context.h") }
-        task["u"]?.let { validateExecution(it, "$context.u") }
-        listOf("x", "h", "u").firstOrNull(task::containsKey)?.let { key ->
+        listOf("h").firstOrNull(task::containsKey)?.let { key ->
             invalid(
                 Dst1ErrorCode.CAPABILITY_NOT_IMPLEMENTED,
                 "$context.$key",
@@ -221,15 +228,16 @@ class Dst1Parser {
         }
     }
 
-    private fun validateRecurrence(element: JsonElement, context: String) {
+    private fun parseRecurrence(element: JsonElement?, context: String): RecurrenceSpec {
+        if (element == null) return RecurrenceSpec.None
         val recurrence = element.asObject(context)
         recurrence.requireKeys(RECURRENCE_KEYS, context)
         val frequency = recurrence.requiredInt("f", context)
         if (frequency !in 1..2) {
             invalid(Dst1ErrorCode.INVALID_VALUE, "$context.f", "$context.f 只能是 1 或 2")
         }
-        recurrence.optionalDate("s", context)
-        recurrence.optionalDate("e", context)
+        val startDate = recurrence.optionalDate("s", context)
+        val endDate = recurrence.optionalDate("e", context)
         val count = recurrence.optionalInt("c", context)
         if (count != null && count <= 0) {
             invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.c", "$context.c 必须是正整数")
@@ -257,8 +265,21 @@ class Dst1Parser {
         if (weekdays != null && (weekdays.distinct() != weekdays || weekdays.sorted() != weekdays)) {
             invalid(Dst1ErrorCode.DUPLICATE_VALUE, "$context.w", "$context.w 必须唯一并升序")
         }
-        recurrence["t"]?.let { value ->
-            if (value != JsonNull) parseTime(value.asString("$context.t"), "$context.t")
+        val deadline = when (val value = recurrence["t"]) {
+            null -> RecurrenceDeadline.Default
+            JsonNull -> RecurrenceDeadline.None
+            else -> RecurrenceDeadline.At(parseTime(value.asString("$context.t"), "$context.t"))
+        }
+        return if (frequency == 1) {
+            RecurrenceSpec.Daily(startDate, endDate, count, deadline)
+        } else {
+            RecurrenceSpec.Weekly(
+                startDate = startDate,
+                endDate = endDate,
+                maxOccurrences = count,
+                weekdays = weekdays.orEmpty().mapTo(linkedSetOf()) { DayOfWeek.of(it) },
+                deadline = deadline,
+            )
         }
     }
 
@@ -291,10 +312,11 @@ class Dst1Parser {
         }
     }
 
-    private fun validateExecution(element: JsonElement, context: String) {
+    private fun parseExecution(element: JsonElement?, context: String): ExecutionSpec {
+        if (element == null) return ExecutionSpec.Normal
         val execution = element.asObject(context)
         execution.requireKeys(EXECUTION_KEYS, context)
-        when (val kind = execution.requiredInt("k", context)) {
+        return when (val kind = execution.requiredInt("k", context)) {
             1 -> {
                 val action = execution.requiredInt("a", context)
                 if (action !in 1..2) {
@@ -304,6 +326,10 @@ class Dst1Parser {
                 if (target !in 1..999) {
                     invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.v", "$context.v 必须在 1..999")
                 }
+                ExecutionSpec.Counter(
+                    action = if (action == 1) CounterAction.SLIDER else CounterAction.CLICK,
+                    target = target,
+                )
             }
             2 -> {
                 if (execution.containsKey("a")) {
@@ -313,6 +339,7 @@ class Dst1Parser {
                 if (target !in 1..3_600) {
                     invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.v", "$context.v 必须在 1..3600")
                 }
+                ExecutionSpec.Timer(target)
             }
             3 -> {
                 val forbidden = listOf("a", "v").firstOrNull(execution::containsKey)
@@ -323,6 +350,7 @@ class Dst1Parser {
                         "信息告知任务不能包含 $context.$forbidden",
                     )
                 }
+                ExecutionSpec.Information
             }
             else -> invalid(
                 Dst1ErrorCode.INVALID_VALUE,

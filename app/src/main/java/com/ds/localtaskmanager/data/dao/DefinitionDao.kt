@@ -23,6 +23,9 @@ interface DefinitionDao {
     @Query("SELECT * FROM task_definition WHERE taskId = :taskId")
     suspend fun getDefinition(taskId: String): TaskDefinitionEntity?
 
+    @Query("SELECT * FROM task_definition WHERE cancelled = 0 AND recurrenceFrequency IS NOT NULL")
+    suspend fun getActiveRecurringDefinitions(): List<TaskDefinitionEntity>
+
     @Upsert
     suspend fun upsertDefinitions(definitions: List<TaskDefinitionEntity>)
 
@@ -31,4 +34,7 @@ interface DefinitionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStepDefinitions(steps: List<TaskStepDefinitionEntity>)
+
+    @Query("SELECT * FROM task_step_definition WHERE taskId = :taskId ORDER BY position")
+    suspend fun getStepDefinitions(taskId: String): List<TaskStepDefinitionEntity>
 }

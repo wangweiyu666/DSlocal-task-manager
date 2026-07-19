@@ -3,12 +3,19 @@ package com.ds.localtaskmanager.data
 import androidx.room.withTransaction
 import com.ds.localtaskmanager.data.dao.AuditDao
 import com.ds.localtaskmanager.data.dao.DefinitionDao
+import com.ds.localtaskmanager.data.dao.ExecutionDao
 import com.ds.localtaskmanager.data.dao.InstanceDao
 import com.ds.localtaskmanager.data.dao.ProfileDao
+import com.ds.localtaskmanager.data.recurrence.RoomInstanceGenerationService
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.StepFingerprint
+import com.ds.localtaskmanager.domain.TaskDay
 import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.domain.TaskStatus
+import com.ds.localtaskmanager.domain.execution.ExecutionSpec
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceDeadline
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceSpec
+import com.ds.localtaskmanager.domain.recurrence.WeekdayMask
 import com.ds.localtaskmanager.protocol.Dst1Decoder
 import com.ds.localtaskmanager.protocol.Dst1Parser
 import com.ds.localtaskmanager.protocol.DstBatch
@@ -30,12 +37,19 @@ enum class ImportChangeType {
     RESTORED,
     MOVED,
     STEP_RESET,
+    EXECUTION_RESET,
+    INFORMATION_REVIEW_REQUIRED,
+    RECURRENCE_ENABLED,
+    RECURRENCE_UPDATED,
+    RECURRENCE_DISABLED,
+    RECURRENCE_RESUMED,
 }
 
 data class TaskImportChange(
     val taskId: String,
     val name: String,
     val types: Set<ImportChangeType>,
+    val generatedOccurrences: List<String> = emptyList(),
 )
 
 data class ImportPreview(
@@ -70,7 +84,11 @@ class RoomImportService(
     private val profileDao: ProfileDao get() = database.profileDao()
     private val definitionDao: DefinitionDao get() = database.definitionDao()
     private val instanceDao: InstanceDao get() = database.instanceDao()
+    private val executionDao: ExecutionDao get() = database.executionDao()
     private val auditDao: AuditDao get() = database.auditDao()
+    private val generationService by lazy {
+        RoomInstanceGenerationService(database, clock, idGenerator)
+    }
 
     override suspend fun preview(encoded: String): ImportPreview {
         val batch = parser.parse(Dst1Decoder.decode(encoded.trim()), nowDateTime())
@@ -94,10 +112,17 @@ class RoomImportService(
         val oldInstances = if (ids.isEmpty()) emptyMap() else {
             instanceDao.getOnceInstances(ids).associateBy { it.taskId }
         }
+        val desiredDefinitions = tasks.associate { task ->
+            task.taskId to task.toDefinition(oldDefinitions[task.taskId], nowMillis())
+        }
+        val generatedOccurrences = generationService.previewDefinitions(
+            desiredDefinitions.values.filter { it.recurrenceFrequency != null },
+            TaskDay.from(nowDateTime()),
+        )
         val changes = tasks.map { task ->
             val oldDefinition = oldDefinitions[task.taskId]
             val oldInstance = oldInstances[task.taskId]
-            val desired = task.toDefinition(oldDefinition, nowMillis())
+            val desired = desiredDefinitions.getValue(task.taskId)
             val types = linkedSetOf<ImportChangeType>()
             when {
                 oldDefinition == null -> types += ImportChangeType.NEW
@@ -108,12 +133,38 @@ class RoomImportService(
             if (oldDefinition != null && oldDefinition.groupId != desired.groupId) {
                 types += ImportChangeType.MOVED
             }
+            when {
+                oldDefinition == null && desired.recurrenceFrequency != null ->
+                    types += ImportChangeType.RECURRENCE_ENABLED
+                oldDefinition?.cancelled == true && desired.recurrenceFrequency != null ->
+                    types += ImportChangeType.RECURRENCE_RESUMED
+                oldDefinition?.recurrenceFrequency == null && desired.recurrenceFrequency != null ->
+                    types += ImportChangeType.RECURRENCE_ENABLED
+                oldDefinition?.recurrenceFrequency != null && desired.recurrenceFrequency == null ->
+                    types += ImportChangeType.RECURRENCE_DISABLED
+                oldDefinition != null && oldDefinition.recurrenceSignature() != desired.recurrenceSignature() ->
+                    types += ImportChangeType.RECURRENCE_UPDATED
+            }
             if (oldDefinition != null && oldDefinition.stepsFingerprint != desired.stepsFingerprint &&
                 oldInstance?.status !in setOf(TaskStatus.COMPLETED.name, TaskStatus.CANCELLED.name)
             ) {
                 types += ImportChangeType.STEP_RESET
             }
-            TaskImportChange(task.taskId, task.name, types)
+            if (oldDefinition != null && oldInstance?.isMutableForImport() == true) {
+                if (oldDefinition.executionSignature() != desired.executionSignature()) {
+                    types += ImportChangeType.EXECUTION_RESET
+                } else if (oldDefinition.executionKind == "INFORMATION" &&
+                    oldDefinition.description != desired.description
+                ) {
+                    types += ImportChangeType.INFORMATION_REVIEW_REQUIRED
+                }
+            }
+            TaskImportChange(
+                task.taskId,
+                task.name,
+                types,
+                generatedOccurrences[task.taskId].orEmpty().map(LocalDate::toString),
+            )
         }.toMutableList()
         batch.cancelledTaskIds.forEach { id ->
             val definition = oldDefinitions[id]
@@ -177,6 +228,7 @@ class RoomImportService(
         val ids = tasks.map { it.taskId }
         val oldDefinitions = definitionDao.getDefinitions(ids).associateBy { it.taskId }
         val oldInstances = instanceDao.getOnceInstances(ids).associateBy { it.taskId }
+        val allOldInstances = instanceDao.getInstancesForTasks(ids).groupBy { it.taskId }
         val definitions = tasks.map { it.toDefinition(oldDefinitions[it.taskId], now) }
         definitionDao.upsertDefinitions(definitions)
         definitionDao.deleteStepDefinitions(ids)
@@ -188,13 +240,46 @@ class RoomImportService(
 
         tasks.forEach { task ->
             val oldDefinition = oldDefinitions[task.taskId]
+            if (task.recurrence !is RecurrenceSpec.None) {
+                if (oldDefinition?.recurrenceFrequency == null) {
+                    allOldInstances[task.taskId].orEmpty()
+                        .filter { it.occurrenceKey == "once" }
+                        .forEach { cancelForTemplateConversion(it, batch.batchId, now) }
+                }
+                auditDao.insertLogs(
+                    listOf(
+                        ActionLogEntity(
+                            eventId = idGenerator.next(),
+                            taskId = task.taskId,
+                            occurrenceKey = null,
+                            batchId = batch.batchId,
+                            action = if (oldDefinition == null) "RECURRENCE_IMPORTED" else "RECURRENCE_UPDATED",
+                            detail = null,
+                            createdAtEpochMillis = now,
+                        ),
+                    ),
+                )
+                generationService.reconcileTask(task.taskId, TaskDay.from(nowDateTime()), batch.batchId)
+                return@forEach
+            }
+            if (oldDefinition?.recurrenceFrequency != null) {
+                allOldInstances[task.taskId].orEmpty()
+                    .filter { it.occurrenceKey != "once" }
+                    .forEach { cancelForTemplateConversion(it, batch.batchId, now) }
+            }
             val oldInstance = oldInstances[task.taskId]
             val fingerprintChanged = oldDefinition != null &&
                 oldDefinition.stepsFingerprint != StepFingerprint.of(task.steps)
-            val preserveCompleted = oldInstance?.status == TaskStatus.COMPLETED.name
+            val preserveEnded = oldInstance?.status in setOf(
+                TaskStatus.COMPLETED.name,
+                TaskStatus.MISSED.name,
+            )
             val restored = oldDefinition?.cancelled == true || oldInstance?.status == TaskStatus.CANCELLED.name
+            if (oldDefinition != null && oldInstance?.isMutableForImport() == true) {
+                applyExecutionUpdate(task, oldDefinition, oldInstance, batch.batchId, now)
+            }
             val instance = when {
-                preserveCompleted -> oldInstance.copy(updatedAtEpochMillis = now)
+                preserveEnded -> oldInstance!!.copy(updatedAtEpochMillis = now)
                 else -> task.toInstance(oldInstance, restored, now)
             }
             instanceDao.upsertInstances(listOf(instance))
@@ -232,13 +317,23 @@ class RoomImportService(
         if (batch.cancelledTaskIds.isEmpty()) return
         val definitions = definitionDao.getDefinitions(batch.cancelledTaskIds)
         definitionDao.upsertDefinitions(definitions.map { it.copy(cancelled = true, updatedAtEpochMillis = now) })
-        val instances = instanceDao.getOnceInstances(batch.cancelledTaskIds)
-        instanceDao.upsertInstances(instances.map {
-            if (it.status == TaskStatus.COMPLETED.name) it else {
-                it.copy(status = TaskStatus.CANCELLED.name, updatedAtEpochMillis = now)
-            }
+        auditDao.insertLogs(definitions.filter { it.recurrenceFrequency != null }.map {
+            ActionLogEntity(
+                eventId = idGenerator.next(),
+                taskId = it.taskId,
+                occurrenceKey = null,
+                batchId = batch.batchId,
+                action = "RECURRENCE_CANCELLED",
+                detail = null,
+                createdAtEpochMillis = now,
+            )
         })
-        auditDao.insertLogs(instances.map {
+        val instances = instanceDao.getInstancesForTasks(batch.cancelledTaskIds)
+        val changedInstances = instances.filter { it.status != TaskStatus.COMPLETED.name && it.status != TaskStatus.CANCELLED.name }
+        instanceDao.upsertInstances(changedInstances.map {
+            it.copy(status = TaskStatus.CANCELLED.name, updatedAtEpochMillis = now)
+        })
+        auditDao.insertLogs(changedInstances.map {
             ActionLogEntity(
                 eventId = idGenerator.next(),
                 taskId = it.taskId,
@@ -251,22 +346,58 @@ class RoomImportService(
         })
     }
 
-    private fun DstTask.toDefinition(old: TaskDefinitionEntity?, now: Long) = TaskDefinitionEntity(
-        taskId = taskId,
-        name = name,
-        description = description,
-        groupId = groupId,
-        required = required,
-        taskDate = taskDate.toString(),
-        deadline = deadline?.toString(),
-        points = points,
-        sortOrder = sortOrder,
-        completionMessage = completionMessage,
-        stepsFingerprint = StepFingerprint.of(steps),
-        cancelled = false,
-        createdAtEpochMillis = old?.createdAtEpochMillis ?: now,
-        updatedAtEpochMillis = now,
-    )
+    private suspend fun cancelForTemplateConversion(
+        instance: TaskInstanceEntity,
+        batchId: String,
+        now: Long,
+    ) {
+        if (instance.status in setOf(TaskStatus.COMPLETED.name, TaskStatus.CANCELLED.name)) return
+        instanceDao.upsertInstances(
+            listOf(instance.copy(status = TaskStatus.CANCELLED.name, updatedAtEpochMillis = now)),
+        )
+        auditDao.insertLogs(
+            listOf(
+                ActionLogEntity(
+                    eventId = idGenerator.next(),
+                    taskId = instance.taskId,
+                    occurrenceKey = instance.occurrenceKey,
+                    batchId = batchId,
+                    action = "TEMPLATE_KIND_CHANGED",
+                    detail = null,
+                    createdAtEpochMillis = now,
+                ),
+            ),
+        )
+    }
+
+    private fun DstTask.toDefinition(old: TaskDefinitionEntity?, now: Long): TaskDefinitionEntity {
+        val storedRecurrence = recurrence.toStoredRecurrence(old, TaskDay.from(nowDateTime()))
+        return TaskDefinitionEntity(
+            taskId = taskId,
+            name = name,
+            description = description,
+            groupId = groupId,
+            required = required,
+            taskDate = taskDate.toString(),
+            deadline = deadline?.toString(),
+            points = points,
+            sortOrder = sortOrder,
+            completionMessage = completionMessage,
+            stepsFingerprint = StepFingerprint.of(steps),
+            cancelled = false,
+            createdAtEpochMillis = old?.createdAtEpochMillis ?: now,
+            updatedAtEpochMillis = now,
+            recurrenceFrequency = storedRecurrence.frequency,
+            recurrenceStartDate = storedRecurrence.startDate,
+            recurrenceEndDate = storedRecurrence.endDate,
+            recurrenceCount = storedRecurrence.count,
+            recurrenceWeekdaysMask = storedRecurrence.weekdaysMask,
+            recurrenceDeadlineTime = storedRecurrence.deadlineTime,
+            executionKind = execution.kindName(),
+            executionAction = execution.actionValue(),
+            executionTarget = execution.targetValue(),
+        )
+    }
 
     private fun DstTask.toInstance(
         old: TaskInstanceEntity?,
@@ -295,7 +426,163 @@ class RoomImportService(
             completedAtEpochMillis = null,
             createdAtEpochMillis = old?.createdAtEpochMillis ?: now,
             updatedAtEpochMillis = now,
+            executionKind = execution.kindName(),
+            executionAction = execution.actionValue(),
+            executionTarget = execution.targetValue(),
         )
+    }
+
+    private suspend fun applyExecutionUpdate(
+        task: DstTask,
+        oldDefinition: TaskDefinitionEntity,
+        oldInstance: TaskInstanceEntity,
+        batchId: String,
+        now: Long,
+    ) {
+        if (oldDefinition.executionSignature() == task.execution.signature()) {
+            if (oldDefinition.executionKind == "INFORMATION" && oldDefinition.description != task.description) {
+                logImportExecution(
+                    oldInstance,
+                    batchId,
+                    "INFORMATION_REQUIREMENT_CHANGED",
+                    "{\"draftPreserved\":true}",
+                    now,
+                )
+            }
+            return
+        }
+
+        val progress = executionDao.getProgress(oldInstance.taskId, oldInstance.occurrenceKey)
+        val detail = "{\"oldKind\":\"${oldDefinition.executionKind}\"," +
+            "\"newKind\":\"${task.execution.kindName()}\"," +
+            "\"counterValue\":${progress?.counterValue ?: "null"}," +
+            "\"elapsedMillis\":${progress?.elapsedMillis ?: "null"}}"
+        executionDao.deleteProgress(oldInstance.taskId, oldInstance.occurrenceKey)
+        if (oldDefinition.executionKind == "INFORMATION" && task.execution.kindName() != "INFORMATION") {
+            executionDao.deleteSubmission(oldInstance.taskId, oldInstance.occurrenceKey)
+        }
+        logImportExecution(oldInstance, batchId, "EXECUTION_RESET", detail, now)
+    }
+
+    private suspend fun logImportExecution(
+        instance: TaskInstanceEntity,
+        batchId: String,
+        action: String,
+        detail: String,
+        now: Long,
+    ) {
+        auditDao.insertLogs(
+            listOf(
+                ActionLogEntity(
+                    eventId = idGenerator.next(),
+                    taskId = instance.taskId,
+                    occurrenceKey = instance.occurrenceKey,
+                    batchId = batchId,
+                    action = action,
+                    detail = detail,
+                    createdAtEpochMillis = now,
+                ),
+            ),
+        )
+    }
+
+    private fun TaskInstanceEntity.isMutableForImport(): Boolean =
+        status in setOf(TaskStatus.NOT_STARTED.name, TaskStatus.PENDING.name)
+
+    private data class StoredRecurrence(
+        val frequency: Int?,
+        val startDate: String?,
+        val endDate: String?,
+        val count: Int?,
+        val weekdaysMask: Int?,
+        val deadlineTime: String?,
+    )
+
+    private fun RecurrenceSpec.toStoredRecurrence(
+        old: TaskDefinitionEntity?,
+        currentTaskDate: LocalDate,
+    ): StoredRecurrence {
+        if (this is RecurrenceSpec.None) {
+            return StoredRecurrence(null, null, null, null, null, null)
+        }
+        val frequency = if (this is RecurrenceSpec.Daily) 1 else 2
+        val start = when (this) {
+            is RecurrenceSpec.Daily -> startDate
+            is RecurrenceSpec.Weekly -> startDate
+            RecurrenceSpec.None -> null
+        }
+        val end = when (this) {
+            is RecurrenceSpec.Daily -> endDate
+            is RecurrenceSpec.Weekly -> endDate
+            RecurrenceSpec.None -> null
+        }
+        val count = when (this) {
+            is RecurrenceSpec.Daily -> maxOccurrences
+            is RecurrenceSpec.Weekly -> maxOccurrences
+            RecurrenceSpec.None -> null
+        }
+        val weekdaysMask = (this as? RecurrenceSpec.Weekly)?.weekdays?.let(WeekdayMask::encode)
+        val deadline = when (val value = when (this) {
+            is RecurrenceSpec.Daily -> deadline
+            is RecurrenceSpec.Weekly -> deadline
+            RecurrenceSpec.None -> RecurrenceDeadline.Default
+        }) {
+            RecurrenceDeadline.Default -> "04:00"
+            RecurrenceDeadline.None -> null
+            is RecurrenceDeadline.At -> value.time.toString()
+        }
+        val sameRule = old != null && !old.cancelled &&
+            old.recurrenceFrequency == frequency &&
+            old.recurrenceEndDate == end?.toString() &&
+            old.recurrenceCount == count &&
+            old.recurrenceWeekdaysMask == weekdaysMask &&
+            old.recurrenceDeadlineTime == deadline &&
+            (start == null || old.recurrenceStartDate == start.toString())
+        val effectiveStart = if (sameRule) {
+            checkNotNull(old?.recurrenceStartDate).let(LocalDate::parse)
+        } else {
+            maxOf(start ?: currentTaskDate, currentTaskDate)
+        }
+        return StoredRecurrence(
+            frequency = frequency,
+            startDate = effectiveStart.toString(),
+            endDate = end?.toString(),
+            count = count,
+            weekdaysMask = weekdaysMask,
+            deadlineTime = deadline,
+        )
+    }
+
+    private fun TaskDefinitionEntity.recurrenceSignature(): String =
+        listOf(
+            recurrenceFrequency,
+            recurrenceStartDate,
+            recurrenceEndDate,
+            recurrenceCount,
+            recurrenceWeekdaysMask,
+            recurrenceDeadlineTime,
+        ).joinToString(":")
+
+    private fun TaskDefinitionEntity.executionSignature(): String =
+        "$executionKind:${executionAction ?: ""}:${executionTarget ?: ""}"
+
+    private fun ExecutionSpec.signature(): String =
+        "${kindName()}:${actionValue() ?: ""}:${targetValue() ?: ""}"
+
+    private fun ExecutionSpec.kindName(): String = when (this) {
+        ExecutionSpec.Normal -> "NORMAL"
+        is ExecutionSpec.Counter -> "COUNTER"
+        is ExecutionSpec.Timer -> "TIMER"
+        ExecutionSpec.Information -> "INFORMATION"
+    }
+
+    private fun ExecutionSpec.actionValue(): Int? =
+        (this as? ExecutionSpec.Counter)?.action?.protocolValue
+
+    private fun ExecutionSpec.targetValue(): Int? = when (this) {
+        is ExecutionSpec.Counter -> target
+        is ExecutionSpec.Timer -> targetSeconds
+        else -> null
     }
 
     private fun TaskDefinitionEntity.sameContent(other: TaskDefinitionEntity): Boolean =

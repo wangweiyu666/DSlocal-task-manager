@@ -12,20 +12,16 @@
 - 当前 Android 构建结果 `android`；
 - 失败时稳定的错误代码和字段路径。
 
-`x`、`h`、`u` 已属于 DST1 v1，因此合法向量的 `spec.result` 为 `VALID`。在对应业务能力完成前，Android 对这些合法向量返回 `CAPABILITY_NOT_IMPLEMENTED`。非法组合必须先返回具体协议错误，不能被能力未实现错误遮蔽。
+`x`、`h`、`u` 均属于 DST1 v1，因此合法向量的 `spec.result` 为 `VALID`。W10 起 Android 支持 `u.k=1/2/3`，W11 起支持 `x.f=1/2`；这些合法向量同时标记为 Android `VALID`。当前只有 `h` 仍返回 `CAPABILITY_NOT_IMPLEMENTED`。非法组合必须先返回具体协议错误，不能被能力未实现错误遮蔽。
 
 ## 2. 清单结构
 
 ```json
 {
-  "id": "future-counter",
-  "source": {"kind":"json","path":"future-valid/counter.json"},
+  "id": "counter",
+  "source": {"kind":"json","path":"valid/counter.json"},
   "spec": {"result":"VALID"},
-  "android": {
-    "result":"ERROR",
-    "code":"CAPABILITY_NOT_IMPLEMENTED",
-    "path":"t[0].u"
-  }
+  "android": {"result":"VALID"}
 }
 ```
 

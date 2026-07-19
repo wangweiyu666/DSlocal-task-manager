@@ -7,12 +7,15 @@ import com.ds.localtaskmanager.data.ImportPreview
 import com.ds.localtaskmanager.data.ImportService
 import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.data.TaskRepository
+import com.ds.localtaskmanager.data.recurrence.InstanceGenerationService
 import com.ds.localtaskmanager.domain.TaskDay
 import java.time.LocalDateTime
+import java.time.LocalDate
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -27,17 +30,29 @@ data class ImportUiState(
 class TodayViewModel(
     repository: TaskRepository,
     private val importService: ImportService,
+    private val generationService: InstanceGenerationService,
 ) : ViewModel() {
-    private val currentTaskDate = TaskDay.from(LocalDateTime.now()).toString()
+    private val mutableTaskDate = MutableStateFlow(TaskDay.from(LocalDateTime.now()).toString())
+    val taskDate: StateFlow<String> = mutableTaskDate.asStateFlow()
 
-    val tasks: StateFlow<List<TaskInstanceEntity>> = repository
-        .observeTasks(currentTaskDate)
+    val tasks: StateFlow<List<TaskInstanceEntity>> = mutableTaskDate
+        .flatMapLatest(repository::observeTasks)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    val taskDate: String = currentTaskDate
 
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
+
+    init {
+        synchronizeInstances()
+    }
+
+    fun synchronizeInstances() {
+        viewModelScope.launch {
+            val current = TaskDay.from(LocalDateTime.now()).toString()
+            generationService.reconcileAll(LocalDate.parse(current))
+            mutableTaskDate.value = current
+        }
+    }
 
     fun openImport() {
         _importState.value = ImportUiState(visible = true)
@@ -84,10 +99,11 @@ class TodayViewModel(
 class TodayViewModelFactory(
     private val repository: TaskRepository,
     private val importService: ImportService,
+    private val generationService: InstanceGenerationService,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(TodayViewModel::class.java))
-        return TodayViewModel(repository, importService) as T
+        return TodayViewModel(repository, importService, generationService) as T
     }
 }

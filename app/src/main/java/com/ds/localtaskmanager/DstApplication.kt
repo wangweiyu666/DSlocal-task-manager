@@ -8,6 +8,8 @@ import com.ds.localtaskmanager.data.RoomTaskExecutionService
 import com.ds.localtaskmanager.data.RoomTaskRepository
 import com.ds.localtaskmanager.data.TaskExecutionService
 import com.ds.localtaskmanager.data.TaskRepository
+import com.ds.localtaskmanager.data.recurrence.InstanceGenerationService
+import com.ds.localtaskmanager.data.recurrence.RoomInstanceGenerationService
 import com.ds.localtaskmanager.domain.SecureRecordIdGenerator
 import com.ds.localtaskmanager.protocol.Dst1Parser
 import java.time.Clock
@@ -24,5 +26,8 @@ class DstApplication : Application() {
     }
     val taskExecutionService: TaskExecutionService by lazy {
         RoomTaskExecutionService(database, clock, idGenerator)
+    }
+    val instanceGenerationService: InstanceGenerationService by lazy {
+        RoomInstanceGenerationService(database, clock, idGenerator)
     }
 }

@@ -1,5 +1,7 @@
 package com.ds.localtaskmanager.protocol
 
+import com.ds.localtaskmanager.domain.execution.ExecutionSpec
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceSpec
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -38,6 +40,8 @@ data class DstTask(
     val steps: List<DstStep>,
     val completionMessage: String,
     val groupId: String?,
+    val execution: ExecutionSpec,
+    val recurrence: RecurrenceSpec,
 )
 
 data class DstStep(

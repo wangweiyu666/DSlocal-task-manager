@@ -66,15 +66,21 @@ Schema 位置：
 
 v1/v2 数据迁移后的默认值为 `executionKind=NORMAL`、`category=TEMPORARY`，发布时间使用原实例创建时间。
 
+W11 将缺失的重复开始日期解析为首次导入任务日，并把有效日期保存到 `recurrenceStartDate`。星期使用 bit 0～6 对应周一～周日；缺失截止时间规范化为 `04:00`，显式 `null` 继续保存为 `null`。日期实例使用 ISO 计划日期作为 `occurrenceKey`，分类为 `DAILY` 或 `WEEKLY`。
+
 ## 4. 新表结构
 
 ### `execution_progress`
 
 每个实例最多一行。`COUNTER` 使用 `counterValue`，`TIMER` 使用 `elapsedMillis`。运行中的单调时钟起点不持久化。
 
+W10 起计数值限制在 `0..executionTarget`；计时按毫秒累计并在目标秒数处截断。离开执行页、应用进入后台或锁屏时，由前台计时控制器结算本段单调时钟时间。重启后保留累计值但不自动继续。
+
 ### `information_submission`
 
 每个实例最多一条当前正文，包含创建、更新和提交时间。正文版本历史不重复保存；编辑事件进入 `action_log`。
+
+正文去除首尾空白后必须非空，最多 2000 个 Unicode 码点。保存草稿会清除当前提交时间；完成任务时在同一事务内设置提交时间。审计日志只记录长度，不复制正文。
 
 ### `task_note`
 

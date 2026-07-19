@@ -1,5 +1,10 @@
 package com.ds.localtaskmanager.protocol
 
+import com.ds.localtaskmanager.domain.execution.CounterAction
+import com.ds.localtaskmanager.domain.execution.ExecutionSpec
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceDeadline
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceSpec
+import java.time.DayOfWeek
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.LocalDateTime
@@ -23,6 +28,45 @@ class Dst1ParserTest {
     private val parser = Dst1Parser()
     private val importedAt = LocalDateTime.of(2026, 7, 18, 10, 0)
     private val json = Json { isLenient = false }
+
+    @Test
+    fun `execution objects become typed DST1 models`() {
+        val counter = parser.parse(resource("valid/counter.json"), importedAt).allTasks().single().execution
+        val timer = parser.parse(resource("valid/timer.json"), importedAt).allTasks().single().execution
+        val information = parser.parse(resource("valid/information.json"), importedAt).allTasks().single().execution
+
+        assertEquals(ExecutionSpec.Counter(CounterAction.CLICK, 999), counter)
+        assertEquals(ExecutionSpec.Timer(3_600), timer)
+        assertEquals(ExecutionSpec.Information, information)
+    }
+
+    @Test
+    fun `recurrence objects become typed DST1 models`() {
+        val daily = parser.parse(resource("valid/daily-recurrence.json"), importedAt)
+            .allTasks().single().recurrence
+        val weekly = parser.parse(resource("valid/weekly-recurrence.json"), importedAt)
+            .allTasks().single().recurrence
+
+        assertEquals(
+            RecurrenceSpec.Daily(
+                startDate = java.time.LocalDate.of(2026, 7, 18),
+                endDate = null,
+                maxOccurrences = 10,
+                deadline = RecurrenceDeadline.At(java.time.LocalTime.of(22, 0)),
+            ),
+            daily,
+        )
+        assertEquals(
+            RecurrenceSpec.Weekly(
+                startDate = null,
+                endDate = java.time.LocalDate.of(2026, 8, 18),
+                maxOccurrences = null,
+                weekdays = setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY),
+                deadline = RecurrenceDeadline.None,
+            ),
+            weekly,
+        )
+    }
 
     @Test
     fun `shared manifest drives every protocol vector`() {

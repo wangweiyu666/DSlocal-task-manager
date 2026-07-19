@@ -9,16 +9,51 @@ import com.ds.localtaskmanager.data.InstanceStepEntity
 import com.ds.localtaskmanager.data.TaskInstanceEntity
 import kotlinx.coroutines.flow.Flow
 
+data class GenerationSummary(
+    val taskId: String,
+    val generatedCount: Int,
+    val latestDate: String?,
+)
+
 @Dao
 interface InstanceDao {
     @Query("SELECT * FROM task_instance WHERE taskId IN (:ids) AND occurrenceKey = 'once'")
     suspend fun getOnceInstances(ids: List<String>): List<TaskInstanceEntity>
+
+    @Query("SELECT * FROM task_instance WHERE taskId IN (:ids)")
+    suspend fun getInstancesForTasks(ids: List<String>): List<TaskInstanceEntity>
 
     @Query("SELECT * FROM task_instance WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getInstance(taskId: String, occurrenceKey: String = "once"): TaskInstanceEntity?
 
     @Upsert
     suspend fun upsertInstances(instances: List<TaskInstanceEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertInstance(instance: TaskInstanceEntity): Long
+
+    @Query(
+        """
+        SELECT taskId, COUNT(*) AS generatedCount, MAX(taskDate) AS latestDate
+        FROM task_instance
+        WHERE taskId IN (:taskIds) AND occurrenceKey != 'once'
+        GROUP BY taskId
+        """,
+    )
+    suspend fun generationSummaries(taskIds: List<String>): List<GenerationSummary>
+
+    @Query(
+        """
+        SELECT occurrenceKey FROM task_instance
+        WHERE taskId = :taskId AND occurrenceKey != 'once'
+          AND taskDate BETWEEN :fromDate AND :throughDate
+        """,
+    )
+    suspend fun occurrenceKeysInRange(
+        taskId: String,
+        fromDate: String,
+        throughDate: String,
+    ): List<String>
 
     @Query("DELETE FROM instance_step WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun deleteInstanceSteps(taskId: String, occurrenceKey: String = "once")

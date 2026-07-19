@@ -16,11 +16,17 @@ interface ExecutionDao {
     @Upsert
     suspend fun upsertProgress(progress: ExecutionProgressEntity)
 
+    @Query("DELETE FROM execution_progress WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
+    suspend fun deleteProgress(taskId: String, occurrenceKey: String)
+
     @Query("SELECT * FROM information_submission WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getSubmission(taskId: String, occurrenceKey: String): InformationSubmissionEntity?
 
     @Upsert
     suspend fun upsertSubmission(submission: InformationSubmissionEntity)
+
+    @Query("DELETE FROM information_submission WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
+    suspend fun deleteSubmission(taskId: String, occurrenceKey: String)
 
     @Query("SELECT * FROM task_note WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getNote(taskId: String, occurrenceKey: String): TaskNoteEntity?

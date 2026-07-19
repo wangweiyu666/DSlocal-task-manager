@@ -5,13 +5,13 @@
     {"id":"minimal-step","source":{"kind":"dst1","path":"valid/minimal-step.dst1","decodedJson":"valid/minimal-step.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
     {"id":"boundary-values","source":{"kind":"json","path":"valid/boundary-values.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
     {"id":"clear-fields","source":{"kind":"json","path":"valid/clear-fields.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
+    {"id":"counter","source":{"kind":"json","path":"valid/counter.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
+    {"id":"timer","source":{"kind":"json","path":"valid/timer.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
+    {"id":"information","source":{"kind":"json","path":"valid/information.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
+    {"id":"daily-recurrence","source":{"kind":"json","path":"valid/daily-recurrence.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
+    {"id":"weekly-recurrence","source":{"kind":"json","path":"valid/weekly-recurrence.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
 
-    {"id":"future-daily-recurrence","source":{"kind":"json","path":"future-valid/daily-recurrence.json"},"spec":{"result":"VALID"},"android":{"result":"ERROR","code":"CAPABILITY_NOT_IMPLEMENTED","path":"t[0].x"}},
-    {"id":"future-weekly-recurrence","source":{"kind":"json","path":"future-valid/weekly-recurrence.json"},"spec":{"result":"VALID"},"android":{"result":"ERROR","code":"CAPABILITY_NOT_IMPLEMENTED","path":"t[0].x"}},
     {"id":"future-reminders","source":{"kind":"json","path":"future-valid/reminders.json"},"spec":{"result":"VALID"},"android":{"result":"ERROR","code":"CAPABILITY_NOT_IMPLEMENTED","path":"t[0].h"}},
-    {"id":"future-counter","source":{"kind":"json","path":"future-valid/counter.json"},"spec":{"result":"VALID"},"android":{"result":"ERROR","code":"CAPABILITY_NOT_IMPLEMENTED","path":"t[0].u"}},
-    {"id":"future-timer","source":{"kind":"json","path":"future-valid/timer.json"},"spec":{"result":"VALID"},"android":{"result":"ERROR","code":"CAPABILITY_NOT_IMPLEMENTED","path":"t[0].u"}},
-    {"id":"future-information","source":{"kind":"json","path":"future-valid/information.json"},"spec":{"result":"VALID"},"android":{"result":"ERROR","code":"CAPABILITY_NOT_IMPLEMENTED","path":"t[0].u"}},
 
     {"id":"bad-crc","source":{"kind":"dst1","path":"invalid/bad-crc.dst1"},"spec":{"result":"ERROR","code":"CHECKSUM_MISMATCH","path":"$.checksum"},"android":{"result":"ERROR","code":"CHECKSUM_MISMATCH","path":"$.checksum"}},
     {"id":"unknown-field","source":{"kind":"json","path":"invalid/unknown-field.json"},"spec":{"result":"ERROR","code":"UNKNOWN_FIELD","path":"future"},"android":{"result":"ERROR","code":"UNKNOWN_FIELD","path":"future"}},

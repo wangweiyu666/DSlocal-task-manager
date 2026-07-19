@@ -21,6 +21,7 @@ import com.ds.localtaskmanager.data.TaskInstanceEntity
 @Composable
 fun TodayScreen(viewModel: TodayViewModel) {
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
+    val taskDate by viewModel.taskDate.collectAsStateWithLifecycle()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -29,7 +30,7 @@ fun TodayScreen(viewModel: TodayViewModel) {
     ) {
         item {
             Text("今日", style = MaterialTheme.typography.headlineLarge)
-            Text("任务日 ${viewModel.taskDate}", style = MaterialTheme.typography.bodyMedium)
+            Text("任务日 $taskDate", style = MaterialTheme.typography.bodyMedium)
         }
         if (tasks.isEmpty()) {
             item {

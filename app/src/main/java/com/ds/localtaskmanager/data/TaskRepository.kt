@@ -2,6 +2,7 @@ package com.ds.localtaskmanager.data
 
 import com.ds.localtaskmanager.data.dao.AuditDao
 import com.ds.localtaskmanager.data.dao.InstanceDao
+import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import kotlinx.coroutines.flow.Flow
 
 interface TaskRepository {
@@ -12,8 +13,11 @@ interface TaskRepository {
         status: String? = null,
     ): List<TaskInstanceEntity>
 
-    suspend fun logs(taskId: String): List<ActionLogEntity>
-    suspend fun ledger(taskId: String): List<PointsLedgerEntity>
+    suspend fun logs(key: TaskInstanceKey): List<ActionLogEntity>
+    suspend fun ledger(key: TaskInstanceKey): List<PointsLedgerEntity>
+
+    suspend fun logs(taskId: String): List<ActionLogEntity> = logs(TaskInstanceKey(taskId))
+    suspend fun ledger(taskId: String): List<PointsLedgerEntity> = ledger(TaskInstanceKey(taskId))
 }
 
 class RoomTaskRepository(
@@ -28,8 +32,9 @@ class RoomTaskRepository(
         status: String?,
     ): List<TaskInstanceEntity> = instanceDao.queryHistory(groupId, status)
 
-    override suspend fun logs(taskId: String): List<ActionLogEntity> = auditDao.getLogs(taskId)
+    override suspend fun logs(key: TaskInstanceKey): List<ActionLogEntity> =
+        auditDao.getLogs(key.taskId, key.occurrenceKey)
 
-    override suspend fun ledger(taskId: String): List<PointsLedgerEntity> =
-        auditDao.getLedger(taskId)
+    override suspend fun ledger(key: TaskInstanceKey): List<PointsLedgerEntity> =
+        auditDao.getLedger(key.taskId, key.occurrenceKey)
 }
