@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.ds.localtaskmanager.data.ImportPreview
 import com.ds.localtaskmanager.data.ImportService
-import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.data.TaskRepository
 import com.ds.localtaskmanager.data.recurrence.InstanceGenerationService
 import com.ds.localtaskmanager.domain.TaskDay
@@ -16,7 +15,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -28,6 +30,7 @@ data class ImportUiState(
     val working: Boolean = false,
 )
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TodayViewModel(
     repository: TaskRepository,
     private val importService: ImportService,
@@ -37,9 +40,35 @@ class TodayViewModel(
     private val mutableTaskDate = MutableStateFlow(TaskDay.from(LocalDateTime.now()).toString())
     val taskDate: StateFlow<String> = mutableTaskDate.asStateFlow()
 
-    val tasks: StateFlow<List<TaskInstanceEntity>> = mutableTaskDate
-        .flatMapLatest(repository::observeTasks)
+    private val mutableLoading = MutableStateFlow(true)
+    private val mutableError = MutableStateFlow<String?>(null)
+
+    private val todayTasks = mutableTaskDate
+        .flatMapLatest(repository::observeTodayTasks)
+        .onEach {
+            mutableLoading.value = false
+            mutableError.value = null
+        }
+        .catch { error ->
+            mutableLoading.value = false
+            mutableError.value = error.message ?: "今日任务加载失败"
+            emit(emptyList())
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val state: StateFlow<TodayUiState> = combine(
+        mutableTaskDate,
+        todayTasks,
+        mutableLoading,
+        mutableError,
+    ) { date, tasks, loading, error ->
+        TodayUiState(
+            loading = loading,
+            taskDate = date,
+            sections = buildTodaySections(tasks),
+            error = error,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayUiState())
 
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
@@ -50,10 +79,17 @@ class TodayViewModel(
 
     fun synchronizeInstances() {
         viewModelScope.launch {
-            val current = TaskDay.from(LocalDateTime.now()).toString()
-            generationService.reconcileAll(LocalDate.parse(current))
-            reminderReconciler?.reconcileAll()
-            mutableTaskDate.value = current
+            mutableLoading.value = true
+            mutableError.value = null
+            runCatching {
+                val current = TaskDay.from(LocalDateTime.now()).toString()
+                generationService.reconcileAll(LocalDate.parse(current))
+                reminderReconciler?.reconcileAll()
+                mutableTaskDate.value = current
+            }.onFailure { error ->
+                mutableError.value = error.message ?: "今日任务同步失败"
+                mutableLoading.value = false
+            }
         }
     }
 

@@ -22,6 +22,12 @@ class TimerSessionController(
 
     val isRunning: Boolean get() = startedAtMillis != null
 
+    fun preview(base: ExecutionState.Timer): ExecutionState.Timer {
+        val startedAt = startedAtMillis ?: return base
+        val delta = (monotonicClock.elapsedRealtimeMillis() - startedAt).coerceAtLeast(0)
+        return base.copy(elapsedMillis = (base.elapsedMillis + delta).coerceAtMost(base.targetMillis))
+    }
+
     suspend fun start(key: TaskInstanceKey): ExecutionState.Timer {
         val state = service.getExecutionState(key) as ExecutionState.Timer
         if (state.elapsedMillis < state.targetMillis && !isRunning) {

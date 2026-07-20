@@ -22,14 +22,14 @@ fun ImportDialog(
 ) {
     AlertDialog(
         onDismissRequest = { if (!state.working) onDismiss() },
-        title = { Text(if (state.preview == null) "导入 DST1 任务" else "确认导入") },
+        title = { Text(if (state.preview == null) "导入任务" else "确认导入") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (state.preview == null) {
                     OutlinedTextField(
                         value = state.input,
                         onValueChange = onInputChange,
-                        label = { Text("粘贴任务字符串") },
+                        label = { Text("粘贴任务内容") },
                         minLines = 5,
                         maxLines = 10,
                         enabled = !state.working,
