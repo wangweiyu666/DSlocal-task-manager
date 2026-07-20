@@ -7,6 +7,9 @@ import com.ds.localtaskmanager.data.dao.ExecutionDao
 import com.ds.localtaskmanager.data.dao.InstanceDao
 import com.ds.localtaskmanager.data.dao.ProfileDao
 import com.ds.localtaskmanager.data.recurrence.RoomInstanceGenerationService
+import com.ds.localtaskmanager.data.result.HistoricalPointsTransferService
+import com.ds.localtaskmanager.data.result.ResultRecalculationService
+import com.ds.localtaskmanager.data.result.ResultRevisionReason
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.StepFingerprint
 import com.ds.localtaskmanager.domain.TaskDay
@@ -89,6 +92,8 @@ class RoomImportService(
     private val generationService by lazy {
         RoomInstanceGenerationService(database, clock, idGenerator)
     }
+    private val resultService by lazy { ResultRecalculationService(database, clock, idGenerator) }
+    private val pointsTransferService by lazy { HistoricalPointsTransferService(database, clock, idGenerator) }
 
     override suspend fun preview(encoded: String): ImportPreview {
         val batch = parser.parse(Dst1Decoder.decode(encoded.trim()), nowDateTime())
@@ -98,7 +103,35 @@ class RoomImportService(
     override suspend fun import(preview: ImportPreview): ImportPreview = database.withTransaction {
         if (profileDao.hasBatch(preview.batch.batchId)) throw DuplicateBatchException(preview.batch.batchId)
         val freshPreview = preview(preview.batch)
+        val taskIds = (freshPreview.batch.allTasks().map { it.taskId } + freshPreview.batch.cancelledTaskIds).distinct()
+        val oldDefinitions = if (taskIds.isEmpty()) emptyMap() else {
+            definitionDao.getDefinitions(taskIds).associateBy { it.taskId }
+        }
+        val beforeDates = if (taskIds.isEmpty()) emptyList() else {
+            instanceDao.getInstancesForTasks(taskIds).map { it.taskDate }.distinct()
+        }
+        val before = resultService.capture(beforeDates)
         applyBatch(freshPreview)
+        freshPreview.batch.allTasks().forEach { task ->
+            val oldGroup = oldDefinitions[task.taskId]?.groupId
+            val newGroup = definitionDao.getDefinition(task.taskId)?.groupId
+            if (oldDefinitions.containsKey(task.taskId) && oldGroup != newGroup) {
+                pointsTransferService.moveTaskToGroup(task.taskId, newGroup)
+            }
+        }
+        val afterDates = if (taskIds.isEmpty()) emptyList() else {
+            instanceDao.getInstancesForTasks(taskIds).map { it.taskDate }.distinct()
+        }
+        val changedTaskIds = freshPreview.taskChanges
+            .filterNot { it.types == setOf(ImportChangeType.UNCHANGED) }
+            .map { it.taskId }
+        resultService.writeChanges(
+            before,
+            afterDates,
+            ResultRevisionReason.TASK_IMPORTED,
+            freshPreview.batch.batchId,
+            changedTaskIds,
+        )
         freshPreview
     }
 

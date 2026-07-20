@@ -7,6 +7,8 @@ import com.ds.localtaskmanager.data.InstanceStepEntity
 import com.ds.localtaskmanager.data.TaskDefinitionEntity
 import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.data.dao.GenerationSummary
+import com.ds.localtaskmanager.data.result.ResultRecalculationService
+import com.ds.localtaskmanager.data.result.ResultRevisionReason
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
@@ -52,6 +54,7 @@ class RoomInstanceGenerationService(
     private val clock: Clock,
     private val idGenerator: RecordIdGenerator,
 ) : InstanceGenerationService {
+    private val resultService by lazy { ResultRecalculationService(database, clock, idGenerator) }
     override suspend fun previewDefinition(
         definition: TaskDefinitionEntity,
         throughDate: LocalDate,
@@ -72,15 +75,68 @@ class RoomInstanceGenerationService(
 
     override suspend fun reconcileAll(throughDate: LocalDate): GenerationResult =
         database.withTransaction {
+            reconcileExistingStatuses(throughDate)
             val definitions = database.definitionDao().getActiveRecurringDefinitions()
             if (definitions.isEmpty()) return@withTransaction GenerationResult(emptyList())
             val summaries = database.instanceDao().generationSummaries(definitions.map { it.taskId })
                 .associateBy { it.taskId }
+            val affectedDates = definitions.flatMap { definition ->
+                plannedDates(definition, summaries[definition.taskId], throughDate)
+            }.map(LocalDate::toString).distinct()
+            val before = resultService.capture(affectedDates)
             val created = definitions.flatMap { definition ->
                 generate(definition, summaries[definition.taskId], throughDate, null)
             }
+            resultService.writeChanges(
+                before,
+                affectedDates,
+                ResultRevisionReason.RECURRENCE_GENERATED,
+                null,
+                created.map { it.taskId },
+            )
             GenerationResult(created)
         }
+
+    private suspend fun reconcileExistingStatuses(throughDate: LocalDate) {
+        val candidates = database.instanceDao().getReconcilableInstances(throughDate.toString())
+        if (candidates.isEmpty()) return
+        val now = clock.millis()
+        val nowDateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(now), clock.zone)
+        val changed = candidates.mapNotNull { instance ->
+            val expected = TaskStateMachine.statusAt(
+                LocalDate.parse(instance.taskDate),
+                instance.deadline?.let(LocalDateTime::parse),
+                nowDateTime,
+            )
+            instance.takeIf { expected.name != it.status }?.copy(
+                status = expected.name,
+                updatedAtEpochMillis = now,
+            )
+        }
+        if (changed.isEmpty()) return
+        val before = resultService.capture(changed.map { it.taskDate })
+        val oldByKey = candidates.associateBy { it.taskId to it.occurrenceKey }
+        database.instanceDao().upsertInstances(changed)
+        database.auditDao().insertLogs(changed.map { updated ->
+            val old = oldByKey.getValue(updated.taskId to updated.occurrenceKey)
+            ActionLogEntity(
+                eventId = idGenerator.next(),
+                taskId = updated.taskId,
+                occurrenceKey = updated.occurrenceKey,
+                batchId = null,
+                action = "STATUS_RECONCILED",
+                detail = "${old.status}->${updated.status}",
+                createdAtEpochMillis = now,
+            )
+        })
+        resultService.writeChanges(
+            before,
+            changed.map { it.taskDate },
+            ResultRevisionReason.DEADLINE_RECONCILED,
+            null,
+            changed.map { it.taskId },
+        )
+    }
 
     override suspend fun reconcileTask(
         taskId: String,
@@ -92,7 +148,19 @@ class RoomInstanceGenerationService(
                 ?.takeIf { !it.cancelled && it.recurrenceFrequency != null }
                 ?: return@withTransaction GenerationResult(emptyList())
             val summary = database.instanceDao().generationSummaries(listOf(taskId)).singleOrNull()
-            GenerationResult(generate(definition, summary, throughDate, batchId))
+            val affectedDates = plannedDates(definition, summary, throughDate).map(LocalDate::toString)
+            val before = if (batchId == null) resultService.capture(affectedDates) else emptyMap()
+            val created = generate(definition, summary, throughDate, batchId)
+            if (batchId == null) {
+                resultService.writeChanges(
+                    before,
+                    affectedDates,
+                    ResultRevisionReason.RECURRENCE_GENERATED,
+                    null,
+                    listOf(taskId),
+                )
+            }
+            GenerationResult(created)
         }
 
     private suspend fun generate(

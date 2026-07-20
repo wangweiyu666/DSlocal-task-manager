@@ -4,6 +4,8 @@ import androidx.room.withTransaction
 import com.ds.localtaskmanager.data.dao.AuditDao
 import com.ds.localtaskmanager.data.dao.ExecutionDao
 import com.ds.localtaskmanager.data.dao.InstanceDao
+import com.ds.localtaskmanager.data.result.ResultRecalculationService
+import com.ds.localtaskmanager.data.result.ResultRevisionReason
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.domain.TaskStatus
@@ -49,13 +51,23 @@ class RoomTaskExecutionService(
     private val instanceDao: InstanceDao get() = database.instanceDao()
     private val executionDao: ExecutionDao get() = database.executionDao()
     private val auditDao: AuditDao get() = database.auditDao()
+    private val resultService by lazy { ResultRecalculationService(database, clock, idGenerator) }
 
     override suspend fun getExecutionState(key: TaskInstanceKey): ExecutionState =
         database.withTransaction { executionState(requireInstance(key)) }
 
     override suspend fun getCompletionReadiness(key: TaskInstanceKey): CompletionReadiness =
         database.withTransaction {
-            val instance = reconcile(requireInstance(key))
+            val original = requireInstance(key)
+            val before = resultService.capture(listOf(original.taskDate))
+            val instance = reconcile(original)
+            resultService.writeChanges(
+                before,
+                listOf(instance.taskDate),
+                ResultRevisionReason.DEADLINE_RECONCILED,
+                null,
+                listOf(key.taskId),
+            )
             val stepsComplete = instanceDao.countIncompleteRequiredSteps(key.taskId, key.occurrenceKey) == 0
             val targetReached = isExecutionTargetReached(instance)
             CompletionReadiness(
@@ -174,7 +186,9 @@ class RoomTaskExecutionService(
     }
 
     override suspend fun complete(key: TaskInstanceKey) = database.withTransaction {
-        val instance = reconcile(requireInstance(key))
+        val original = requireInstance(key)
+        val before = resultService.capture(listOf(original.taskDate))
+        val instance = reconcile(original)
         if (instance.status != TaskStatus.PENDING.name) {
             fail(TaskOperationCode.INSTANCE_NOT_PENDING, "只有待完成任务可以完成")
         }
@@ -202,17 +216,25 @@ class RoomTaskExecutionService(
                 ledgerId = idGenerator.next(),
                 taskId = key.taskId,
                 occurrenceKey = key.occurrenceKey,
-                groupId = instance.groupId,
+                groupId = currentGroup(key.taskId),
                 delta = instance.points,
                 reason = "COMPLETED",
                 createdAtEpochMillis = now,
             ),
         )
         log(instance, "COMPLETED", null)
+        resultService.writeChanges(
+            before,
+            listOf(instance.taskDate),
+            ResultRevisionReason.TASK_COMPLETED,
+            null,
+            listOf(key.taskId),
+        )
     }
 
     override suspend fun undoCompletion(key: TaskInstanceKey) = database.withTransaction {
         val instance = requireInstance(key)
+        val before = resultService.capture(listOf(instance.taskDate))
         if (instance.status != TaskStatus.COMPLETED.name) {
             fail(TaskOperationCode.INSTANCE_NOT_COMPLETED, "任务尚未完成")
         }
@@ -239,17 +261,36 @@ class RoomTaskExecutionService(
                 ledgerId = idGenerator.next(),
                 taskId = key.taskId,
                 occurrenceKey = key.occurrenceKey,
-                groupId = completionEntry.groupId,
+                groupId = currentGroup(key.taskId),
                 delta = -completionEntry.delta,
                 reason = "COMPLETION_UNDONE",
                 createdAtEpochMillis = now,
             ),
         )
         log(instance, "COMPLETION_UNDONE", null)
+        resultService.writeChanges(
+            before,
+            listOf(instance.taskDate),
+            ResultRevisionReason.COMPLETION_UNDONE,
+            null,
+            listOf(key.taskId),
+        )
     }
 
     override suspend fun reconcile(key: TaskInstanceKey): TaskInstanceEntity =
-        database.withTransaction { reconcile(requireInstance(key)) }
+        database.withTransaction {
+            val instance = requireInstance(key)
+            val before = resultService.capture(listOf(instance.taskDate))
+            val updated = reconcile(instance)
+            resultService.writeChanges(
+                before,
+                listOf(instance.taskDate),
+                ResultRevisionReason.DEADLINE_RECONCILED,
+                null,
+                listOf(key.taskId),
+            )
+            updated
+        }
 
     private suspend fun requireExecutionTarget(instance: TaskInstanceEntity) {
         if (!isExecutionTargetReached(instance)) {
@@ -326,6 +367,12 @@ class RoomTaskExecutionService(
     private suspend fun requireInstance(key: TaskInstanceKey): TaskInstanceEntity =
         instanceDao.getInstance(key.taskId, key.occurrenceKey)
             ?: fail(TaskOperationCode.INSTANCE_NOT_FOUND, "任务不存在")
+
+    private suspend fun currentGroup(taskId: String): String? {
+        val definition = database.definitionDao().getDefinition(taskId)
+            ?: fail(TaskOperationCode.INSTANCE_NOT_FOUND, "Task definition does not exist")
+        return definition.groupId
+    }
 
     private fun TaskInstanceEntity.requireTarget(): Int =
         executionTarget ?: fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "执行目标缺失")

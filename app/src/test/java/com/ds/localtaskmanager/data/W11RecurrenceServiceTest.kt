@@ -81,7 +81,7 @@ class W11RecurrenceServiceTest {
         assertEquals(listOf("2026-07-19", "2026-07-20"), first.created.map { it.occurrenceKey })
         assertEquals(emptyList<TaskInstanceKey>(), second.created)
         assertEquals(
-            listOf(TaskStatus.PENDING.name, TaskStatus.MISSED.name, TaskStatus.PENDING.name),
+            listOf(TaskStatus.MISSED.name, TaskStatus.MISSED.name, TaskStatus.PENDING.name),
             instances().map { it.status },
         )
         assertEquals(3, database.instanceDao().generationSummaries(listOf(TASK_ID)).single().generatedCount)

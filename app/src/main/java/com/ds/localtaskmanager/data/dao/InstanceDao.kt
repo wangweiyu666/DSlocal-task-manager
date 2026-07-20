@@ -23,6 +23,15 @@ interface InstanceDao {
     @Query("SELECT * FROM task_instance WHERE taskId IN (:ids)")
     suspend fun getInstancesForTasks(ids: List<String>): List<TaskInstanceEntity>
 
+    @Query(
+        """
+        SELECT * FROM task_instance
+        WHERE taskDate <= :throughDate AND status IN ('NOT_STARTED', 'PENDING')
+        ORDER BY taskDate, taskId, occurrenceKey
+        """,
+    )
+    suspend fun getReconcilableInstances(throughDate: String): List<TaskInstanceEntity>
+
     @Query("SELECT * FROM task_instance WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getInstance(taskId: String, occurrenceKey: String = "once"): TaskInstanceEntity?
 

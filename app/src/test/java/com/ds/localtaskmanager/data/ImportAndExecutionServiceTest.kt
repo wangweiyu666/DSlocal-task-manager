@@ -93,22 +93,21 @@ class ImportAndExecutionServiceTest {
     }
 
     @Test
-    fun `moving task keeps old points in original group`() = runTest {
+    fun `moving task migrates old points with compensating ledger`() = runTest {
         importService.import(importService.preview(resource("valid/minimal-step.dst1").trim()))
         executionService.setStep("TaskId1234567890", 0, true)
         executionService.complete("TaskId1234567890")
-        executionService.undoCompletion("TaskId1234567890")
 
         val moved = """{"v":1,"b":"SecondBatch12345","g":[{"i":"SecondGroup12345","n":"Health","t":[{"i":"TaskId1234567890","n":"Drink water","r":1,"y":"2026-07-18","p":5}]}]}"""
         val preview = importService.preview(encodeDst1ForTest(moved))
         importService.import(preview)
-        executionService.complete("TaskId1234567890")
 
         val ledger = database.auditDao().getLedger("TaskId1234567890")
         assertEquals(
             listOf("GroupId123456789", "GroupId123456789", "SecondGroup12345"),
             ledger.map { it.groupId },
         )
+        assertEquals(listOf(5, -5, 5), ledger.map { it.delta })
         assertEquals(true, ImportChangeType.MOVED in preview.taskChanges.single().types)
     }
 
