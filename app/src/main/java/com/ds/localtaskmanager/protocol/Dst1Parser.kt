@@ -161,7 +161,7 @@ class Dst1Parser {
 
         val execution = parseExecution(task["u"], "$context.u")
         val recurrence = parseRecurrence(task["x"], "$context.x")
-        validateFutureCapabilities(task, context)
+        val reminderMinutes = parseReminders(task["h"], task["l"], "$context.h")
         return DstTask(
             taskId = taskId,
             name = name,
@@ -178,6 +178,7 @@ class Dst1Parser {
             groupId = groupId,
             execution = execution,
             recurrence = recurrence,
+            reminderMinutes = reminderMinutes,
         )
     }
 
@@ -220,17 +221,6 @@ class Dst1Parser {
             parseDate(rawDeadline.content, "l")
         deadline != null -> TaskDay.from(deadline)
         else -> TaskDay.from(importedAt)
-    }
-
-    private fun validateFutureCapabilities(task: JsonObject, context: String) {
-        task["h"]?.let { validateReminders(it, task["l"], "$context.h") }
-        listOf("h").firstOrNull(task::containsKey)?.let { key ->
-            invalid(
-                Dst1ErrorCode.CAPABILITY_NOT_IMPLEMENTED,
-                "$context.$key",
-                "$context.$key 属于当前测试版本尚未实现的功能",
-            )
-        }
     }
 
     private fun parseRecurrence(element: JsonElement?, context: String): RecurrenceSpec {
@@ -288,11 +278,12 @@ class Dst1Parser {
         }
     }
 
-    private fun validateReminders(
-        element: JsonElement,
+    private fun parseReminders(
+        element: JsonElement?,
         rawDeadline: JsonElement?,
         context: String,
-    ) {
+    ): List<Int> {
+        if (element == null) return emptyList()
         val reminders = (element as? JsonArray)
             ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, context, "$context 必须是数组")
         if (reminders.isEmpty() || reminders.size > 5) {
@@ -315,6 +306,7 @@ class Dst1Parser {
         if (rawDeadline == JsonNull) {
             invalid(Dst1ErrorCode.CONFLICTING_FIELDS, context, "永不截止的任务不能设置提醒")
         }
+        return values
     }
 
     private fun parseExecution(element: JsonElement?, context: String): ExecutionSpec {

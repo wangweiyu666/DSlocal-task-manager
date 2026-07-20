@@ -9,6 +9,7 @@ import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.data.TaskRepository
 import com.ds.localtaskmanager.data.recurrence.InstanceGenerationService
 import com.ds.localtaskmanager.domain.TaskDay
+import com.ds.localtaskmanager.reminder.ReminderReconciler
 import java.time.LocalDateTime
 import java.time.LocalDate
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +32,7 @@ class TodayViewModel(
     repository: TaskRepository,
     private val importService: ImportService,
     private val generationService: InstanceGenerationService,
+    private val reminderReconciler: ReminderReconciler? = null,
 ) : ViewModel() {
     private val mutableTaskDate = MutableStateFlow(TaskDay.from(LocalDateTime.now()).toString())
     val taskDate: StateFlow<String> = mutableTaskDate.asStateFlow()
@@ -50,6 +52,7 @@ class TodayViewModel(
         viewModelScope.launch {
             val current = TaskDay.from(LocalDateTime.now()).toString()
             generationService.reconcileAll(LocalDate.parse(current))
+            reminderReconciler?.reconcileAll()
             mutableTaskDate.value = current
         }
     }
@@ -85,6 +88,7 @@ class TodayViewModel(
             _importState.value = _importState.value.copy(working = true, error = null)
             try {
                 importService.import(preview)
+                reminderReconciler?.reconcileAll()
                 closeImport()
             } catch (error: Exception) {
                 _importState.value = _importState.value.copy(
@@ -100,10 +104,11 @@ class TodayViewModelFactory(
     private val repository: TaskRepository,
     private val importService: ImportService,
     private val generationService: InstanceGenerationService,
+    private val reminderReconciler: ReminderReconciler? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(TodayViewModel::class.java))
-        return TodayViewModel(repository, importService, generationService) as T
+        return TodayViewModel(repository, importService, generationService, reminderReconciler) as T
     }
 }

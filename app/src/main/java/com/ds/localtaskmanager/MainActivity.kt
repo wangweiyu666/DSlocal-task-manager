@@ -18,6 +18,7 @@ class MainActivity : ComponentActivity() {
             application.taskRepository,
             application.importService,
             application.instanceGenerationService,
+            application.reminderCoordinator,
         )
     }
 

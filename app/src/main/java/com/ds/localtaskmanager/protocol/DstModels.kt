@@ -44,6 +44,7 @@ data class DstTask(
     val groupId: String?,
     val execution: ExecutionSpec,
     val recurrence: RecurrenceSpec,
+    val reminderMinutes: List<Int>,
 )
 
 data class DstStep(

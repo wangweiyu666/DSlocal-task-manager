@@ -70,6 +70,14 @@ class Dst1ParserTest {
     }
 
     @Test
+    fun `existing reminder field becomes typed minutes`() {
+        val reminders = parser.parse(resource("valid/reminders.json"), importedAt)
+            .allTasks().single().reminderMinutes
+
+        assertEquals(listOf(10_080, 60, 10, 0), reminders)
+    }
+
+    @Test
     fun `task model preserves whether y and l were explicitly supplied`() {
         val omitted = parser.parse(
             """{"v":1,"b":"DateBatch0000001","t":[{"i":"DateTask00000001","n":"Task","r":1}]}""",

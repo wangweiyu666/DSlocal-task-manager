@@ -14,6 +14,9 @@ import com.ds.localtaskmanager.data.result.ResultRepository
 import com.ds.localtaskmanager.data.result.RoomResultRepository
 import com.ds.localtaskmanager.domain.SecureRecordIdGenerator
 import com.ds.localtaskmanager.protocol.Dst1Parser
+import com.ds.localtaskmanager.reminder.AndroidReminderNotifier
+import com.ds.localtaskmanager.reminder.AndroidReminderScheduler
+import com.ds.localtaskmanager.reminder.ReminderCoordinator
 import java.time.Clock
 
 class DstApplication : Application() {
@@ -34,5 +37,20 @@ class DstApplication : Application() {
     }
     val resultRepository: ResultRepository by lazy {
         RoomResultRepository(database)
+    }
+    private val reminderNotifier by lazy { AndroidReminderNotifier(this) }
+    val reminderCoordinator: ReminderCoordinator by lazy {
+        ReminderCoordinator(
+            database = database,
+            scheduler = AndroidReminderScheduler(this),
+            notifier = reminderNotifier,
+            clock = clock,
+            idGenerator = idGenerator,
+        )
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        reminderNotifier.createChannel()
     }
 }

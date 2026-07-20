@@ -92,7 +92,7 @@ W10 起计数值限制在 `0..executionTarget`；计时按毫秒累计并在目�
 
 ### `reminder_record`
 
-主键为 `(taskId, occurrenceKey, minutesBeforeDeadline)`，状态为 `SCHEDULED / DELIVERED / CANCELLED / SKIPPED`。该表不进入备份，恢复后重新生成。
+主键为 `(taskId, occurrenceKey, minutesBeforeDeadline)`，状态为 `SCHEDULED / DELIVERED / SKIPPED_BEFORE_PUBLISHED / SKIPPED_PAST / SKIPPED_PERMISSION / CANCELLED`。该表是系统闹钟的事实来源，不进入备份，恢复后重新生成。
 
 ## 5. 外键与删除策略
 

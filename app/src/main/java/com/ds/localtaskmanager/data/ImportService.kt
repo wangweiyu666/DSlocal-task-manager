@@ -340,6 +340,18 @@ class RoomImportService(
             val oldDefinition = oldDefinitions[task.taskId]
             val updatePlan = updatePlans.getValue(task.taskId)
             if (task.recurrence !is RecurrenceSpec.None) {
+                val mutableInstances = allOldInstances[task.taskId].orEmpty()
+                    .filter { it.isMutableForImport() }
+                if (mutableInstances.isNotEmpty()) {
+                    instanceDao.upsertInstances(
+                        mutableInstances.map {
+                            it.copy(
+                                reminderMinutesJson = task.reminderMinutes.toStorageJson(),
+                                updatedAtEpochMillis = now,
+                            )
+                        },
+                    )
+                }
                 if (oldDefinition?.recurrenceFrequency == null) {
                     allOldInstances[task.taskId].orEmpty()
                         .filter { it.occurrenceKey == "once" }
@@ -383,10 +395,12 @@ class RoomImportService(
                 oldInstance?.status == TaskStatus.MISSED.name &&
                     (updatePlan.deadlineExtended || updatePlan.dateMoved) -> oldInstance.copy(
                         taskDate = updatePlan.taskDate.toString(),
-                        deadline = updatePlan.deadline?.toString(),
-                        status = updatePlan.status.name,
-                        updatedAtEpochMillis = now,
-                    )
+                    deadline = updatePlan.deadline?.toString(),
+                    status = updatePlan.status.name,
+                    reminderMinutesJson = task.reminderMinutes.toStorageJson(),
+                    publishedAtEpochMillis = now,
+                    updatedAtEpochMillis = now,
+                )
                 oldInstance?.status == TaskStatus.MISSED.name -> oldInstance.copy(updatedAtEpochMillis = now)
                 else -> task.toInstance(oldInstance, now, updatePlan)
             }
@@ -523,6 +537,7 @@ class RoomImportService(
             executionKind = execution.kindName(),
             executionAction = execution.actionValue(),
             executionTarget = execution.targetValue(),
+            reminderMinutesJson = reminderMinutes.toStorageJson(),
         )
     }
 
@@ -550,6 +565,8 @@ class RoomImportService(
             executionKind = execution.kindName(),
             executionAction = execution.actionValue(),
             executionTarget = execution.targetValue(),
+            reminderMinutesJson = reminderMinutes.toStorageJson(),
+            publishedAtEpochMillis = if (updatePlan.reopened || old == null) now else old.publishedAtEpochMillis,
         )
     }
 
@@ -631,6 +648,9 @@ class RoomImportService(
         status in setOf(TaskStatus.NOT_STARTED.name, TaskStatus.PENDING.name)
 
     private fun String?.jsonValue(): String = this?.let { "\"$it\"" } ?: "null"
+
+    private fun List<Int>.toStorageJson(): String? =
+        takeIf { it.isNotEmpty() }?.joinToString(prefix = "[", postfix = "]", separator = ",")
 
     private fun ImportPreview.resultRevisionReason(): ResultRevisionReason {
         val reasons = buildSet {

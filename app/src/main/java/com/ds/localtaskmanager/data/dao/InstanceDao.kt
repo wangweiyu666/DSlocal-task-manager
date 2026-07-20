@@ -35,6 +35,20 @@ interface InstanceDao {
     @Query("SELECT * FROM task_instance WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getInstance(taskId: String, occurrenceKey: String = "once"): TaskInstanceEntity?
 
+    @Query(
+        """
+        SELECT * FROM task_instance AS instance
+        WHERE instance.reminderMinutesJson IS NOT NULL
+           OR EXISTS (
+               SELECT 1 FROM reminder_record AS reminder
+               WHERE reminder.taskId = instance.taskId
+                 AND reminder.occurrenceKey = instance.occurrenceKey
+           )
+        ORDER BY instance.taskDate, instance.taskId, instance.occurrenceKey
+        """,
+    )
+    suspend fun instancesNeedingReminderReconciliation(): List<TaskInstanceEntity>
+
     @Upsert
     suspend fun upsertInstances(instances: List<TaskInstanceEntity>)
 

@@ -12,7 +12,7 @@
 - 当前 Android 构建结果 `android`；
 - 失败时稳定的错误代码和字段路径。
 
-`x`、`h`、`u` 均属于 DST1 v1，因此合法向量的 `spec.result` 为 `VALID`。W10 起 Android 支持 `u.k=1/2/3`，W11 起支持 `x.f=1/2`；这些合法向量同时标记为 Android `VALID`。当前只有 `h` 仍返回 `CAPABILITY_NOT_IMPLEMENTED`。非法组合必须先返回具体协议错误，不能被能力未实现错误遮蔽。
+`x`、`h`、`u` 均属于 DST1 v1，因此合法向量的 `spec.result` 为 `VALID`。W10 起 Android 支持 `u.k=1/2/3`，W11 起支持 `x.f=1/2`，W21 起实现既有 `h`；这些合法向量均标记为 Android `VALID`。非法组合必须返回具体协议错误。
 
 ## 2. 清单结构
 
