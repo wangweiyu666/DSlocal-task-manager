@@ -8,6 +8,7 @@ import java.time.DayOfWeek
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.LocalDateTime
+import java.time.LocalDate
 import java.util.Base64
 import java.util.Locale
 import java.util.zip.CRC32
@@ -66,6 +67,23 @@ class Dst1ParserTest {
             ),
             weekly,
         )
+    }
+
+    @Test
+    fun `task model preserves whether y and l were explicitly supplied`() {
+        val omitted = parser.parse(
+            """{"v":1,"b":"DateBatch0000001","t":[{"i":"DateTask00000001","n":"Task","r":1}]}""",
+            importedAt,
+        ).allTasks().single()
+        val explicit = parser.parse(
+            """{"v":1,"b":"DateBatch0000002","t":[{"i":"DateTask00000001","n":"Task","r":1,"y":"2026-07-20","l":null}]}""",
+            importedAt,
+        ).allTasks().single()
+
+        assertEquals(Field.Missing, omitted.taskDateDirective)
+        assertEquals(Field.Missing, omitted.deadlineDirective)
+        assertEquals(Field.Value(LocalDate.parse("2026-07-20")), explicit.taskDateDirective)
+        assertEquals(Field.Value(null), explicit.deadlineDirective)
     }
 
     @Test

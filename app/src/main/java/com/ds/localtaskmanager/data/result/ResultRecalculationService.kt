@@ -14,6 +14,10 @@ enum class ResultRevisionReason {
     TASK_IMPORTED,
     RECURRENCE_GENERATED,
     DEADLINE_RECONCILED,
+    TASK_DELAYED,
+    TASK_REOPENED,
+    TASK_DATE_MOVED,
+    IMPORT_MIXED,
 }
 
 internal class ResultRecalculationService(

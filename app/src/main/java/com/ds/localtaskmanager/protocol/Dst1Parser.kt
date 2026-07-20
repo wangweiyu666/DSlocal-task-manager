@@ -142,6 +142,9 @@ class Dst1Parser {
         val explicitTaskDate = task.optionalDate("y", context)
         val deadline = parseDeadline(task, explicitTaskDate, importedAt, context)
         val taskDate = explicitTaskDate ?: deriveTaskDate(task["l"], deadline, importedAt)
+        val taskDateDirective: Field<LocalDate> = explicitTaskDate?.let { Field.Value(it) } ?: Field.Missing
+        val deadlineDirective: Field<LocalDateTime?> =
+            if (task.containsKey("l")) Field.Value(deadline) else Field.Missing
         val points = task.optionalInt("p", context) ?: 0
         if (points !in 0..9_999) {
             invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.p", "$context.p 必须在 0..9999")
@@ -164,6 +167,8 @@ class Dst1Parser {
             name = name,
             required = requiredFlag == 1,
             description = description,
+            taskDateDirective = taskDateDirective,
+            deadlineDirective = deadlineDirective,
             taskDate = taskDate,
             deadline = deadline,
             points = points,

@@ -12,6 +12,11 @@ data class LedgerGroupBalance(
     val balance: Int,
 )
 
+data class TaskNetPoints(
+    val taskId: String,
+    val netPoints: Int,
+)
+
 @Dao
 interface AuditDao {
     @Insert
@@ -39,6 +44,16 @@ interface AuditDao {
         """,
     )
     suspend fun getGroupBalances(taskId: String): List<LedgerGroupBalance>
+
+    @Query(
+        """
+        SELECT taskId, CAST(SUM(delta) AS INTEGER) AS netPoints
+        FROM points_ledger
+        WHERE taskId IN (:taskIds) AND occurrenceKey = 'once'
+        GROUP BY taskId
+        """,
+    )
+    suspend fun getOnceNetPoints(taskIds: List<String>): List<TaskNetPoints>
 
     @Insert
     suspend fun insertLogs(logs: List<ActionLogEntity>)

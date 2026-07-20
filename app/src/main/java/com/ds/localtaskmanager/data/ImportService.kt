@@ -13,9 +13,11 @@ import com.ds.localtaskmanager.data.result.ResultRevisionReason
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.StepFingerprint
 import com.ds.localtaskmanager.domain.TaskDay
-import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.execution.ExecutionSpec
+import com.ds.localtaskmanager.domain.update.InstanceUpdatePlan
+import com.ds.localtaskmanager.domain.update.InstanceUpdatePlanner
+import com.ds.localtaskmanager.domain.update.InstanceUpdateRequest
 import com.ds.localtaskmanager.domain.recurrence.RecurrenceDeadline
 import com.ds.localtaskmanager.domain.recurrence.RecurrenceSpec
 import com.ds.localtaskmanager.domain.recurrence.WeekdayMask
@@ -39,6 +41,11 @@ enum class ImportChangeType {
     CANCELLED,
     RESTORED,
     MOVED,
+    DATE_MOVED,
+    DEADLINE_EXTENDED,
+    REOPENED,
+    HISTORICAL_POINTS_MOVED,
+    HISTORICAL_RESULT_CHANGED,
     STEP_RESET,
     EXECUTION_RESET,
     INFORMATION_REVIEW_REQUIRED,
@@ -53,6 +60,13 @@ data class TaskImportChange(
     val name: String,
     val types: Set<ImportChangeType>,
     val generatedOccurrences: List<String> = emptyList(),
+    val oldDate: String? = null,
+    val newDate: String? = null,
+    val oldDeadline: String? = null,
+    val newDeadline: String? = null,
+    val oldStatus: String? = null,
+    val newStatus: String? = null,
+    val historicalPointsMoved: Int = 0,
 )
 
 data class ImportPreview(
@@ -125,10 +139,11 @@ class RoomImportService(
         val changedTaskIds = freshPreview.taskChanges
             .filterNot { it.types == setOf(ImportChangeType.UNCHANGED) }
             .map { it.taskId }
+        val resultReason = freshPreview.resultRevisionReason()
         resultService.writeChanges(
             before,
             afterDates,
-            ResultRevisionReason.TASK_IMPORTED,
+            resultReason,
             freshPreview.batch.batchId,
             changedTaskIds,
         )
@@ -145,17 +160,35 @@ class RoomImportService(
         val oldInstances = if (ids.isEmpty()) emptyMap() else {
             instanceDao.getOnceInstances(ids).associateBy { it.taskId }
         }
+        val updatePlans = tasks.associate { task ->
+            task.taskId to task.toUpdatePlan(oldDefinitions[task.taskId], oldInstances[task.taskId])
+        }
         val desiredDefinitions = tasks.associate { task ->
-            task.taskId to task.toDefinition(oldDefinitions[task.taskId], nowMillis())
+            task.taskId to task.toDefinition(
+                oldDefinitions[task.taskId],
+                nowMillis(),
+                updatePlans.getValue(task.taskId),
+            )
         }
         val generatedOccurrences = generationService.previewDefinitions(
             desiredDefinitions.values.filter { it.recurrenceFrequency != null },
             TaskDay.from(nowDateTime()),
         )
+        val dateMovedTaskIds = tasks.filter { task ->
+            val old = oldDefinitions[task.taskId]
+            val desired = desiredDefinitions.getValue(task.taskId)
+            old?.recurrenceFrequency == null && desired.recurrenceFrequency == null &&
+                updatePlans.getValue(task.taskId).dateMoved
+        }.map { it.taskId }
+        val movedNetPoints = if (dateMovedTaskIds.isEmpty()) emptyMap() else {
+            auditDao.getOnceNetPoints(dateMovedTaskIds).associate { it.taskId to it.netPoints }
+        }
         val changes = tasks.map { task ->
             val oldDefinition = oldDefinitions[task.taskId]
             val oldInstance = oldInstances[task.taskId]
             val desired = desiredDefinitions.getValue(task.taskId)
+            val updatePlan = updatePlans.getValue(task.taskId)
+            val singleToSingle = oldDefinition?.recurrenceFrequency == null && desired.recurrenceFrequency == null
             val types = linkedSetOf<ImportChangeType>()
             when {
                 oldDefinition == null -> types += ImportChangeType.NEW
@@ -165,6 +198,20 @@ class RoomImportService(
             }
             if (oldDefinition != null && oldDefinition.groupId != desired.groupId) {
                 types += ImportChangeType.MOVED
+            }
+            if (singleToSingle && updatePlan.dateMoved) {
+                types += ImportChangeType.DATE_MOVED
+            }
+            if (singleToSingle && updatePlan.deadlineExtended) {
+                types += ImportChangeType.DEADLINE_EXTENDED
+            }
+            if (singleToSingle && updatePlan.reopened) {
+                types += ImportChangeType.REOPENED
+            }
+            if (singleToSingle && oldInstance != null &&
+                (updatePlan.dateMoved || oldInstance.status != updatePlan.status.name)
+            ) {
+                types += ImportChangeType.HISTORICAL_RESULT_CHANGED
             }
             when {
                 oldDefinition == null && desired.recurrenceFrequency != null ->
@@ -179,7 +226,7 @@ class RoomImportService(
                     types += ImportChangeType.RECURRENCE_UPDATED
             }
             if (oldDefinition != null && oldDefinition.stepsFingerprint != desired.stepsFingerprint &&
-                oldInstance?.status !in setOf(TaskStatus.COMPLETED.name, TaskStatus.CANCELLED.name)
+                oldInstance?.isMutableForImport() == true
             ) {
                 types += ImportChangeType.STEP_RESET
             }
@@ -192,11 +239,24 @@ class RoomImportService(
                     types += ImportChangeType.INFORMATION_REVIEW_REQUIRED
                 }
             }
+            val historicalPointsMoved = if (singleToSingle && updatePlan.dateMoved) {
+                movedNetPoints[task.taskId] ?: 0
+            } else {
+                0
+            }
+            if (historicalPointsMoved != 0) types += ImportChangeType.HISTORICAL_POINTS_MOVED
             TaskImportChange(
-                task.taskId,
-                task.name,
-                types,
-                generatedOccurrences[task.taskId].orEmpty().map(LocalDate::toString),
+                taskId = task.taskId,
+                name = task.name,
+                types = types,
+                generatedOccurrences = generatedOccurrences[task.taskId].orEmpty().map(LocalDate::toString),
+                oldDate = oldInstance?.taskDate,
+                newDate = updatePlan.taskDate.toString(),
+                oldDeadline = oldInstance?.deadline,
+                newDeadline = updatePlan.deadline?.toString(),
+                oldStatus = oldInstance?.status,
+                newStatus = updatePlan.status.name,
+                historicalPointsMoved = historicalPointsMoved,
             )
         }.toMutableList()
         batch.cancelledTaskIds.forEach { id ->
@@ -262,7 +322,12 @@ class RoomImportService(
         val oldDefinitions = definitionDao.getDefinitions(ids).associateBy { it.taskId }
         val oldInstances = instanceDao.getOnceInstances(ids).associateBy { it.taskId }
         val allOldInstances = instanceDao.getInstancesForTasks(ids).groupBy { it.taskId }
-        val definitions = tasks.map { it.toDefinition(oldDefinitions[it.taskId], now) }
+        val updatePlans = tasks.associate { task ->
+            task.taskId to task.toUpdatePlan(oldDefinitions[task.taskId], oldInstances[task.taskId])
+        }
+        val definitions = tasks.map {
+            it.toDefinition(oldDefinitions[it.taskId], now, updatePlans.getValue(it.taskId))
+        }
         definitionDao.upsertDefinitions(definitions)
         definitionDao.deleteStepDefinitions(ids)
         definitionDao.insertStepDefinitions(tasks.flatMap { task ->
@@ -273,6 +338,7 @@ class RoomImportService(
 
         tasks.forEach { task ->
             val oldDefinition = oldDefinitions[task.taskId]
+            val updatePlan = updatePlans.getValue(task.taskId)
             if (task.recurrence !is RecurrenceSpec.None) {
                 if (oldDefinition?.recurrenceFrequency == null) {
                     allOldInstances[task.taskId].orEmpty()
@@ -303,20 +369,29 @@ class RoomImportService(
             val oldInstance = oldInstances[task.taskId]
             val fingerprintChanged = oldDefinition != null &&
                 oldDefinition.stepsFingerprint != StepFingerprint.of(task.steps)
-            val preserveEnded = oldInstance?.status in setOf(
-                TaskStatus.COMPLETED.name,
-                TaskStatus.MISSED.name,
-            )
             val restored = oldDefinition?.cancelled == true || oldInstance?.status == TaskStatus.CANCELLED.name
             if (oldDefinition != null && oldInstance?.isMutableForImport() == true) {
                 applyExecutionUpdate(task, oldDefinition, oldInstance, batch.batchId, now)
             }
             val instance = when {
-                preserveEnded -> oldInstance!!.copy(updatedAtEpochMillis = now)
-                else -> task.toInstance(oldInstance, restored, now)
+                oldInstance?.status == TaskStatus.COMPLETED.name && updatePlan.dateMoved -> oldInstance.copy(
+                    taskDate = updatePlan.taskDate.toString(),
+                    deadline = updatePlan.deadline?.toString(),
+                    updatedAtEpochMillis = now,
+                )
+                oldInstance?.status == TaskStatus.COMPLETED.name -> oldInstance.copy(updatedAtEpochMillis = now)
+                oldInstance?.status == TaskStatus.MISSED.name &&
+                    (updatePlan.deadlineExtended || updatePlan.dateMoved) -> oldInstance.copy(
+                        taskDate = updatePlan.taskDate.toString(),
+                        deadline = updatePlan.deadline?.toString(),
+                        status = updatePlan.status.name,
+                        updatedAtEpochMillis = now,
+                    )
+                oldInstance?.status == TaskStatus.MISSED.name -> oldInstance.copy(updatedAtEpochMillis = now)
+                else -> task.toInstance(oldInstance, now, updatePlan)
             }
             instanceDao.upsertInstances(listOf(instance))
-            if (oldInstance == null || restored || fingerprintChanged) {
+            if (oldInstance == null || restored || (fingerprintChanged && oldInstance.isMutableForImport())) {
                 instanceDao.deleteInstanceSteps(task.taskId)
                 instanceDao.insertInstanceSteps(task.steps.mapIndexed { index, step ->
                     InstanceStepEntity(
@@ -330,6 +405,21 @@ class RoomImportService(
                     )
                 })
             }
+            val action = when {
+                updatePlan.dateMoved -> "TASK_DATE_MOVED"
+                updatePlan.reopened -> "TASK_REOPENED"
+                updatePlan.deadlineExtended -> "DEADLINE_EXTENDED"
+                oldDefinition == null -> "IMPORTED"
+                else -> "UPDATED"
+            }
+            val detail = when (action) {
+                "TASK_DATE_MOVED" -> "{\"oldDate\":\"${oldInstance?.taskDate}\",\"newDate\":\"${updatePlan.taskDate}\"," +
+                    "\"oldStatus\":\"${oldInstance?.status}\",\"newStatus\":\"${instance.status}\"}"
+                "TASK_REOPENED", "DEADLINE_EXTENDED" ->
+                    "{\"oldDeadline\":${oldInstance?.deadline.jsonValue()},\"newDeadline\":${instance.deadline.jsonValue()}," +
+                        "\"oldStatus\":\"${oldInstance?.status}\",\"newStatus\":\"${instance.status}\"}"
+                else -> null
+            }
             auditDao.insertLogs(
                 listOf(
                     ActionLogEntity(
@@ -337,8 +427,8 @@ class RoomImportService(
                         taskId = task.taskId,
                         occurrenceKey = "once",
                         batchId = batch.batchId,
-                        action = if (oldDefinition == null) "IMPORTED" else "UPDATED",
-                        detail = null,
+                        action = action,
+                        detail = detail,
                         createdAtEpochMillis = now,
                     ),
                 ),
@@ -403,7 +493,11 @@ class RoomImportService(
         )
     }
 
-    private fun DstTask.toDefinition(old: TaskDefinitionEntity?, now: Long): TaskDefinitionEntity {
+    private fun DstTask.toDefinition(
+        old: TaskDefinitionEntity?,
+        now: Long,
+        updatePlan: InstanceUpdatePlan,
+    ): TaskDefinitionEntity {
         val storedRecurrence = recurrence.toStoredRecurrence(old, TaskDay.from(nowDateTime()))
         return TaskDefinitionEntity(
             taskId = taskId,
@@ -411,8 +505,8 @@ class RoomImportService(
             description = description,
             groupId = groupId,
             required = required,
-            taskDate = taskDate.toString(),
-            deadline = deadline?.toString(),
+            taskDate = updatePlan.taskDate.toString(),
+            deadline = updatePlan.deadline?.toString(),
             points = points,
             sortOrder = sortOrder,
             completionMessage = completionMessage,
@@ -434,34 +528,48 @@ class RoomImportService(
 
     private fun DstTask.toInstance(
         old: TaskInstanceEntity?,
-        restored: Boolean,
         now: Long,
+        updatePlan: InstanceUpdatePlan,
     ): TaskInstanceEntity {
-        val timeStatus = TaskStateMachine.statusAt(taskDate, deadline, nowDateTime()).name
-        val status = when {
-            old == null || restored -> timeStatus
-            old.status == TaskStatus.MISSED.name -> TaskStatus.MISSED.name
-            else -> timeStatus
-        }
         return TaskInstanceEntity(
             taskId = taskId,
             occurrenceKey = "once",
             name = name,
             description = description,
-            taskDate = taskDate.toString(),
-            deadline = deadline?.toString(),
+            taskDate = updatePlan.taskDate.toString(),
+            deadline = updatePlan.deadline?.toString(),
             groupId = groupId,
             required = required,
             points = points,
             sortOrder = sortOrder,
             completionMessage = completionMessage,
-            status = status,
+            status = updatePlan.status.name,
             completedAtEpochMillis = null,
             createdAtEpochMillis = old?.createdAtEpochMillis ?: now,
             updatedAtEpochMillis = now,
             executionKind = execution.kindName(),
             executionAction = execution.actionValue(),
             executionTarget = execution.targetValue(),
+        )
+    }
+
+    private fun DstTask.toUpdatePlan(
+        oldDefinition: TaskDefinitionEntity?,
+        oldInstance: TaskInstanceEntity?,
+    ): InstanceUpdatePlan {
+        val restored = oldDefinition?.cancelled == true || oldInstance?.status == TaskStatus.CANCELLED.name
+        return InstanceUpdatePlanner.plan(
+            InstanceUpdateRequest(
+                oldDate = (oldInstance?.taskDate ?: oldDefinition?.taskDate)?.let(LocalDate::parse),
+                oldDeadline = (oldInstance?.deadline ?: oldDefinition?.deadline)?.let(LocalDateTime::parse),
+                oldStatus = oldInstance?.status?.let(TaskStatus::valueOf),
+                inferredDate = taskDate,
+                incomingDeadline = deadline,
+                explicitDate = (taskDateDirective as? Field.Value)?.value,
+                deadlineWasExplicit = deadlineDirective is Field.Value,
+                restored = restored,
+                now = nowDateTime(),
+            ),
         )
     }
 
@@ -521,6 +629,25 @@ class RoomImportService(
 
     private fun TaskInstanceEntity.isMutableForImport(): Boolean =
         status in setOf(TaskStatus.NOT_STARTED.name, TaskStatus.PENDING.name)
+
+    private fun String?.jsonValue(): String = this?.let { "\"$it\"" } ?: "null"
+
+    private fun ImportPreview.resultRevisionReason(): ResultRevisionReason {
+        val reasons = buildSet {
+            taskChanges.forEach { change ->
+                when {
+                    ImportChangeType.DATE_MOVED in change.types -> add(ResultRevisionReason.TASK_DATE_MOVED)
+                    ImportChangeType.REOPENED in change.types -> add(ResultRevisionReason.TASK_REOPENED)
+                    ImportChangeType.DEADLINE_EXTENDED in change.types -> add(ResultRevisionReason.TASK_DELAYED)
+                }
+            }
+        }
+        return when (reasons.size) {
+            0 -> ResultRevisionReason.TASK_IMPORTED
+            1 -> reasons.single()
+            else -> ResultRevisionReason.IMPORT_MIXED
+        }
+    }
 
     private data class StoredRecurrence(
         val frequency: Int?,

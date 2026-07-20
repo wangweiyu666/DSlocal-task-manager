@@ -175,7 +175,10 @@
         "n": { "$ref": "#/$defs/text100" },
         "r": { "type": "integer", "enum": [0, 1] },
         "d": { "$ref": "#/$defs/text2000Empty" },
-        "y": { "$ref": "#/$defs/date" },
+        "y": {
+          "$ref": "#/$defs/date",
+          "description": "Explicit task-date directive. When updating an existing task, omission preserves its stored task date; only an explicitly different y migrates the date."
+        },
         "l": {
           "oneOf": [
             { "$ref": "#/$defs/date" },

@@ -33,6 +33,8 @@ data class DstTask(
     val name: String,
     val required: Boolean,
     val description: String,
+    val taskDateDirective: Field<LocalDate>,
+    val deadlineDirective: Field<LocalDateTime?>,
     val taskDate: LocalDate,
     val deadline: LocalDateTime?,
     val points: Int,
