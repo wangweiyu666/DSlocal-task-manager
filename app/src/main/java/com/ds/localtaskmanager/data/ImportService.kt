@@ -329,6 +329,9 @@ class RoomImportService(
             it.toDefinition(oldDefinitions[it.taskId], now, updatePlans.getValue(it.taskId))
         }
         definitionDao.upsertDefinitions(definitions)
+        val groupNames = tasks.mapNotNull { it.groupId }.distinct().let { groupIds ->
+            if (groupIds.isEmpty()) emptyMap() else definitionDao.getGroups(groupIds).associate { it.groupId to it.name }
+        }
         definitionDao.deleteStepDefinitions(ids)
         definitionDao.insertStepDefinitions(tasks.flatMap { task ->
             task.steps.mapIndexed { index, step ->
@@ -402,7 +405,7 @@ class RoomImportService(
                     updatedAtEpochMillis = now,
                 )
                 oldInstance?.status == TaskStatus.MISSED.name -> oldInstance.copy(updatedAtEpochMillis = now)
-                else -> task.toInstance(oldInstance, now, updatePlan)
+                else -> task.toInstance(oldInstance, now, updatePlan, groupNames[task.groupId])
             }
             instanceDao.upsertInstances(listOf(instance))
             if (oldInstance == null || restored || (fingerprintChanged && oldInstance.isMutableForImport())) {
@@ -545,6 +548,7 @@ class RoomImportService(
         old: TaskInstanceEntity?,
         now: Long,
         updatePlan: InstanceUpdatePlan,
+        groupNameSnapshot: String?,
     ): TaskInstanceEntity {
         return TaskInstanceEntity(
             taskId = taskId,
@@ -567,6 +571,7 @@ class RoomImportService(
             executionTarget = execution.targetValue(),
             reminderMinutesJson = reminderMinutes.toStorageJson(),
             publishedAtEpochMillis = if (updatePlan.reopened || old == null) now else old.publishedAtEpochMillis,
+            groupNameSnapshot = groupNameSnapshot,
         )
     }
 

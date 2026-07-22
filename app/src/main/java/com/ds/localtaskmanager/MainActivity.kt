@@ -54,6 +54,8 @@ class MainActivity : ComponentActivity() {
                 taskRepository = application.taskRepository,
                 taskExecutionService = application.taskExecutionService,
                 taskNoteService = application.taskNoteService,
+                historyRepository = application.historyRepository,
+                resultRepository = application.resultRepository,
                 reminderReconciler = application.reminderCoordinator,
                 notificationTask = notificationTask,
                 onNotificationTaskConsumed = { notificationTask.value = null },

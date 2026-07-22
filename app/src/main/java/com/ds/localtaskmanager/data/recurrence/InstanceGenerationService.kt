@@ -174,6 +174,7 @@ class RoomInstanceGenerationService(
         if (dates.isEmpty()) return emptyList()
 
         val stepDefinitions = database.definitionDao().getStepDefinitions(definition.taskId)
+        val groupNameSnapshot = definition.groupId?.let { database.definitionDao().getGroup(it)?.name }
         val now = clock.millis()
         val nowDateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(now), clock.zone)
         val created = mutableListOf<TaskInstanceKey>()
@@ -201,6 +202,7 @@ class RoomInstanceGenerationService(
                 executionTarget = definition.executionTarget,
                 reminderMinutesJson = definition.reminderMinutesJson,
                 publishedAtEpochMillis = now,
+                groupNameSnapshot = groupNameSnapshot,
             )
             if (database.instanceDao().insertInstance(instance) == -1L) return@forEach
             database.instanceDao().insertInstanceSteps(

@@ -11,6 +11,9 @@ import com.ds.localtaskmanager.data.TaskStepDefinitionEntity
 
 @Dao
 interface DefinitionDao {
+    @Query("SELECT * FROM task_group WHERE groupId = :groupId")
+    suspend fun getGroup(groupId: String): TaskGroupEntity?
+
     @Query("SELECT * FROM task_group WHERE groupId IN (:ids)")
     suspend fun getGroups(ids: List<String>): List<TaskGroupEntity>
 

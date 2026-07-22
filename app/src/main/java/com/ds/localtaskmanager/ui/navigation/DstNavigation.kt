@@ -7,8 +7,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -19,7 +22,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -35,24 +41,42 @@ import com.ds.localtaskmanager.ui.execution.ExecutionViewModel
 import com.ds.localtaskmanager.ui.execution.ExecutionViewModelFactory
 import com.ds.localtaskmanager.ui.execution.TaskDetailRoute
 import com.ds.localtaskmanager.ui.history.HistoryScreen
+import com.ds.localtaskmanager.data.history.HistoryRepository
+import com.ds.localtaskmanager.data.result.ResultRepository
+import com.ds.localtaskmanager.ui.history.HistoryRoute
+import com.ds.localtaskmanager.ui.history.HistoryViewModel
+import com.ds.localtaskmanager.ui.history.HistoryViewModelFactory
+import com.ds.localtaskmanager.ui.history.HistoryDetailRoute
+import com.ds.localtaskmanager.ui.history.HistoryDetailViewModel
+import com.ds.localtaskmanager.ui.history.HistoryDetailViewModelFactory
+import com.ds.localtaskmanager.ui.history.DayHistoryRoute
+import com.ds.localtaskmanager.ui.history.DayHistoryViewModel
+import com.ds.localtaskmanager.ui.history.DayHistoryViewModelFactory
 import com.ds.localtaskmanager.ui.profile.ProfileScreen
 import com.ds.localtaskmanager.ui.today.ImportDialog
 import com.ds.localtaskmanager.ui.today.TodayScreen
+import com.ds.localtaskmanager.ui.today.TodayContent
+import com.ds.localtaskmanager.ui.today.TodayUiState
 import com.ds.localtaskmanager.ui.today.TodayViewModel
+import com.ds.localtaskmanager.ui.theme.DstTheme
 import kotlinx.coroutines.flow.StateFlow
+import com.ds.localtaskmanager.R
 import com.ds.localtaskmanager.reminder.ReminderReconciler
 
 private enum class Destination(
     val route: String,
     val label: String,
     val marker: String,
+    val iconRes: Int? = null,
 ) {
-    History("history", "历史", "◷"),
-    Today("today", "今日", "●"),
-    Profile("profile", "我的", "○"),
+    History("history", "历史", "", R.drawable.ic_nav_history),
+    Today("today", "今日", "", R.drawable.ic_nav_today),
+    Profile("profile", "我的", "", R.drawable.ic_nav_profile),
 }
 
 private const val TASK_ROUTE = "task/{taskId}/{occurrenceKey}"
+private const val HISTORY_TASK_ROUTE = "history/task/{taskId}/{occurrenceKey}"
+private const val HISTORY_DAY_ROUTE = "history/day/{taskDate}"
 
 @Composable
 fun DstNavigation(
@@ -60,6 +84,8 @@ fun DstNavigation(
     taskRepository: TaskRepository,
     taskExecutionService: TaskExecutionService,
     taskNoteService: TaskNoteService,
+    historyRepository: HistoryRepository,
+    resultRepository: ResultRepository,
     reminderReconciler: ReminderReconciler,
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
@@ -82,20 +108,11 @@ fun DstNavigation(
     Scaffold(
         bottomBar = {
             if (onPrimaryDestination) {
-                NavigationBar {
-                    Destination.entries.forEach { destination ->
-                        NavigationBarItem(
-                            selected = currentRoute == destination.route,
-                            onClick = {
-                                navController.navigate(destination.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = { Text(destination.marker, fontSize = 20.sp) },
-                            label = { Text(destination.label) },
-                        )
+                DstBottomBar(currentRoute) { destination ->
+                    navController.navigate(destination.route) {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
                     }
                 }
             }
@@ -120,7 +137,17 @@ fun DstNavigation(
             popEnterTransition = { popEnterTransition() },
             popExitTransition = { popExitTransition() },
         ) {
-            composable(Destination.History.route) { HistoryScreen() }
+            composable(Destination.History.route) {
+                val historyViewModel: HistoryViewModel = viewModel(
+                    key = "history",
+                    factory = HistoryViewModelFactory(historyRepository),
+                )
+                HistoryRoute(
+                    historyViewModel,
+                    onTaskClick = { key -> navController.navigate("history/task/${key.taskId}/${key.occurrenceKey}") },
+                    onDayClick = { date -> navController.navigate("history/day/$date") },
+                )
+            }
             composable(Destination.Today.route) {
                 TodayScreen(todayViewModel) { key ->
                     navController.navigate("task/${key.taskId}/${key.occurrenceKey}")
@@ -146,6 +173,29 @@ fun DstNavigation(
                 )
                 TaskDetailRoute(executionViewModel, navController::popBackStack)
             }
+            composable(HISTORY_TASK_ROUTE) { backStackEntry ->
+                val key = TaskInstanceKey(
+                    taskId = requireNotNull(backStackEntry.arguments?.getString("taskId")),
+                    occurrenceKey = requireNotNull(backStackEntry.arguments?.getString("occurrenceKey")),
+                )
+                val detailViewModel: HistoryDetailViewModel = viewModel(
+                    key = "history-detail:${key.taskId}:${key.occurrenceKey}",
+                    factory = HistoryDetailViewModelFactory(key, historyRepository, taskNoteService),
+                )
+                HistoryDetailRoute(detailViewModel, navController::popBackStack)
+            }
+            composable(HISTORY_DAY_ROUTE) { backStackEntry ->
+                val taskDate = requireNotNull(backStackEntry.arguments?.getString("taskDate"))
+                val dayViewModel: DayHistoryViewModel = viewModel(
+                    key = "history-day:$taskDate",
+                    factory = DayHistoryViewModelFactory(taskDate, historyRepository, resultRepository),
+                )
+                DayHistoryRoute(
+                    dayViewModel,
+                    onBack = navController::popBackStack,
+                    onTaskClick = { key -> navController.navigate("history/task/${key.taskId}/${key.occurrenceKey}") },
+                )
+            }
         }
     }
 
@@ -157,6 +207,65 @@ fun DstNavigation(
             onConfirm = todayViewModel::confirmImport,
             onDismiss = todayViewModel::closeImport,
         )
+    }
+}
+
+@Composable
+private fun DstBottomBar(
+    currentRoute: String?,
+    onNavigate: (Destination) -> Unit,
+) {
+    NavigationBar {
+        Destination.entries.forEach { destination ->
+            NavigationBarItem(
+                selected = currentRoute == destination.route,
+                onClick = { onNavigate(destination) },
+                icon = {
+                    destination.iconRes?.let { iconRes ->
+                        Icon(
+                            painter = painterResource(iconRes),
+                            contentDescription = null,
+                            modifier = Modifier.size(30.dp),
+                        )
+                    } ?: Text(destination.marker, fontSize = 30.sp)
+                },
+                label = { Text(destination.label) },
+            )
+        }
+    }
+}
+
+@Preview(
+    name = "今日页 · 空状态",
+    showBackground = true,
+    widthDp = 393,
+    heightDp = 852,
+)
+@Composable
+private fun TodayPagePreview() {
+    TodayPagePreviewContent()
+}
+
+@Composable
+fun TodayPagePreviewContent() {
+    DstTheme(dynamicColor = false) {
+        Scaffold(
+            bottomBar = { DstBottomBar(Destination.Today.route, onNavigate = {}) },
+            floatingActionButton = {
+                FloatingActionButton(onClick = {}) { Text("+", fontSize = 26.sp) }
+            },
+        ) { padding ->
+            Box(Modifier.padding(padding)) {
+                TodayContent(
+                    state = TodayUiState(
+                        loading = false,
+                        taskDate = "2026-07-20",
+                    ),
+                    onRetry = {},
+                    onTaskClick = {},
+                )
+            }
+        }
     }
 }
 

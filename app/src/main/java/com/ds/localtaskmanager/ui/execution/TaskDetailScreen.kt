@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -60,8 +61,15 @@ import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.execution.CounterAction
 import com.ds.localtaskmanager.domain.execution.ExecutionState
+import com.ds.localtaskmanager.ui.formatDeadlineForDisplay
 import java.time.LocalDateTime
 import kotlin.math.roundToInt
+
+data class TaskDetailTimelineItem(
+    val title: String,
+    val detail: String?,
+    val timestamp: String,
+)
 
 @Composable
 fun TaskDetailRoute(
@@ -131,6 +139,9 @@ fun TaskDetailScreen(
     onUndo: () -> Unit,
     onDismissCompletion: () -> Unit,
     onDismissError: () -> Unit,
+    readOnly: Boolean = false,
+    title: String = "任务详情",
+    timeline: List<TaskDetailTimelineItem> = emptyList(),
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showUndoConfirmation by remember { mutableStateOf(false) }
@@ -145,12 +156,12 @@ fun TaskDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("任务详情") },
+                title = { Text(title) },
                 navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
             )
         },
         bottomBar = {
-            state.instance?.let { instance ->
+            if (!readOnly) state.instance?.let { instance ->
                 when (instance.status) {
                     TaskStatus.PENDING.name -> ActionBar {
                         Button(
@@ -186,6 +197,8 @@ fun TaskDetailScreen(
                 onInformationChange = onInformationChange,
                 onInformationSave = onInformationSave,
                 onNoteChange = onNoteChange,
+                readOnly = readOnly,
+                timeline = timeline,
             )
         }
     }
@@ -235,9 +248,11 @@ private fun TaskDetailContent(
     onInformationChange: (String) -> Unit,
     onInformationSave: () -> Unit,
     onNoteChange: (String) -> Unit,
+    readOnly: Boolean,
+    timeline: List<TaskDetailTimelineItem>,
 ) {
     val instance = requireNotNull(state.instance)
-    val editable = instance.status == TaskStatus.PENDING.name
+    val editable = !readOnly && instance.status == TaskStatus.PENDING.name
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -293,7 +308,21 @@ private fun TaskDetailContent(
                 style = MaterialTheme.typography.labelMedium,
             )
         }
-        if (editable && !state.canComplete) {
+        if (timeline.isNotEmpty()) {
+            DetailCard("历史记录") {
+                timeline.forEachIndexed { index, item ->
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Row(Modifier.fillMaxWidth()) {
+                            Text(item.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                            Text(item.timestamp, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                        }
+                        item.detail?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+                    }
+                    if (index != timeline.lastIndex) HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                }
+            }
+        }
+        if (!readOnly && editable && !state.canComplete) {
             Text(
                 completionHint(state),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -315,7 +344,7 @@ private fun Header(instance: TaskInstanceEntity) {
         Text(
             buildString {
                 append("任务日 ${instance.taskDate}")
-                instance.deadline?.let { append(" · 截止 ${it.replace('T', ' ').removeSuffix(":00")}") }
+                instance.deadline?.let { append(" · 截止 ${formatDeadlineForDisplay(it)}") }
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
@@ -448,7 +477,7 @@ private fun ExecutionSection(
 
 @Composable
 private fun ActionBar(content: @Composable () -> Unit) {
-    Surface(shadowElevation = 4.dp) {
+    Surface(modifier = Modifier.testTag("task-detail-actions"), shadowElevation = 4.dp) {
         Box(Modifier.fillMaxWidth().imePadding().padding(16.dp), contentAlignment = Alignment.Center) { content() }
     }
 }

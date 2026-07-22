@@ -32,7 +32,7 @@ class AppDatabaseMigrationTest {
             insertV1Task(db, "LegacyTaskV10001", "LegacyGroupV1001")
         }
 
-        val database = openV3(V1_DATABASE)
+        val database = openCurrent(V1_DATABASE)
         val definition = kotlinx.coroutines.runBlocking {
             database.definitionDao().getDefinition("LegacyTaskV10001")
         }
@@ -45,6 +45,7 @@ class AppDatabaseMigrationTest {
         assertEquals("NORMAL", definition?.executionKind)
         assertEquals("TEMPORARY", instance?.category)
         assertEquals(100L, instance?.publishedAtEpochMillis)
+        assertEquals("未命名积分组", instance?.groupNameSnapshot)
         assertEquals("未命名积分组", kotlinx.coroutines.runBlocking {
             database.definitionDao().getGroups(listOf("LegacyGroupV1001")).single().name
         })
@@ -65,7 +66,7 @@ class AppDatabaseMigrationTest {
             )
         }
 
-        val database = openV3(V2_DATABASE)
+        val database = openCurrent(V2_DATABASE)
         val ledger = kotlinx.coroutines.runBlocking {
             database.auditDao().getLedger("LegacyTaskV20001")
         }
@@ -129,9 +130,9 @@ class AppDatabaseMigrationTest {
         }
     }
 
-    private fun openV3(name: String): AppDatabase =
+    private fun openCurrent(name: String): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .allowMainThreadQueries()
             .build()
             .also {

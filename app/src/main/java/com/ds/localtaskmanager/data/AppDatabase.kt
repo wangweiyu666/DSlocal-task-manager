@@ -29,7 +29,7 @@ import com.ds.localtaskmanager.data.dao.ResultDao
         ResultRevisionEntity::class,
         ReminderRecordEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -48,7 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 "dst-sub.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

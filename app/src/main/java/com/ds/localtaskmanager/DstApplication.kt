@@ -14,6 +14,8 @@ import com.ds.localtaskmanager.data.recurrence.InstanceGenerationService
 import com.ds.localtaskmanager.data.recurrence.RoomInstanceGenerationService
 import com.ds.localtaskmanager.data.result.ResultRepository
 import com.ds.localtaskmanager.data.result.RoomResultRepository
+import com.ds.localtaskmanager.data.history.HistoryRepository
+import com.ds.localtaskmanager.data.history.RoomHistoryRepository
 import com.ds.localtaskmanager.domain.SecureRecordIdGenerator
 import com.ds.localtaskmanager.protocol.Dst1Parser
 import com.ds.localtaskmanager.reminder.AndroidReminderNotifier
@@ -43,6 +45,7 @@ class DstApplication : Application() {
     val resultRepository: ResultRepository by lazy {
         RoomResultRepository(database)
     }
+    val historyRepository: HistoryRepository by lazy { RoomHistoryRepository(database) }
     private val reminderNotifier by lazy { AndroidReminderNotifier(this) }
     val reminderCoordinator: ReminderCoordinator by lazy {
         ReminderCoordinator(

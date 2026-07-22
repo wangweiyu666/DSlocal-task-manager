@@ -135,6 +135,22 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
     }
 }
 
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `task_instance` ADD COLUMN `groupNameSnapshot` TEXT")
+        db.execSQL(
+            """
+            UPDATE `task_instance`
+            SET `groupNameSnapshot` = (
+                SELECT `name` FROM `task_group`
+                WHERE `task_group`.`groupId` = `task_instance`.`groupId`
+            )
+            WHERE `groupId` IS NOT NULL
+            """.trimIndent(),
+        )
+    }
+}
+
 private fun SupportSQLiteDatabase.execAll(statements: List<String>) {
     statements.forEach(::execSQL)
 }

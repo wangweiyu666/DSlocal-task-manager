@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ds.localtaskmanager.data.TodayTask
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
+import com.ds.localtaskmanager.ui.formatDeadlineForDisplay
 
 @Composable
 fun TodayScreen(
@@ -59,7 +60,30 @@ fun TodayContent(
     when {
         state.loading && state.sections.isEmpty() -> LoadingState()
         state.error != null && state.sections.isEmpty() -> ErrorState(state.error, onRetry)
+        state.sections.isEmpty() -> TodayEmptyState(state.taskDate)
         else -> TodayList(state, onTaskClick)
+    }
+}
+
+@Composable
+private fun TodayEmptyState(taskDate: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 96.dp),
+    ) {
+        Text("今日", style = MaterialTheme.typography.headlineLarge)
+        Text(
+            "任务日 $taskDate",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            "还没有任务，点击右下角导入。",
+            modifier = Modifier.padding(top = 32.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }
 
@@ -181,7 +205,7 @@ private fun TaskCard(
                     buildString {
                         append(if (instance.required) "必做" else "选做")
                         append(" · ${instance.points} 分")
-                        instance.deadline?.let { append(" · 截止 ${formatDeadline(it)}") }
+                        instance.deadline?.let { append(" · 截止 ${formatDeadlineForDisplay(it)}") }
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
@@ -224,9 +248,6 @@ private fun statusLabel(status: String): String = when (status) {
     TaskStatus.CANCELLED.name -> "已撤销"
     else -> status
 }
-
-private fun formatDeadline(value: String): String =
-    value.replace('T', ' ').removeSuffix(":00")
 
 @Composable
 private fun LoadingState() {

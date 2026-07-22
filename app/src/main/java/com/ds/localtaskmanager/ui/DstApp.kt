@@ -9,6 +9,8 @@ import com.ds.localtaskmanager.ui.today.TodayViewModel
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import kotlinx.coroutines.flow.StateFlow
 import com.ds.localtaskmanager.reminder.ReminderReconciler
+import com.ds.localtaskmanager.data.history.HistoryRepository
+import com.ds.localtaskmanager.data.result.ResultRepository
 
 @Composable
 fun DstApp(
@@ -16,6 +18,8 @@ fun DstApp(
     taskRepository: TaskRepository,
     taskExecutionService: TaskExecutionService,
     taskNoteService: TaskNoteService,
+    historyRepository: HistoryRepository,
+    resultRepository: ResultRepository,
     reminderReconciler: ReminderReconciler,
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
@@ -25,6 +29,8 @@ fun DstApp(
     taskRepository,
     taskExecutionService,
     taskNoteService,
+    historyRepository,
+    resultRepository,
     reminderReconciler,
     notificationTask,
     onNotificationTaskConsumed,

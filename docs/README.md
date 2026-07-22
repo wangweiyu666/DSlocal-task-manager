@@ -6,7 +6,7 @@
 | --- | --- |
 | 产品目标、业务规则、状态语义 | [需求总稿](preview.md) |
 | DST1 字段与校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
-| Room 表、索引、迁移 | [数据库 v3](android-database-v3.md) |
+| Room 表、索引、迁移 | [数据库 v4](android-database-v4.md) |
 | 当前进度、后续窗口 | [实施状态与路线图](android-phase-1-summary-and-roadmap.md) |
 | 架构约束、交付流程 | [工程约束与交付清单](w00-w01-engineering-playbook.md) |
 | 当前 Android 能力边界 | [Android 实现边界](android-phase-1.md) |
@@ -20,6 +20,7 @@
 - [W20：延期与重开](w20-delay-and-reopen.md)
 - [W21：本地提醒与通知](w21-local-notifications.md)
 - [W22：今日执行 UI](w22-today-execution-ui.md)
+- [W23：历史页面](w23-history-ui.md)
 
 窗口文档记录实现决策和验收证据，不重复定义产品规则。发生冲突时按以下顺序处理：
 

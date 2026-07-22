@@ -129,6 +129,7 @@ data class TaskInstanceEntity(
     val executionTarget: Int? = null,
     val reminderMinutesJson: String? = null,
     val publishedAtEpochMillis: Long = createdAtEpochMillis,
+    val groupNameSnapshot: String? = null,
 )
 
 @Entity(
