@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
             application.taskRepository,
             application.importService,
             application.instanceGenerationService,
+            application.resultRepository,
             application.reminderCoordinator,
         )
     }
@@ -56,6 +57,8 @@ class MainActivity : ComponentActivity() {
                 taskNoteService = application.taskNoteService,
                 historyRepository = application.historyRepository,
                 resultRepository = application.resultRepository,
+                statisticsRepository = application.statisticsRepository,
+                shareImageService = application.shareImageService,
                 reminderReconciler = application.reminderCoordinator,
                 notificationTask = notificationTask,
                 onNotificationTaskConsumed = { notificationTask.value = null },

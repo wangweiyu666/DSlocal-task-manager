@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
 import com.ds.localtaskmanager.reminder.ReminderReconciler
 import com.ds.localtaskmanager.data.history.HistoryRepository
 import com.ds.localtaskmanager.data.result.ResultRepository
+import com.ds.localtaskmanager.data.statistics.StatisticsRepository
+import com.ds.localtaskmanager.sharing.ShareImageService
 
 @Composable
 fun DstApp(
@@ -20,6 +22,8 @@ fun DstApp(
     taskNoteService: TaskNoteService,
     historyRepository: HistoryRepository,
     resultRepository: ResultRepository,
+    statisticsRepository: StatisticsRepository,
+    shareImageService: ShareImageService,
     reminderReconciler: ReminderReconciler,
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
@@ -31,6 +35,8 @@ fun DstApp(
     taskNoteService,
     historyRepository,
     resultRepository,
+    statisticsRepository,
+    shareImageService,
     reminderReconciler,
     notificationTask,
     onNotificationTaskConsumed,

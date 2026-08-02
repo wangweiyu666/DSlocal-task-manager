@@ -15,7 +15,11 @@ class RoomResultRepository(
     private val calculator: DailyResultCalculator = DailyResultCalculator(),
 ) : ResultRepository {
     override suspend fun getDailyResult(taskDate: String): DailyResultSnapshot? =
-        database.withTransaction { calculate(taskDate, database.resultDao().resultRowsForDate(taskDate)) }
+        database.withTransaction {
+            calculate(taskDate, database.resultDao().resultRowsForDate(taskDate))?.copy(
+                domName = database.profileDao().getProfile()?.domName?.takeIf(String::isNotBlank),
+            )
+        }
 
     override suspend fun getGroupResult(taskDate: String, groupId: String?): GroupDailyResult? =
         getDailyResult(taskDate)?.groups?.singleOrNull { it.groupId == groupId }
@@ -48,5 +52,11 @@ class RoomResultRepository(
         actualPoints = actualPoints,
         groupCompleteMessage = groupCompleteMessage,
         groupIncompleteMessage = groupIncompleteMessage,
+        taskName = taskName,
+        sortOrder = sortOrder,
+        deadline = deadline,
+        createdAtEpochMillis = createdAtEpochMillis,
+        groupName = groupName,
+        groupCreatedAtEpochMillis = groupCreatedAtEpochMillis,
     )
 }

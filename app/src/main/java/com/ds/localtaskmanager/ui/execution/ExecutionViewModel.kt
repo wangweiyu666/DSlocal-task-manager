@@ -94,6 +94,25 @@ class ExecutionViewModel(
         }
     }
 
+    fun prepareInformationForShare(onReady: (String) -> Unit) {
+        val draft = mutableState.value.informationDraft
+        val pending = mutableState.value.instance?.status == com.ds.localtaskmanager.domain.TaskStatus.PENDING.name
+        if (!pending) {
+            if (draft.trim().isNotEmpty()) onReady(draft.trim())
+            return
+        }
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(working = true, errorMessage = null)
+            runCatching { service.saveInformationDraft(key, draft) }
+                .onSuccess { saved ->
+                    informationDirty = false
+                    refreshNow()
+                    onReady(saved.content)
+                }
+                .onFailure(::showError)
+        }
+    }
+
     fun startTimer() {
         if (mutableState.value.timerRunning) return
         viewModelScope.launch {

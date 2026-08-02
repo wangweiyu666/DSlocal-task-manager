@@ -419,7 +419,7 @@ private fun sourceLabel(category: String): String = when (category) {
 @Preview(showBackground = true, widthDp = 393, heightDp = 852)
 @Composable
 private fun HistoryPopulatedPreview() {
-    DstTheme(dynamicColor = false) {
+    DstTheme {
         PopulatedHistoryPreviewContent()
     }
 }
@@ -427,13 +427,13 @@ private fun HistoryPopulatedPreview() {
 @Preview(name = "历史 · 空状态", showBackground = true, widthDp = 393, heightDp = 852)
 @Composable
 private fun HistoryEmptyPreview() {
-    DstTheme(dynamicColor = false) { HistoryPreviewContent(HistoryUiState(loading = false)) }
+    DstTheme { HistoryPreviewContent(HistoryUiState(loading = false)) }
 }
 
 @Preview(name = "历史 · 筛选无结果", showBackground = true, widthDp = 393, heightDp = 852)
 @Composable
 private fun HistoryFilteredEmptyPreview() {
-    DstTheme(dynamicColor = false) {
+    DstTheme {
         HistoryPreviewContent(HistoryUiState(loading = false, searchText = "不存在的任务"))
     }
 }

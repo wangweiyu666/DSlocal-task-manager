@@ -16,12 +16,15 @@ import com.ds.localtaskmanager.data.result.ResultRepository
 import com.ds.localtaskmanager.data.result.RoomResultRepository
 import com.ds.localtaskmanager.data.history.HistoryRepository
 import com.ds.localtaskmanager.data.history.RoomHistoryRepository
+import com.ds.localtaskmanager.data.statistics.RoomStatisticsRepository
+import com.ds.localtaskmanager.data.statistics.StatisticsRepository
 import com.ds.localtaskmanager.domain.SecureRecordIdGenerator
 import com.ds.localtaskmanager.protocol.Dst1Parser
 import com.ds.localtaskmanager.reminder.AndroidReminderNotifier
 import com.ds.localtaskmanager.reminder.AndroidReminderScheduler
 import com.ds.localtaskmanager.reminder.ReminderCoordinator
 import java.time.Clock
+import com.ds.localtaskmanager.sharing.ShareImageService
 
 class DstApplication : Application() {
     val database: AppDatabase by lazy { AppDatabase.create(this) }
@@ -46,6 +49,8 @@ class DstApplication : Application() {
         RoomResultRepository(database)
     }
     val historyRepository: HistoryRepository by lazy { RoomHistoryRepository(database) }
+    val statisticsRepository: StatisticsRepository by lazy { RoomStatisticsRepository(database, clock) }
+    val shareImageService: ShareImageService by lazy { ShareImageService(this, database) }
     private val reminderNotifier by lazy { AndroidReminderNotifier(this) }
     val reminderCoordinator: ReminderCoordinator by lazy {
         ReminderCoordinator(

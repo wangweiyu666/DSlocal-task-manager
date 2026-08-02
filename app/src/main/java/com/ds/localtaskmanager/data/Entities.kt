@@ -105,7 +105,14 @@ data class TaskStepDefinitionEntity(
             onDelete = ForeignKey.SET_NULL,
         ),
     ],
-    indices = [Index("taskId"), Index("taskDate"), Index("status"), Index("groupId")],
+    indices = [
+        Index("taskId"),
+        Index("taskDate"),
+        Index("status"),
+        Index("groupId"),
+        Index(value = ["taskDate", "required", "status", "category"]),
+        Index(value = ["taskDate", "groupId", "status"]),
+    ],
 )
 data class TaskInstanceEntity(
     val taskId: String,
@@ -235,7 +242,12 @@ data class TaskNoteEntity(
             childColumns = ["groupId"],
         ),
     ],
-    indices = [Index(value = ["taskId", "occurrenceKey"]), Index("groupId")],
+    indices = [
+        Index(value = ["taskId", "occurrenceKey"]),
+        Index("groupId"),
+        Index("createdAtEpochMillis"),
+        Index(value = ["reason", "createdAtEpochMillis"]),
+    ],
 )
 data class PointsLedgerEntity(
     @PrimaryKey val ledgerId: String,

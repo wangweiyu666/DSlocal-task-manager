@@ -21,6 +21,8 @@
 - [W21：本地提醒与通知](w21-local-notifications.md)
 - [W22：今日执行 UI](w22-today-execution-ui.md)
 - [W23：历史页面](w23-history-ui.md)
+- [W24：今日结果与分享](w24-results-and-sharing.md)
+- [W25：“我的”统计与积分流水](w25-profile-statistics.md)
 
 窗口文档记录实现决策和验收证据，不重复定义产品规则。发生冲突时按以下顺序处理：
 

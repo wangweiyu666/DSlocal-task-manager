@@ -9,6 +9,8 @@ import com.ds.localtaskmanager.data.TaskRepository
 import com.ds.localtaskmanager.data.recurrence.InstanceGenerationService
 import com.ds.localtaskmanager.domain.TaskDay
 import com.ds.localtaskmanager.reminder.ReminderReconciler
+import com.ds.localtaskmanager.data.result.ResultRepository
+import com.ds.localtaskmanager.domain.result.DailyResultSnapshot
 import java.time.LocalDateTime
 import java.time.LocalDate
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,11 +32,20 @@ data class ImportUiState(
     val working: Boolean = false,
 )
 
+data class TodayResultUiState(
+    val visible: Boolean = false,
+    val loading: Boolean = false,
+    val taskDate: String = "",
+    val snapshot: DailyResultSnapshot? = null,
+    val error: String? = null,
+)
+
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TodayViewModel(
     repository: TaskRepository,
     private val importService: ImportService,
     private val generationService: InstanceGenerationService,
+    private val resultRepository: ResultRepository,
     private val reminderReconciler: ReminderReconciler? = null,
 ) : ViewModel() {
     private val mutableTaskDate = MutableStateFlow(TaskDay.from(LocalDateTime.now()).toString())
@@ -72,6 +83,8 @@ class TodayViewModel(
 
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
+    private val _resultState = MutableStateFlow(TodayResultUiState())
+    val resultState: StateFlow<TodayResultUiState> = _resultState.asStateFlow()
 
     init {
         synchronizeInstances()
@@ -89,6 +102,45 @@ class TodayViewModel(
             }.onFailure { error ->
                 mutableError.value = error.message ?: "今日任务同步失败"
                 mutableLoading.value = false
+            }
+        }
+    }
+
+    fun openResult() {
+        if (_resultState.value.visible) return
+        val date = mutableTaskDate.value
+        _resultState.value = TodayResultUiState(visible = true, loading = true, taskDate = date)
+        loadResult(date)
+    }
+
+    fun retryResult() {
+        val date = _resultState.value.taskDate.ifBlank { mutableTaskDate.value }
+        _resultState.value = TodayResultUiState(visible = true, loading = true, taskDate = date)
+        loadResult(date)
+    }
+
+    fun closeResult() {
+        _resultState.value = TodayResultUiState()
+        synchronizeInstances()
+    }
+
+    private fun loadResult(date: String) {
+        viewModelScope.launch {
+            runCatching {
+                generationService.reconcileAll(LocalDate.parse(date))
+                resultRepository.getDailyResult(date)
+            }.onSuccess { snapshot ->
+                _resultState.value = TodayResultUiState(
+                    visible = true,
+                    taskDate = date,
+                    snapshot = snapshot,
+                )
+            }.onFailure {
+                _resultState.value = TodayResultUiState(
+                    visible = true,
+                    taskDate = date,
+                    error = "暂时无法生成今日结果",
+                )
             }
         }
     }
@@ -140,11 +192,12 @@ class TodayViewModelFactory(
     private val repository: TaskRepository,
     private val importService: ImportService,
     private val generationService: InstanceGenerationService,
+    private val resultRepository: ResultRepository,
     private val reminderReconciler: ReminderReconciler? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(TodayViewModel::class.java))
-        return TodayViewModel(repository, importService, generationService, reminderReconciler) as T
+        return TodayViewModel(repository, importService, generationService, resultRepository, reminderReconciler) as T
     }
 }

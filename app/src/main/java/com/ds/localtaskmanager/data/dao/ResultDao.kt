@@ -15,6 +15,12 @@ data class ResultTaskRow(
     val actualPoints: Int,
     val groupCompleteMessage: String?,
     val groupIncompleteMessage: String?,
+    val taskName: String,
+    val sortOrder: Int?,
+    val deadline: String?,
+    val createdAtEpochMillis: Long,
+    val groupName: String?,
+    val groupCreatedAtEpochMillis: Long?,
 )
 
 @Dao
@@ -31,7 +37,9 @@ interface ResultDao {
           d.groupId AS groupId, d.required AS required, i.status,
           CAST(COALESCE(SUM(l.delta), 0) AS INTEGER) AS actualPoints,
           g.completeMessage AS groupCompleteMessage,
-          g.incompleteMessage AS groupIncompleteMessage
+          g.incompleteMessage AS groupIncompleteMessage,
+          i.name AS taskName, i.sortOrder, i.deadline, i.createdAtEpochMillis,
+          g.name AS groupName, g.createdAtEpochMillis AS groupCreatedAtEpochMillis
         FROM task_instance i
         INNER JOIN task_definition d ON d.taskId = i.taskId
         LEFT JOIN points_ledger l
@@ -50,7 +58,9 @@ interface ResultDao {
           d.groupId AS groupId, d.required AS required, i.status,
           CAST(COALESCE(SUM(l.delta), 0) AS INTEGER) AS actualPoints,
           g.completeMessage AS groupCompleteMessage,
-          g.incompleteMessage AS groupIncompleteMessage
+          g.incompleteMessage AS groupIncompleteMessage,
+          i.name AS taskName, i.sortOrder, i.deadline, i.createdAtEpochMillis,
+          g.name AS groupName, g.createdAtEpochMillis AS groupCreatedAtEpochMillis
         FROM task_instance i
         INNER JOIN task_definition d ON d.taskId = i.taskId
         LEFT JOIN points_ledger l

@@ -11,6 +11,7 @@ import com.ds.localtaskmanager.data.dao.InstanceDao
 import com.ds.localtaskmanager.data.dao.ProfileDao
 import com.ds.localtaskmanager.data.dao.ReminderDao
 import com.ds.localtaskmanager.data.dao.ResultDao
+import com.ds.localtaskmanager.data.dao.StatisticsDao
 
 @Database(
     entities = [
@@ -29,7 +30,7 @@ import com.ds.localtaskmanager.data.dao.ResultDao
         ResultRevisionEntity::class,
         ReminderRecordEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -40,6 +41,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun auditDao(): AuditDao
     abstract fun resultDao(): ResultDao
     abstract fun reminderDao(): ReminderDao
+    abstract fun statisticsDao(): StatisticsDao
 
     companion object {
         fun create(context: Context): AppDatabase =
@@ -48,7 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 "dst-sub.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }

@@ -1,7 +1,11 @@
 package com.ds.localtaskmanager.ui.today
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -41,14 +48,27 @@ import com.ds.localtaskmanager.data.TodayTask
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import com.ds.localtaskmanager.ui.formatDeadlineForDisplay
+import com.ds.localtaskmanager.sharing.ShareImageService
 
 @Composable
 fun TodayScreen(
     viewModel: TodayViewModel,
+    shareImageService: ShareImageService,
     onTaskClick: (TaskInstanceKey) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    TodayContent(state, viewModel::synchronizeInstances, onTaskClick)
+    val resultState by viewModel.resultState.collectAsStateWithLifecycle()
+    AnimatedContent(
+        targetState = resultState.visible,
+        transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+        label = "today-result",
+    ) { showingResult ->
+        if (showingResult) {
+            TodayResultScreen(resultState, shareImageService, viewModel::retryResult, viewModel::closeResult)
+        } else {
+            TodayContent(state, viewModel::synchronizeInstances, onTaskClick, viewModel::openResult)
+        }
+    }
 }
 
 @Composable
@@ -56,19 +76,21 @@ fun TodayContent(
     state: TodayUiState,
     onRetry: () -> Unit,
     onTaskClick: (TaskInstanceKey) -> Unit,
+    onOpenResult: () -> Unit = {},
 ) {
     when {
         state.loading && state.sections.isEmpty() -> LoadingState()
         state.error != null && state.sections.isEmpty() -> ErrorState(state.error, onRetry)
-        state.sections.isEmpty() -> TodayEmptyState(state.taskDate)
-        else -> TodayList(state, onTaskClick)
+        state.sections.isEmpty() -> ResultPullContainer({ true }, onOpenResult) { TodayEmptyState(state.taskDate, it) }
+        else -> TodayList(state, onTaskClick, onOpenResult)
     }
 }
 
 @Composable
-private fun TodayEmptyState(taskDate: String) {
+private fun TodayEmptyState(taskDate: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
             .fillMaxSize()
             .padding(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 96.dp),
     ) {
@@ -91,9 +113,13 @@ private fun TodayEmptyState(taskDate: String) {
 private fun TodayList(
     state: TodayUiState,
     onTaskClick: (TaskInstanceKey) -> Unit,
+    onOpenResult: () -> Unit,
 ) {
+    val listState = rememberLazyListState()
+    ResultPullContainer({ !listState.canScrollBackward }, onOpenResult) { modifier ->
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        state = listState,
+        modifier = modifier,
         contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -131,6 +157,7 @@ private fun TodayList(
                 }
             }
         }
+    }
     }
 }
 
@@ -234,7 +261,7 @@ private fun StatusDot(status: String) {
 
 @Composable
 private fun statusColor(status: String): Color = when (status) {
-    TaskStatus.COMPLETED.name -> Color(0xFF238636)
+    TaskStatus.COMPLETED.name -> MaterialTheme.colorScheme.primary
     TaskStatus.MISSED.name -> MaterialTheme.colorScheme.error
     TaskStatus.NOT_STARTED.name -> MaterialTheme.colorScheme.outline
     else -> MaterialTheme.colorScheme.primary

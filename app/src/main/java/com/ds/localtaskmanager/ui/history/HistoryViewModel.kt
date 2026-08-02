@@ -258,14 +258,20 @@ class HistoryDetailViewModel(
                         noteSaveState = NoteSaveState.SAVED,
                     ),
                     timeline = (result.logs.map { log ->
-                        TaskDetailTimelineItem(actionLabel(log.action), actionDetail(log.action, log.detail), formatTime(log.createdAtEpochMillis))
+                        TaskDetailTimelineItem(
+                            title = actionLabel(log.action),
+                            detail = actionDetail(log.action, log.detail),
+                            timestamp = formatTime(log.createdAtEpochMillis),
+                            sortEpochMillis = log.createdAtEpochMillis,
+                        )
                     } + result.revisions.map { revision ->
                         TaskDetailTimelineItem(
-                            revisionLabel(revision.reason),
-                            revisionPoints(revision.oldPoints, revision.newPoints),
-                            formatTime(revision.createdAtEpochMillis),
+                            title = revisionLabel(revision.reason),
+                            detail = revisionPointsDetail(revision, result.revisionGroupNames),
+                            timestamp = formatTime(revision.createdAtEpochMillis),
+                            sortEpochMillis = revision.createdAtEpochMillis,
                         )
-                    }).sortedByDescending(TaskDetailTimelineItem::timestamp),
+                    }).sortedNewestFirst(),
                 )
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(
@@ -343,9 +349,6 @@ class HistoryDetailViewModel(
         else -> "当日结果已更新"
     }
 
-    private fun revisionPoints(old: Int?, new: Int?): String? =
-        if (old != null || new != null) "积分从 ${old ?: 0} 分调整为 ${new ?: 0} 分" else null
-
     private fun formatTime(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())
         .format(DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm"))
@@ -402,12 +405,22 @@ class DayHistoryViewModel(
                     resultRepository.getRevisionTimeline(taskDate),
                 )
             }.onSuccess { (tasks, result, revisions) ->
+                val groupNames = buildMap {
+                    tasks.forEach { task ->
+                        task.instance.groupId?.let { groupId ->
+                            task.instance.groupNameSnapshot?.let { put(groupId, it) }
+                        }
+                    }
+                    result?.groups.orEmpty().forEach { group ->
+                        group.groupId?.let { putIfAbsent(it, group.groupName ?: "未命名积分组") }
+                    }
+                }
                 mutableState.value = DayHistoryUiState(
                     loading = false,
                     taskDate = taskDate,
                     result = result,
                     tasks = tasks,
-                    revisions = revisions.map(::revisionTimelineItem).sortedByDescending(TaskDetailTimelineItem::timestamp),
+                    revisions = revisions.map { revisionTimelineItem(it, groupNames) }.sortedNewestFirst(),
                 )
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(
@@ -418,7 +431,10 @@ class DayHistoryViewModel(
         }
     }
 
-    private fun revisionTimelineItem(revision: ResultRevisionEntity) = TaskDetailTimelineItem(
+    private fun revisionTimelineItem(
+        revision: ResultRevisionEntity,
+        groupNames: Map<String, String>,
+    ) = TaskDetailTimelineItem(
         title = when (revision.reason) {
             "TASK_COMPLETED" -> "任务完成后更新结果"
             "COMPLETION_UNDONE" -> "撤销完成后更新结果"
@@ -427,13 +443,30 @@ class DayHistoryViewModel(
             "TASK_DATE_MOVED" -> "任务日期调整后更新结果"
             else -> "当日结果已更新"
         },
-        detail = if (revision.oldPoints != null || revision.newPoints != null) {
-            "积分从 ${revision.oldPoints ?: 0} 分调整为 ${revision.newPoints ?: 0} 分"
-        } else null,
+        detail = revisionPointsDetail(revision, groupNames),
         timestamp = Instant.ofEpochMilli(revision.createdAtEpochMillis)
             .atZone(ZoneId.systemDefault())
             .format(DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm")),
+        sortEpochMillis = revision.createdAtEpochMillis,
     )
+}
+
+internal fun List<TaskDetailTimelineItem>.sortedNewestFirst(): List<TaskDetailTimelineItem> =
+    sortedByDescending(TaskDetailTimelineItem::sortEpochMillis)
+
+internal fun revisionPointsDetail(
+    revision: ResultRevisionEntity,
+    groupNames: Map<String, String>,
+): String? {
+    if (revision.oldPoints == null && revision.newPoints == null) return null
+    val change = "从 ${revision.oldPoints ?: 0} 分调整为 ${revision.newPoints ?: 0} 分"
+    return when (revision.scope) {
+        "GLOBAL" -> "每日积分$change"
+        "GROUP" -> revision.groupId?.let { groupId ->
+            "积分组「${groupNames[groupId] ?: "未命名积分组"}」的积分$change"
+        } ?: "未分组积分$change"
+        else -> "积分$change"
+    }
 }
 
 class DayHistoryViewModelFactory(

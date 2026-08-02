@@ -49,6 +49,7 @@ data class HistoryDetail(
     val note: String,
     val logs: List<ActionLogEntity>,
     val revisions: List<ResultRevisionEntity>,
+    val revisionGroupNames: Map<String, String> = emptyMap(),
 )
 
 interface HistoryRepository {
@@ -107,15 +108,26 @@ class RoomHistoryRepository(private val database: AppDatabase) : HistoryReposito
         val instance = database.instanceDao().getInstance(key.taskId, key.occurrenceKey) ?: return@withTransaction null
         val progress = database.executionDao().getProgress(key.taskId, key.occurrenceKey)
         val submission = database.executionDao().getSubmission(key.taskId, key.occurrenceKey)
+        val revisions = database.resultDao().revisionsForDate(instance.taskDate).filter { revision ->
+            revision.relatedTaskIdsJson.contains("\"${instance.taskId}\"")
+        }
+        val currentGroupNames = revisions.mapNotNull(ResultRevisionEntity::groupId).distinct().let { groupIds ->
+            if (groupIds.isEmpty()) emptyMap()
+            else database.definitionDao().getGroups(groupIds).associate { it.groupId to it.name }
+        }
+        val revisionGroupNames = currentGroupNames.toMutableMap().apply {
+            instance.groupId?.let { groupId ->
+                instance.groupNameSnapshot?.let { put(groupId, it) }
+            }
+        }
         HistoryDetail(
             instance = instance,
             steps = database.instanceDao().getInstanceSteps(key.taskId, key.occurrenceKey),
             execution = executionState(instance, progress?.counterValue, progress?.elapsedMillis, submission?.content),
             note = database.executionDao().getNote(key.taskId, key.occurrenceKey)?.content.orEmpty(),
             logs = database.auditDao().getLogs(key.taskId, key.occurrenceKey),
-            revisions = database.resultDao().revisionsForDate(instance.taskDate).filter { revision ->
-                revision.relatedTaskIdsJson.contains("\"${instance.taskId}\"")
-            },
+            revisions = revisions,
+            revisionGroupNames = revisionGroupNames,
         )
     }
 

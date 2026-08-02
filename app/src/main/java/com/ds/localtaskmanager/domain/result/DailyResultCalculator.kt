@@ -6,7 +6,7 @@ class DailyResultCalculator {
     fun calculate(taskDate: String, source: List<ResultTaskItem>): DailyResultSnapshot? {
         val tasks = source
             .filter { it.status != TaskStatus.CANCELLED.name && it.status != TaskStatus.NOT_STARTED.name }
-            .sortedWith(compareByDescending<ResultTaskItem> { it.required }.thenBy { it.taskId }.thenBy { it.occurrenceKey })
+            .sortedWith(resultTaskComparator)
         if (tasks.isEmpty()) return null
 
         val groups = tasks.groupBy { it.groupId }.map { (groupId, groupTasks) ->
@@ -24,9 +24,16 @@ class DailyResultCalculator {
                     DailyResultStatus.INCOMPLETE -> groupTasks.firstNotNullOfOrNull { it.groupIncompleteMessage }
                     else -> null
                 },
+                groupName = groupTasks.firstNotNullOfOrNull { it.groupName },
+                groupCreatedAtEpochMillis = groupTasks.firstNotNullOfOrNull { it.groupCreatedAtEpochMillis },
                 fingerprint = fingerprint(groupTasks),
             )
-        }.sortedWith(compareBy<GroupDailyResult> { it.groupId == null }.thenBy { it.groupId })
+        }.sortedWith(
+            compareBy<GroupDailyResult> { it.groupId == null }
+                .thenBy { it.groupCreatedAtEpochMillis ?: Long.MAX_VALUE }
+                .thenBy { it.groupName.orEmpty() }
+                .thenBy { it.groupId.orEmpty() },
+        )
 
         val globalStatus = statusOf(tasks)
         val global = GlobalDailyResult(
@@ -52,4 +59,22 @@ class DailyResultCalculator {
     private fun fingerprint(tasks: List<ResultTaskItem>): String = tasks
         .sortedWith(compareBy<ResultTaskItem> { it.taskId }.thenBy { it.occurrenceKey })
         .joinToString("|") { "${it.taskId}:${it.occurrenceKey}:${it.groupId}:${it.required}:${it.status}" }
+
+    private val resultTaskComparator = Comparator<ResultTaskItem> { left, right ->
+        compareValues(left.sortOrder == null, right.sortOrder == null)
+            .takeIf { it != 0 }
+            ?: compareValues(left.sortOrder ?: 0, right.sortOrder ?: 0)
+                .takeIf { left.sortOrder != null && right.sortOrder != null && it != 0 }
+            ?: compareValues(!left.required, !right.required)
+                .takeIf { it != 0 }
+            ?: compareValues(left.deadline == null, right.deadline == null)
+                .takeIf { it != 0 }
+            ?: compareValues(left.deadline.orEmpty(), right.deadline.orEmpty())
+                .takeIf { it != 0 }
+            ?: compareValues(left.createdAtEpochMillis, right.createdAtEpochMillis)
+                .takeIf { it != 0 }
+            ?: compareValues(left.taskId, right.taskId)
+                .takeIf { it != 0 }
+            ?: compareValues(left.occurrenceKey, right.occurrenceKey)
+    }
 }

@@ -24,6 +24,7 @@ class AppDatabaseMigrationTest {
         opened.forEach(AppDatabase::close)
         context.deleteDatabase(V1_DATABASE)
         context.deleteDatabase(V2_DATABASE)
+        context.deleteDatabase(V4_DATABASE)
     }
 
     @Test
@@ -104,6 +105,46 @@ class AppDatabaseMigrationTest {
         assertNoForeignKeyViolations(database)
     }
 
+    @Test
+    fun `version 4 migration creates statistics indexes without changing data`() {
+        createLegacyDatabase(V4_DATABASE, 4) { db ->
+            insertV1Task(db, "LegacyTaskV40001", "LegacyGroupV4001")
+            MIGRATION_1_2.migrate(db)
+            MIGRATION_2_3.migrate(db)
+            MIGRATION_3_4.migrate(db)
+            db.execSQL(
+                "INSERT INTO points_ledger VALUES ('LegacyLedger4001', 'LegacyTaskV40001', 'once', 'LegacyGroupV4001', 7, 'COMPLETED', 401)",
+            )
+        }
+
+        val database = openCurrent(V4_DATABASE)
+        val ledger = kotlinx.coroutines.runBlocking { database.auditDao().getLedger("LegacyTaskV40001") }
+        val indexes = database.openHelper.readableDatabase.query("PRAGMA index_list('points_ledger')").use { cursor ->
+            buildSet { while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name"))) }
+        } + database.openHelper.readableDatabase.query("PRAGMA index_list('task_instance')").use { cursor ->
+            buildSet { while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name"))) }
+        }
+
+        assertEquals(listOf(7), ledger.map(PointsLedgerEntity::delta))
+        assertEquals(
+            setOf(
+                "index_points_ledger_createdAtEpochMillis",
+                "index_points_ledger_reason_createdAtEpochMillis",
+                "index_task_instance_taskDate_required_status_category",
+                "index_task_instance_taskDate_groupId_status",
+            ),
+            indexes.intersect(
+                setOf(
+                    "index_points_ledger_createdAtEpochMillis",
+                    "index_points_ledger_reason_createdAtEpochMillis",
+                    "index_task_instance_taskDate_required_status_category",
+                    "index_task_instance_taskDate_groupId_status",
+                ),
+            ),
+        )
+        assertNoForeignKeyViolations(database)
+    }
+
     private fun createLegacyDatabase(
         name: String,
         version: Int,
@@ -132,7 +173,7 @@ class AppDatabaseMigrationTest {
 
     private fun openCurrent(name: String): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .allowMainThreadQueries()
             .build()
             .also {
@@ -181,5 +222,6 @@ class AppDatabaseMigrationTest {
     private companion object {
         const val V1_DATABASE = "migration-v1.db"
         const val V2_DATABASE = "migration-v2.db"
+        const val V4_DATABASE = "migration-v4.db"
     }
 }

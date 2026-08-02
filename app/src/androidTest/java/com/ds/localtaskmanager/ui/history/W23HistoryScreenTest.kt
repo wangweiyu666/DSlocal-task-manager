@@ -34,7 +34,7 @@ class W23HistoryScreenTest {
         var state by mutableStateOf(populatedState())
         var openedTask = ""
         composeRule.setContent {
-            DstTheme(dynamicColor = false) {
+            DstTheme {
                 HistoryScreen(
                     state = state,
                     onSearchChange = { state = state.copy(searchText = it) },
@@ -75,7 +75,7 @@ class W23HistoryScreenTest {
             status = TaskStatus.PENDING.name,
         )
         composeRule.setContent {
-            DstTheme(dynamicColor = false) {
+            DstTheme {
                 TaskDetailScreen(
                     state = ExecutionUiState(
                         loading = false,

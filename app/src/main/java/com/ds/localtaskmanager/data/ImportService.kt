@@ -307,7 +307,7 @@ class RoomImportService(
                     existing?.incompleteMessage ?: "未完成",
                     "未完成",
                 ),
-                archived = false,
+                archived = existing?.archived ?: false,
                 createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
                 updatedAtEpochMillis = now,
             )

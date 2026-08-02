@@ -1,45 +1,86 @@
 package com.ds.localtaskmanager.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-private val BrandBlue = Color(0xFF056DE8)
+private val Indigo = Color(0xFF6366F1)
+private val LightIndigo = Color(0xFF818CF8)
+private val IndigoContainer = Color(0xFFE0E7FF)
+private val AppBackground = Color(0xFFF8FAFC)
+private val Slate = Color(0xFF1E293B)
+private val Pink = Color(0xFFF472B6)
 
 private val LightColors = lightColorScheme(
-    primary = BrandBlue,
+    primary = Indigo,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD9E7FF),
-    onPrimaryContainer = Color(0xFF001A40),
-    secondary = Color(0xFF4F6078),
-    secondaryContainer = Color(0xFFD7E3F8),
-    background = Color(0xFFF8F9FD),
-    surface = Color(0xFFF8F9FD),
-    surfaceVariant = Color(0xFFE1E7F0),
+    primaryContainer = IndigoContainer,
+    onPrimaryContainer = Slate,
+    secondary = LightIndigo,
+    onSecondary = Slate,
+    secondaryContainer = IndigoContainer,
+    onSecondaryContainer = Slate,
+    tertiary = Pink,
+    onTertiary = Slate,
+    tertiaryContainer = Color(0xFFFCE7F3),
+    onTertiaryContainer = Slate,
+    background = AppBackground,
+    onBackground = Slate,
+    surface = AppBackground,
+    onSurface = Slate,
+    surfaceVariant = IndigoContainer,
+    onSurfaceVariant = Color(0xFF475569),
+    outline = LightIndigo,
+    outlineVariant = Color(0xFFC7D2FE),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = AppBackground,
+    surfaceContainer = Color(0xFFF1F5F9),
+    surfaceContainerHigh = Color(0xFFE9EDF5),
+    surfaceContainerHighest = IndigoContainer,
+    inverseSurface = Slate,
+    inverseOnSurface = AppBackground,
+    inversePrimary = LightIndigo,
+    surfaceTint = Indigo,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFA8C7FF),
-    onPrimary = Color(0xFF003064),
-    primaryContainer = Color(0xFF004892),
-    onPrimaryContainer = Color(0xFFD9E7FF),
-    secondary = Color(0xFFBAC7DC),
-    secondaryContainer = Color(0xFF344860),
-    background = Color(0xFF111318),
-    surface = Color(0xFF111318),
-    surfaceVariant = Color(0xFF42474F),
+    primary = LightIndigo,
+    onPrimary = Slate,
+    primaryContainer = Indigo,
+    onPrimaryContainer = AppBackground,
+    secondary = IndigoContainer,
+    onSecondary = Slate,
+    secondaryContainer = Color(0xFF4548AE),
+    onSecondaryContainer = AppBackground,
+    tertiary = Pink,
+    onTertiary = Slate,
+    tertiaryContainer = Color(0xFF6E3053),
+    onTertiaryContainer = Color(0xFFFCE7F3),
+    background = Slate,
+    onBackground = AppBackground,
+    surface = Slate,
+    onSurface = AppBackground,
+    surfaceVariant = Color(0xFF334155),
+    onSurfaceVariant = IndigoContainer,
+    outline = LightIndigo,
+    outlineVariant = Color(0xFF475569),
+    surfaceContainerLowest = Color(0xFF172033),
+    surfaceContainerLow = Color(0xFF263449),
+    surfaceContainer = Color(0xFF2B394E),
+    surfaceContainerHigh = Color(0xFF334155),
+    surfaceContainerHighest = Color(0xFF3B4A60),
+    inverseSurface = AppBackground,
+    inverseOnSurface = Slate,
+    inversePrimary = Indigo,
+    surfaceTint = LightIndigo,
 )
 
 private val DstTypography = Typography(
@@ -90,18 +131,9 @@ private val DstTypography = Typography(
 @Composable
 fun DstTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    val context = LocalContext.current
-    val colors = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && darkTheme ->
-            dynamicDarkColorScheme(context)
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            dynamicLightColorScheme(context)
-        darkTheme -> DarkColors
-        else -> LightColors
-    }
+    val colors = if (darkTheme) DarkColors else LightColors
     MaterialTheme(
         colorScheme = colors,
         typography = DstTypography,

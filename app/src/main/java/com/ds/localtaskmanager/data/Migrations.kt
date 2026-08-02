@@ -151,6 +151,27 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
     }
 }
 
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_points_ledger_createdAtEpochMillis` " +
+                "ON `points_ledger` (`createdAtEpochMillis`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_points_ledger_reason_createdAtEpochMillis` " +
+                "ON `points_ledger` (`reason`, `createdAtEpochMillis`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_task_instance_taskDate_required_status_category` " +
+                "ON `task_instance` (`taskDate`, `required`, `status`, `category`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_task_instance_taskDate_groupId_status` " +
+                "ON `task_instance` (`taskDate`, `groupId`, `status`)",
+        )
+    }
+}
+
 private fun SupportSQLiteDatabase.execAll(statements: List<String>) {
     statements.forEach(::execSQL)
 }

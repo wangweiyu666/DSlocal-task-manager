@@ -17,6 +17,12 @@ data class ResultTaskItem(
     val actualPoints: Int,
     val groupCompleteMessage: String?,
     val groupIncompleteMessage: String?,
+    val taskName: String = taskId,
+    val sortOrder: Int? = null,
+    val deadline: String? = null,
+    val createdAtEpochMillis: Long = 0,
+    val groupName: String? = null,
+    val groupCreatedAtEpochMillis: Long? = null,
 )
 
 data class GroupDailyResult(
@@ -28,6 +34,8 @@ data class GroupDailyResult(
     val requiredPending: Int,
     val optionalCount: Int,
     val message: String?,
+    val groupName: String? = null,
+    val groupCreatedAtEpochMillis: Long? = null,
     internal val fingerprint: String,
 )
 
@@ -47,6 +55,7 @@ data class DailyResultSnapshot(
     val global: GlobalDailyResult?,
     val groups: List<GroupDailyResult>,
     val tasks: List<ResultTaskItem>,
+    val domName: String? = null,
 )
 
 data class DailyResultSummary(

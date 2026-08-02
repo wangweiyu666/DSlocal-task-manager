@@ -154,6 +154,17 @@ class Dst1ParserTest {
         }
     }
 
+    @Test
+    fun `committed manual samples decode and parse`() {
+        val samples = repositoryFile("samples").listFiles { file -> file.extension == "dst1" }.orEmpty()
+        assertTrue("Expected at least one manual sample", samples.isNotEmpty())
+
+        samples.forEach { sample ->
+            val decoded = Dst1Decoder.decode(sample.readText().trim())
+            parser.parse(decoded, importedAt)
+        }
+    }
+
     private fun execute(source: JsonObject) {
         when (source.requiredString("kind")) {
             "json" -> parser.parse(resource(source.requiredString("path")), importedAt)

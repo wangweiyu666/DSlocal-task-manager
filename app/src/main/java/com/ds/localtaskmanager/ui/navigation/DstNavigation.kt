@@ -43,6 +43,8 @@ import com.ds.localtaskmanager.ui.execution.TaskDetailRoute
 import com.ds.localtaskmanager.ui.history.HistoryScreen
 import com.ds.localtaskmanager.data.history.HistoryRepository
 import com.ds.localtaskmanager.data.result.ResultRepository
+import com.ds.localtaskmanager.data.statistics.StatisticsPeriod
+import com.ds.localtaskmanager.data.statistics.StatisticsRepository
 import com.ds.localtaskmanager.ui.history.HistoryRoute
 import com.ds.localtaskmanager.ui.history.HistoryViewModel
 import com.ds.localtaskmanager.ui.history.HistoryViewModelFactory
@@ -52,7 +54,13 @@ import com.ds.localtaskmanager.ui.history.HistoryDetailViewModelFactory
 import com.ds.localtaskmanager.ui.history.DayHistoryRoute
 import com.ds.localtaskmanager.ui.history.DayHistoryViewModel
 import com.ds.localtaskmanager.ui.history.DayHistoryViewModelFactory
-import com.ds.localtaskmanager.ui.profile.ProfileScreen
+import com.ds.localtaskmanager.ui.profile.ArchivedGroupsRoute
+import com.ds.localtaskmanager.ui.profile.LedgerRoute
+import com.ds.localtaskmanager.ui.profile.LedgerViewModel
+import com.ds.localtaskmanager.ui.profile.LedgerViewModelFactory
+import com.ds.localtaskmanager.ui.profile.ProfileRoute
+import com.ds.localtaskmanager.ui.profile.ProfileViewModel
+import com.ds.localtaskmanager.ui.profile.ProfileViewModelFactory
 import com.ds.localtaskmanager.ui.today.ImportDialog
 import com.ds.localtaskmanager.ui.today.TodayScreen
 import com.ds.localtaskmanager.ui.today.TodayContent
@@ -62,6 +70,7 @@ import com.ds.localtaskmanager.ui.theme.DstTheme
 import kotlinx.coroutines.flow.StateFlow
 import com.ds.localtaskmanager.R
 import com.ds.localtaskmanager.reminder.ReminderReconciler
+import com.ds.localtaskmanager.sharing.ShareImageService
 
 private enum class Destination(
     val route: String,
@@ -77,6 +86,8 @@ private enum class Destination(
 private const val TASK_ROUTE = "task/{taskId}/{occurrenceKey}"
 private const val HISTORY_TASK_ROUTE = "history/task/{taskId}/{occurrenceKey}"
 private const val HISTORY_DAY_ROUTE = "history/day/{taskDate}"
+private const val PROFILE_LEDGER_ROUTE = "profile/ledger/{period}/{groupKey}"
+private const val PROFILE_ARCHIVED_ROUTE = "profile/archived/{period}"
 
 @Composable
 fun DstNavigation(
@@ -86,6 +97,8 @@ fun DstNavigation(
     taskNoteService: TaskNoteService,
     historyRepository: HistoryRepository,
     resultRepository: ResultRepository,
+    statisticsRepository: StatisticsRepository,
+    shareImageService: ShareImageService,
     reminderReconciler: ReminderReconciler,
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
@@ -96,6 +109,7 @@ fun DstNavigation(
     val currentRoute = entry?.destination?.route
     val onPrimaryDestination = currentRoute in Destination.entries.map(Destination::route)
     val importState by todayViewModel.importState.collectAsStateWithLifecycle()
+    val todayResultState by todayViewModel.resultState.collectAsStateWithLifecycle()
     val notificationKey by notificationTask.collectAsStateWithLifecycle()
 
     LaunchedEffect(notificationKey) {
@@ -107,7 +121,7 @@ fun DstNavigation(
 
     Scaffold(
         bottomBar = {
-            if (onPrimaryDestination) {
+            if (onPrimaryDestination && !(currentRoute == Destination.Today.route && todayResultState.visible)) {
                 DstBottomBar(currentRoute) { destination ->
                     navController.navigate(destination.route) {
                         popUpTo(navController.graph.findStartDestination().id) { saveState = true }
@@ -118,7 +132,7 @@ fun DstNavigation(
             }
         },
         floatingActionButton = {
-            if (currentRoute == Destination.Today.route) {
+            if (currentRoute == Destination.Today.route && !todayResultState.visible) {
                 FloatingActionButton(
                     onClick = todayViewModel::openImport,
                     modifier = Modifier.semantics { contentDescription = "导入任务" },
@@ -149,12 +163,61 @@ fun DstNavigation(
                 )
             }
             composable(Destination.Today.route) {
-                TodayScreen(todayViewModel) { key ->
+                TodayScreen(todayViewModel, shareImageService) { key ->
                     navController.navigate("task/${key.taskId}/${key.occurrenceKey}")
                 }
             }
             composable(Destination.Profile.route) {
-                ProfileScreen(onNotificationPermissionChanged)
+                val profileViewModel: ProfileViewModel = viewModel(
+                    key = "profile-statistics",
+                    factory = ProfileViewModelFactory(statisticsRepository),
+                )
+                ProfileRoute(
+                    viewModel = profileViewModel,
+                    onNotificationPermissionChanged = onNotificationPermissionChanged,
+                    onLedger = { period, groupId, ungrouped ->
+                        val groupKey = when {
+                            ungrouped -> "__UNGROUPED__"
+                            groupId != null -> groupId
+                            else -> "__ALL__"
+                        }
+                        navController.navigate("profile/ledger/${period.name}/$groupKey")
+                    },
+                    onArchivedGroups = { period -> navController.navigate("profile/archived/${period.name}") },
+                )
+            }
+            composable(PROFILE_LEDGER_ROUTE) { backStackEntry ->
+                val period = runCatching {
+                    StatisticsPeriod.valueOf(requireNotNull(backStackEntry.arguments?.getString("period")))
+                }.getOrDefault(StatisticsPeriod.ALL)
+                val groupKey = requireNotNull(backStackEntry.arguments?.getString("groupKey"))
+                val ledgerViewModel: LedgerViewModel = viewModel(
+                    key = "ledger:${period.name}:$groupKey",
+                    factory = LedgerViewModelFactory(
+                        repository = statisticsRepository,
+                        period = period,
+                        groupId = groupKey.takeUnless { it == "__ALL__" || it == "__UNGROUPED__" },
+                        ungrouped = groupKey == "__UNGROUPED__",
+                    ),
+                )
+                LedgerRoute(ledgerViewModel, navController::popBackStack)
+            }
+            composable(PROFILE_ARCHIVED_ROUTE) { backStackEntry ->
+                val period = runCatching {
+                    StatisticsPeriod.valueOf(requireNotNull(backStackEntry.arguments?.getString("period")))
+                }.getOrDefault(StatisticsPeriod.THIRTY_DAYS)
+                val archivedViewModel: ProfileViewModel = viewModel(
+                    key = "archived-groups:${period.name}",
+                    factory = ProfileViewModelFactory(statisticsRepository),
+                )
+                LaunchedEffect(period) { archivedViewModel.selectPeriod(period) }
+                ArchivedGroupsRoute(
+                    viewModel = archivedViewModel,
+                    onBack = navController::popBackStack,
+                    onLedger = { group ->
+                        navController.navigate("profile/ledger/${period.name}/${requireNotNull(group.groupId)}")
+                    },
+                )
             }
             composable(TASK_ROUTE) { backStackEntry ->
                 val key = TaskInstanceKey(
@@ -171,7 +234,7 @@ fun DstNavigation(
                         reminderReconciler,
                     ),
                 )
-                TaskDetailRoute(executionViewModel, navController::popBackStack)
+                TaskDetailRoute(executionViewModel, shareImageService, navController::popBackStack)
             }
             composable(HISTORY_TASK_ROUTE) { backStackEntry ->
                 val key = TaskInstanceKey(
@@ -182,7 +245,7 @@ fun DstNavigation(
                     key = "history-detail:${key.taskId}:${key.occurrenceKey}",
                     factory = HistoryDetailViewModelFactory(key, historyRepository, taskNoteService),
                 )
-                HistoryDetailRoute(detailViewModel, navController::popBackStack)
+                HistoryDetailRoute(detailViewModel, shareImageService, navController::popBackStack)
             }
             composable(HISTORY_DAY_ROUTE) { backStackEntry ->
                 val taskDate = requireNotNull(backStackEntry.arguments?.getString("taskDate"))
@@ -248,7 +311,7 @@ private fun TodayPagePreview() {
 
 @Composable
 fun TodayPagePreviewContent() {
-    DstTheme(dynamicColor = false) {
+    DstTheme {
         Scaffold(
             bottomBar = { DstBottomBar(Destination.Today.route, onNavigate = {}) },
             floatingActionButton = {

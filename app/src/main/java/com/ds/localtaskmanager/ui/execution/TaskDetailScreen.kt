@@ -64,21 +64,28 @@ import com.ds.localtaskmanager.domain.execution.ExecutionState
 import com.ds.localtaskmanager.ui.formatDeadlineForDisplay
 import java.time.LocalDateTime
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 data class TaskDetailTimelineItem(
     val title: String,
     val detail: String?,
     val timestamp: String,
+    val sortEpochMillis: Long = 0L,
 )
 
 @Composable
 fun TaskDetailRoute(
     viewModel: ExecutionViewModel,
+    shareImageService: com.ds.localtaskmanager.sharing.ShareImageService,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val view = LocalView.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var shareImage by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.ds.localtaskmanager.sharing.GeneratedShareImage?>(null) }
 
     fun leave() = viewModel.flushNote(onBack)
     BackHandler(onBack = ::leave)
@@ -112,7 +119,26 @@ fun TaskDetailRoute(
         onUndo = viewModel::undoCompletion,
         onDismissCompletion = viewModel::clearCompletionFeedback,
         onDismissError = viewModel::clearError,
+        onCopyInformation = {
+            viewModel.prepareInformationForShare { body ->
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(body))
+                android.widget.Toast.makeText(context, "正文已复制", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        },
+        onShareInformation = {
+            viewModel.prepareInformationForShare { body ->
+                val instance = state.instance ?: return@prepareInformationForShare
+                scope.launch {
+                    runCatching { shareImageService.generateInformation(instance.name, instance.taskDate, body) }
+                        .onSuccess { shareImage = it }
+                        .onFailure { android.widget.Toast.makeText(context, it.message ?: "暂时无法生成图片", android.widget.Toast.LENGTH_SHORT).show() }
+                }
+            }
+        },
     )
+    shareImage?.let {
+        com.ds.localtaskmanager.ui.sharing.SharePreviewDialog(it, shareImageService, sensitive = true) { shareImage = null }
+    }
 }
 
 @Composable
@@ -139,6 +165,8 @@ fun TaskDetailScreen(
     onUndo: () -> Unit,
     onDismissCompletion: () -> Unit,
     onDismissError: () -> Unit,
+    onCopyInformation: () -> Unit = {},
+    onShareInformation: () -> Unit = {},
     readOnly: Boolean = false,
     title: String = "任务详情",
     timeline: List<TaskDetailTimelineItem> = emptyList(),
@@ -196,6 +224,8 @@ fun TaskDetailScreen(
                 onTimerToggle = onTimerToggle,
                 onInformationChange = onInformationChange,
                 onInformationSave = onInformationSave,
+                onCopyInformation = onCopyInformation,
+                onShareInformation = onShareInformation,
                 onNoteChange = onNoteChange,
                 readOnly = readOnly,
                 timeline = timeline,
@@ -247,6 +277,8 @@ private fun TaskDetailContent(
     onTimerToggle: () -> Unit,
     onInformationChange: (String) -> Unit,
     onInformationSave: () -> Unit,
+    onCopyInformation: () -> Unit,
+    onShareInformation: () -> Unit,
     onNoteChange: (String) -> Unit,
     readOnly: Boolean,
     timeline: List<TaskDetailTimelineItem>,
@@ -284,6 +316,8 @@ private fun TaskDetailContent(
             timerRunning = state.timerRunning,
             onInformationChange = onInformationChange,
             onInformationSave = onInformationSave,
+            onCopyInformation = onCopyInformation,
+            onShareInformation = onShareInformation,
         )
         DetailCard("普通备注") {
             OutlinedTextField(
@@ -414,6 +448,8 @@ private fun ExecutionSection(
     timerRunning: Boolean,
     onInformationChange: (String) -> Unit,
     onInformationSave: () -> Unit,
+    onCopyInformation: () -> Unit,
+    onShareInformation: () -> Unit,
 ) {
     when (execution) {
         is ExecutionState.Counter -> DetailCard("计数") {
@@ -467,6 +503,12 @@ private fun ExecutionSection(
                 supportingText = { Text("${informationDraft.codePointCount(0, informationDraft.length)} / 2000") },
             )
             Button(onClick = onInformationSave, enabled = editable && !working) { Text("保存草稿") }
+            if (informationDraft.trim().isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = onCopyInformation, enabled = !working) { Text("复制正文") }
+                    Button(onClick = onShareInformation, enabled = !working) { Text("分享图片") }
+                }
+            }
             if (!editable && execution.content.isNotBlank()) {
                 Text("完成后正文已锁定", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             }
