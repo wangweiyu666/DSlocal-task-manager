@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -17,15 +19,45 @@ android {
         applicationId = "com.ds.localtaskmanager"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionCode = 2
+        versionName = "0.1.0-alpha.1"
+        manifestPlaceholders["appLabel"] = "@string/app_name"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val signingPropertiesFile = File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties")
+    val signingProperties = Properties().apply {
+        if (signingPropertiesFile.isFile) signingPropertiesFile.inputStream().use(::load)
+    }
+    val releaseSigningReady = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+        .all { !signingProperties.getProperty(it).isNullOrBlank() }
+
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("release") {
+                storeFile = file(requireNotNull(signingProperties.getProperty("storeFile")))
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            manifestPlaceholders["appLabel"] = "DStationery（调试）"
+        }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            if (releaseSigningReady) signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -44,7 +76,20 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = false
+        buildConfig = true
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        warningsAsErrors = true
+        disable += setOf(
+            "AndroidGradlePluginVersion",
+            "GradleDependency",
+            "KaptUsageInsteadOfKsp",
+            "ModifierParameter",
+            "ObsoleteSdkInt",
+        )
     }
 
     packaging {
@@ -56,6 +101,26 @@ android {
     }
 
     sourceSets["test"].resources.srcDir(rootProject.file("protocol-test-vectors"))
+}
+
+val verifyReleaseSigningConfig = tasks.register("verifyReleaseSigningConfig") {
+    group = "verification"
+    doLast {
+        check(File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties").isFile) {
+            "Missing signing properties: ${File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties")}"
+        }
+        val properties = Properties().apply {
+            File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties").inputStream().use(::load)
+        }
+        listOf("storeFile", "storePassword", "keyAlias", "keyPassword").forEach { key ->
+            check(!properties.getProperty(key).isNullOrBlank()) { "Missing release signing property: $key" }
+        }
+        check(file(properties.getProperty("storeFile")).isFile) { "Release keystore does not exist" }
+    }
+}
+
+tasks.matching { it.name in setOf("assembleRelease", "bundleRelease") }.configureEach {
+    dependsOn(verifyReleaseSigningConfig)
 }
 
 kapt {

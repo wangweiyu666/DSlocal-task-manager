@@ -25,3 +25,12 @@ captures/
 # Android Studio / IntelliJ
 .idea/
 *.iml
+
+# Release signing and local release artifacts
+*.jks
+*.keystore
+*signing*.properties
+release-output/
+*.apk
+*.aab
+release-evidence.json
