@@ -26,7 +26,7 @@ class W25ProfileScreenTest {
                 ProfileScreen(
                     state = ProfileUiState(loading = false, dashboard = dashboard()),
                     onPeriod = {}, onRetry = {}, onArchive = {}, onLedger = { _, _, _ -> },
-                    onArchivedGroups = {}, onNotificationPermissionChanged = {},
+                    onArchivedGroups = {}, onSettings = {},
                 )
             }
         }
@@ -34,10 +34,9 @@ class W25ProfileScreenTest {
         composeRule.onNodeWithText("累计积分").assertIsDisplayed()
         composeRule.onNodeWithText("-3").assertIsDisplayed()
         composeRule.onNodeWithText("积分趋势").assertIsDisplayed()
+        composeRule.onNodeWithTag("profile-settings").assertIsDisplayed()
         composeRule.onNodeWithTag("profile-list").performScrollToIndex(7)
         composeRule.onNodeWithText("已归档积分组（1）").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile-list").performScrollToIndex(10)
-        composeRule.onNodeWithText("任务提醒").assertIsDisplayed()
     }
 
     @Test
@@ -47,7 +46,7 @@ class W25ProfileScreenTest {
                 ProfileScreen(
                     state = ProfileUiState(loading = false, errorMessage = "查询失败"),
                     onPeriod = {}, onRetry = {}, onArchive = {}, onLedger = { _, _, _ -> },
-                    onArchivedGroups = {}, onNotificationPermissionChanged = {},
+                    onArchivedGroups = {}, onSettings = {},
                 )
             }
         }
@@ -55,6 +54,7 @@ class W25ProfileScreenTest {
         composeRule.onNodeWithText("查询失败").assertIsDisplayed()
         composeRule.onNodeWithText("暂无统计数据").assertIsDisplayed()
         composeRule.onNodeWithText("重试").assertIsDisplayed()
+        composeRule.onNodeWithTag("profile-settings").assertIsDisplayed()
     }
 }
 

@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -285,13 +286,14 @@ private fun TaskDetailContent(
 ) {
     val instance = requireNotNull(state.instance)
     val editable = !readOnly && instance.status == TaskStatus.PENDING.name
+    val sizeAnimation = if (LocalReduceMotion.current) Modifier else Modifier.animateContentSize(tween(180))
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .imePadding()
             .padding(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 28.dp)
-            .animateContentSize(tween(180)),
+            .then(sizeAnimation),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Header(instance)

@@ -12,6 +12,7 @@ import androidx.core.content.FileProvider
 import com.ds.localtaskmanager.data.AppDatabase
 import com.ds.localtaskmanager.domain.result.DailyResultSnapshot
 import com.ds.localtaskmanager.ui.result.toPresentation
+import com.ds.localtaskmanager.settings.AppSettingsRepository
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -20,6 +21,7 @@ class ShareImageService(
     private val appContext: Context,
     private val database: AppDatabase,
     private val renderer: ShareImageRenderer = ShareImageRenderer(),
+    private val settingsRepository: AppSettingsRepository = AppSettingsRepository(appContext),
 ) {
     suspend fun generateResult(snapshot: DailyResultSnapshot): GeneratedShareImage = withContext(Dispatchers.Default) {
         renderer.renderResult(snapshot.toPresentation())
@@ -80,12 +82,6 @@ class ShareImageService(
         }
     }
 
-    fun informationPrivacyConfirmed(): Boolean = preferences.getBoolean(PRIVACY_CONFIRMED, false)
-    fun confirmInformationPrivacy() = preferences.edit().putBoolean(PRIVACY_CONFIRMED, true).apply()
-
-    private val preferences by lazy { appContext.getSharedPreferences("share_preferences", Context.MODE_PRIVATE) }
-
-    private companion object {
-        const val PRIVACY_CONFIRMED = "information_privacy_confirmed"
-    }
+    fun informationPrivacyConfirmed(): Boolean = settingsRepository.settings.value.informationPrivacyConfirmed
+    fun confirmInformationPrivacy() = settingsRepository.confirmInformationPrivacy()
 }

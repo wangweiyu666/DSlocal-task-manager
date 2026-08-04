@@ -2,6 +2,8 @@ package com.ds.localtaskmanager.ui.today
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
@@ -49,6 +51,7 @@ import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import com.ds.localtaskmanager.ui.formatDeadlineForDisplay
 import com.ds.localtaskmanager.sharing.ShareImageService
+import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
 
 @Composable
 fun TodayScreen(
@@ -58,9 +61,13 @@ fun TodayScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val resultState by viewModel.resultState.collectAsStateWithLifecycle()
+    val reduceMotion = LocalReduceMotion.current
     AnimatedContent(
         targetState = resultState.visible,
-        transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+        transitionSpec = {
+            if (reduceMotion) EnterTransition.None togetherWith ExitTransition.None
+            else fadeIn(tween(220)) togetherWith fadeOut(tween(180))
+        },
         label = "today-result",
     ) { showingResult ->
         if (showingResult) {
@@ -169,11 +176,12 @@ private fun TodayGroupBlock(
     var expanded by rememberSaveable(section.key) { mutableStateOf(false) }
     val canFold = section.tasks.size > COLLAPSED_TASK_COUNT
     val visibleTasks = if (canFold && !expanded) section.tasks.take(COLLAPSED_TASK_COUNT) else section.tasks
+    val sizeAnimation = if (LocalReduceMotion.current) Modifier else Modifier.animateContentSize(tween(200))
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize(tween(200)),
+            .then(sizeAnimation),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(

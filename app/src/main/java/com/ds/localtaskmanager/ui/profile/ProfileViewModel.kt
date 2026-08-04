@@ -10,6 +10,7 @@ import com.ds.localtaskmanager.data.statistics.LedgerType
 import com.ds.localtaskmanager.data.statistics.StatisticsDashboard
 import com.ds.localtaskmanager.data.statistics.StatisticsPeriod
 import com.ds.localtaskmanager.data.statistics.StatisticsRepository
+import com.ds.localtaskmanager.settings.AppSettingsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,8 +26,13 @@ data class ProfileUiState(
     val workingGroupId: String? = null,
 )
 
-class ProfileViewModel(private val repository: StatisticsRepository) : ViewModel() {
-    private val mutableState = MutableStateFlow(ProfileUiState())
+class ProfileViewModel(
+    private val repository: StatisticsRepository,
+    private val settingsRepository: AppSettingsRepository,
+) : ViewModel() {
+    private val mutableState = MutableStateFlow(
+        ProfileUiState(period = settingsRepository.settings.value.lastStatisticsPeriod),
+    )
     val state: StateFlow<ProfileUiState> = mutableState.asStateFlow()
     private var loadJob: Job? = null
 
@@ -35,6 +41,7 @@ class ProfileViewModel(private val repository: StatisticsRepository) : ViewModel
     fun selectPeriod(period: StatisticsPeriod) {
         if (period == mutableState.value.period) return
         mutableState.value = mutableState.value.copy(period = period)
+        settingsRepository.setLastStatisticsPeriod(period)
         refresh()
     }
 
@@ -188,9 +195,12 @@ class LedgerViewModel(
     }
 }
 
-class ProfileViewModelFactory(private val repository: StatisticsRepository) : ViewModelProvider.Factory {
+class ProfileViewModelFactory(
+    private val repository: StatisticsRepository,
+    private val settingsRepository: AppSettingsRepository,
+) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = ProfileViewModel(repository) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>): T = ProfileViewModel(repository, settingsRepository) as T
 }
 
 class LedgerViewModelFactory(

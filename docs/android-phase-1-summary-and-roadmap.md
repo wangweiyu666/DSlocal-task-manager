@@ -10,7 +10,7 @@
 | 应用 | `0.1.0-alpha` |
 | Room | v5，显式 `1→2→3→4→5` migration |
 | 自动测试 | 83 项单元/集成/迁移测试，API 35 为 17 项仪器测试，API 26 为 5 项 W25 关键流程，10 项 Preview 截图测试 |
-| 最近完成 | W24 今日结果与分享、W25“我的”统计（待提交） |
+| 最近完成 | W26 独立设置页面（仪器测试待外部窗口复测） |
 | 尚未开放的 DST1 能力 | 无 |
 
 已形成的数据闭环：
@@ -28,6 +28,7 @@ DST1 校验与预览
 → 历史分页、日历、结果与只读任务详情
 → 今日结果、长图与信息告知分享
 → “我的”统计、积分组归档与积分流水
+→ 独立设置、固定主题模式与本地偏好
 ```
 
 ## 已完成窗口
@@ -43,8 +44,9 @@ DST1 校验与预览
 | W21 | 既有 `h`、隐私通知、权限与系统事件重建 | `2b2acd7` | [`w21-local-notifications.md`](w21-local-notifications.md) |
 | W22 | 今日分类、任务详情与完整执行交互 | `8b3eb20` | [`w22-today-execution-ui.md`](w22-today-execution-ui.md) |
 | W23 | 历史分页、筛选、日历、日期结果与共享只读详情 | `77fa295` | [`w23-history-ui.md`](w23-history-ui.md) |
-| W24 | 今日结果、长图与信息告知分享 | 待提交 | [`w24-results-and-sharing.md`](w24-results-and-sharing.md) |
-| W25 | “我的”统计、积分组归档与积分流水 | 待提交 | [`w25-profile-statistics.md`](w25-profile-statistics.md) |
+| W24 | 今日结果、长图与信息告知分享 | `f50151a` | [`w24-results-and-sharing.md`](w24-results-and-sharing.md) |
+| W25 | “我的”统计、积分组归档与积分流水 | `f50151a` | [`w25-profile-statistics.md`](w25-profile-statistics.md) |
+| W26 | 独立设置、外观、动效、通知与隐私选项 | 本提交 | [`w26-settings.md`](w26-settings.md) |
 
 ## 未完成产品面
 
@@ -56,7 +58,7 @@ DST1 校验与预览
 
 ```text
 W23 历史 UI ──────┐
-W24 结果与分享 ───┼─→ W25 统计 ─→ W32 发布加固
+W24 结果与分享 ───┼─→ W25 统计 ─→ W26 设置 ─→ W32 发布加固
 W31 备份恢复 ─────┘
 Dom 网页可独立推进 ──────────────→ W32
 ```

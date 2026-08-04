@@ -7,6 +7,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ds.localtaskmanager.ui.DstApp
 import com.ds.localtaskmanager.ui.today.TodayViewModel
 import com.ds.localtaskmanager.ui.today.TodayViewModelFactory
@@ -48,8 +50,9 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun AppContent() {
-        DstTheme {
-            val application = application as DstApplication
+        val application = application as DstApplication
+        val settings by application.settingsRepository.settings.collectAsStateWithLifecycle()
+        DstTheme(themeMode = settings.themeMode, reduceMotion = settings.reduceMotion) {
             DstApp(
                 todayViewModel = todayViewModel,
                 taskRepository = application.taskRepository,
@@ -59,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 resultRepository = application.resultRepository,
                 statisticsRepository = application.statisticsRepository,
                 shareImageService = application.shareImageService,
+                settingsRepository = application.settingsRepository,
                 reminderReconciler = application.reminderCoordinator,
                 notificationTask = notificationTask,
                 onNotificationTaskConsumed = { notificationTask.value = null },

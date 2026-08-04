@@ -30,7 +30,7 @@ fun ProfilePopulatedScreenshot() {
     }
 }
 
-private fun w25ScreenshotDashboard() = StatisticsDashboard(
+internal fun w25ScreenshotDashboard() = StatisticsDashboard(
     domName = "示例 Dom",
     overview = PointsOverview(cumulative = -3, today = 4, sevenDays = -2, thirtyDays = 9),
     trend = listOf(TrendPoint("2026-08-01", 4), TrendPoint("2026-08-02", -7)),

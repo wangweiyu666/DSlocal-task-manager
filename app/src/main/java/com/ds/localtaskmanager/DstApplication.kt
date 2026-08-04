@@ -25,6 +25,7 @@ import com.ds.localtaskmanager.reminder.AndroidReminderScheduler
 import com.ds.localtaskmanager.reminder.ReminderCoordinator
 import java.time.Clock
 import com.ds.localtaskmanager.sharing.ShareImageService
+import com.ds.localtaskmanager.settings.AppSettingsRepository
 
 class DstApplication : Application() {
     val database: AppDatabase by lazy { AppDatabase.create(this) }
@@ -50,7 +51,8 @@ class DstApplication : Application() {
     }
     val historyRepository: HistoryRepository by lazy { RoomHistoryRepository(database) }
     val statisticsRepository: StatisticsRepository by lazy { RoomStatisticsRepository(database, clock) }
-    val shareImageService: ShareImageService by lazy { ShareImageService(this, database) }
+    val settingsRepository: AppSettingsRepository by lazy { AppSettingsRepository(this) }
+    val shareImageService: ShareImageService by lazy { ShareImageService(this, database, settingsRepository = settingsRepository) }
     private val reminderNotifier by lazy { AndroidReminderNotifier(this) }
     val reminderCoordinator: ReminderCoordinator by lazy {
         ReminderCoordinator(

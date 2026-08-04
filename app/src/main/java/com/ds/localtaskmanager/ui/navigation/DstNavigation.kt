@@ -71,6 +71,9 @@ import kotlinx.coroutines.flow.StateFlow
 import com.ds.localtaskmanager.R
 import com.ds.localtaskmanager.reminder.ReminderReconciler
 import com.ds.localtaskmanager.sharing.ShareImageService
+import com.ds.localtaskmanager.settings.AppSettingsRepository
+import com.ds.localtaskmanager.ui.settings.SettingsRoute
+import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
 
 private enum class Destination(
     val route: String,
@@ -88,6 +91,7 @@ private const val HISTORY_TASK_ROUTE = "history/task/{taskId}/{occurrenceKey}"
 private const val HISTORY_DAY_ROUTE = "history/day/{taskDate}"
 private const val PROFILE_LEDGER_ROUTE = "profile/ledger/{period}/{groupKey}"
 private const val PROFILE_ARCHIVED_ROUTE = "profile/archived/{period}"
+private const val PROFILE_SETTINGS_ROUTE = "profile/settings"
 
 @Composable
 fun DstNavigation(
@@ -99,6 +103,7 @@ fun DstNavigation(
     resultRepository: ResultRepository,
     statisticsRepository: StatisticsRepository,
     shareImageService: ShareImageService,
+    settingsRepository: AppSettingsRepository,
     reminderReconciler: ReminderReconciler,
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
@@ -111,6 +116,7 @@ fun DstNavigation(
     val importState by todayViewModel.importState.collectAsStateWithLifecycle()
     val todayResultState by todayViewModel.resultState.collectAsStateWithLifecycle()
     val notificationKey by notificationTask.collectAsStateWithLifecycle()
+    val reduceMotion = LocalReduceMotion.current
 
     LaunchedEffect(notificationKey) {
         notificationKey?.let { key ->
@@ -146,10 +152,10 @@ fun DstNavigation(
             navController = navController,
             startDestination = Destination.Today.route,
             modifier = Modifier.padding(contentPadding),
-            enterTransition = { forwardEnterTransition() },
-            exitTransition = { forwardExitTransition() },
-            popEnterTransition = { popEnterTransition() },
-            popExitTransition = { popExitTransition() },
+            enterTransition = { forwardEnterTransition(reduceMotion) },
+            exitTransition = { forwardExitTransition(reduceMotion) },
+            popEnterTransition = { popEnterTransition(reduceMotion) },
+            popExitTransition = { popExitTransition(reduceMotion) },
         ) {
             composable(Destination.History.route) {
                 val historyViewModel: HistoryViewModel = viewModel(
@@ -170,11 +176,10 @@ fun DstNavigation(
             composable(Destination.Profile.route) {
                 val profileViewModel: ProfileViewModel = viewModel(
                     key = "profile-statistics",
-                    factory = ProfileViewModelFactory(statisticsRepository),
+                    factory = ProfileViewModelFactory(statisticsRepository, settingsRepository),
                 )
                 ProfileRoute(
                     viewModel = profileViewModel,
-                    onNotificationPermissionChanged = onNotificationPermissionChanged,
                     onLedger = { period, groupId, ungrouped ->
                         val groupKey = when {
                             ungrouped -> "__UNGROUPED__"
@@ -184,6 +189,14 @@ fun DstNavigation(
                         navController.navigate("profile/ledger/${period.name}/$groupKey")
                     },
                     onArchivedGroups = { period -> navController.navigate("profile/archived/${period.name}") },
+                    onSettings = { navController.navigate(PROFILE_SETTINGS_ROUTE) },
+                )
+            }
+            composable(PROFILE_SETTINGS_ROUTE) {
+                SettingsRoute(
+                    repository = settingsRepository,
+                    onBack = navController::popBackStack,
+                    onNotificationPermissionChanged = onNotificationPermissionChanged,
                 )
             }
             composable(PROFILE_LEDGER_ROUTE) { backStackEntry ->
@@ -208,7 +221,7 @@ fun DstNavigation(
                 }.getOrDefault(StatisticsPeriod.THIRTY_DAYS)
                 val archivedViewModel: ProfileViewModel = viewModel(
                     key = "archived-groups:${period.name}",
-                    factory = ProfileViewModelFactory(statisticsRepository),
+                    factory = ProfileViewModelFactory(statisticsRepository, settingsRepository),
                 )
                 LaunchedEffect(period) { archivedViewModel.selectPeriod(period) }
                 ArchivedGroupsRoute(
@@ -332,14 +345,14 @@ fun TodayPagePreviewContent() {
     }
 }
 
-private fun forwardEnterTransition(): EnterTransition =
-    fadeIn(tween(200)) + slideInHorizontally(tween(220)) { it / 10 }
+private fun forwardEnterTransition(reduceMotion: Boolean): EnterTransition =
+    if (reduceMotion) EnterTransition.None else fadeIn(tween(200)) + slideInHorizontally(tween(220)) { it / 10 }
 
-private fun forwardExitTransition(): ExitTransition =
-    fadeOut(tween(150)) + slideOutHorizontally(tween(180)) { -it / 12 }
+private fun forwardExitTransition(reduceMotion: Boolean): ExitTransition =
+    if (reduceMotion) ExitTransition.None else fadeOut(tween(150)) + slideOutHorizontally(tween(180)) { -it / 12 }
 
-private fun popEnterTransition(): EnterTransition =
-    fadeIn(tween(180)) + slideInHorizontally(tween(200)) { -it / 12 }
+private fun popEnterTransition(reduceMotion: Boolean): EnterTransition =
+    if (reduceMotion) EnterTransition.None else fadeIn(tween(180)) + slideInHorizontally(tween(200)) { -it / 12 }
 
-private fun popExitTransition(): ExitTransition =
-    fadeOut(tween(150)) + slideOutHorizontally(tween(200)) { it / 10 }
+private fun popExitTransition(reduceMotion: Boolean): ExitTransition =
+    if (reduceMotion) ExitTransition.None else fadeOut(tween(150)) + slideOutHorizontally(tween(200)) { it / 10 }

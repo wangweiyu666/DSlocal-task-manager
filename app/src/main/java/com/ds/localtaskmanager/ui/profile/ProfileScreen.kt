@@ -1,17 +1,8 @@
 package com.ds.localtaskmanager.ui.profile
 
-import android.Manifest
-import android.app.NotificationManager
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -37,6 +28,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -55,30 +48,32 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ds.localtaskmanager.R
 import com.ds.localtaskmanager.data.statistics.ClassificationStatistics
 import com.ds.localtaskmanager.data.statistics.CompletionSummary
 import com.ds.localtaskmanager.data.statistics.GroupStatistics
 import com.ds.localtaskmanager.data.statistics.PointsOverview
 import com.ds.localtaskmanager.data.statistics.StatisticsPeriod
 import com.ds.localtaskmanager.data.statistics.TrendPoint
+import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
 import kotlin.math.roundToInt
 
 @Composable
 fun ProfileRoute(
     viewModel: ProfileViewModel,
-    onNotificationPermissionChanged: () -> Unit,
     onLedger: (StatisticsPeriod, String?, Boolean) -> Unit,
     onArchivedGroups: (StatisticsPeriod) -> Unit,
+    onSettings: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -96,7 +91,7 @@ fun ProfileRoute(
         onArchive = { group -> group.groupId?.let { viewModel.setArchived(it, true) } },
         onLedger = onLedger,
         onArchivedGroups = onArchivedGroups,
-        onNotificationPermissionChanged = onNotificationPermissionChanged,
+        onSettings = onSettings,
     )
 }
 
@@ -108,7 +103,7 @@ fun ProfileScreen(
     onArchive: (GroupStatistics) -> Unit,
     onLedger: (StatisticsPeriod, String?, Boolean) -> Unit,
     onArchivedGroups: (StatisticsPeriod) -> Unit,
-    onNotificationPermissionChanged: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     var archiveTarget by remember { mutableStateOf<GroupStatistics?>(null) }
     val dashboard = state.dashboard
@@ -118,10 +113,7 @@ fun ProfileScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Text("我的", style = MaterialTheme.typography.headlineLarge)
-            dashboard?.domName?.let {
-                Text("来自「$it」的任务", style = MaterialTheme.typography.bodyLarge)
-            } ?: Text("积分、统计与设置", style = MaterialTheme.typography.bodyLarge)
+            ProfileHeader(dashboard?.domName, onSettings)
         }
         if (state.loading && dashboard == null) {
             item { Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
@@ -192,10 +184,6 @@ fun ProfileScreen(
                 EmptyStatistics()
             }
         }
-        item {
-            SectionTitle("设置")
-            NotificationSettingsCard(onNotificationPermissionChanged)
-        }
     }
 
     archiveTarget?.let { group ->
@@ -212,6 +200,22 @@ fun ProfileScreen(
             },
         )
     }
+}
+
+@Composable
+internal fun ProfileHeader(domName: String?, onSettings: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("我的", modifier = Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge)
+        IconButton(onClick = onSettings, modifier = Modifier.testTag("profile-settings")) {
+            Icon(
+                painter = painterResource(R.drawable.ic_settings),
+                contentDescription = "设置",
+            )
+        }
+    }
+    domName?.let {
+        Text("来自「$it」的任务", style = MaterialTheme.typography.bodyLarge)
+    } ?: Text("积分与统计", style = MaterialTheme.typography.bodyLarge)
 }
 
 @Composable
@@ -238,7 +242,8 @@ internal fun OverviewGrid(overview: PointsOverview) {
 
 @Composable
 private fun OverviewCard(label: String, value: Int, modifier: Modifier) {
-    val animated by animateIntAsState(value, tween(250), label = "points")
+    val reducedMotion = LocalReduceMotion.current
+    val animated by animateIntAsState(value, if (reducedMotion) snap() else tween(250), label = "points")
     Card(modifier) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(label, style = MaterialTheme.typography.labelLarge)
@@ -314,7 +319,8 @@ internal fun TrendChart(points: List<TrendPoint>) {
 @Composable
 internal fun CompletionContent(summary: CompletionSummary) {
     val target = summary.fraction ?: 0f
-    val animated by animateFloatAsState(target, tween(250), label = "completion")
+    val reducedMotion = LocalReduceMotion.current
+    val animated by animateFloatAsState(target, if (reducedMotion) snap() else tween(250), label = "completion")
     Text(
         summary.fraction?.let { "${(it * 100).roundToInt()}%" } ?: "—",
         style = MaterialTheme.typography.headlineMedium,
@@ -369,49 +375,6 @@ private fun ClassificationRow(item: ClassificationStatistics) {
 }
 
 @Composable
-private fun NotificationSettingsCard(onNotificationPermissionChanged: () -> Unit) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val preferences = remember { context.getSharedPreferences("notification_settings", Context.MODE_PRIVATE) }
-    var requested by remember { mutableStateOf(preferences.getBoolean("permission_requested", false)) }
-    var enabled by remember { mutableStateOf(context.notificationsEnabled()) }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        requested = true
-        preferences.edit().putBoolean("permission_requested", true).apply()
-        enabled = granted && context.notificationsEnabled()
-        if (granted) onNotificationPermissionChanged()
-    }
-    DisposableEffect(lifecycleOwner, context) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) enabled = context.notificationsEnabled()
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("任务提醒", style = MaterialTheme.typography.titleMedium)
-            Text(
-                if (enabled) "通知已启用。通知不会显示任务名称或其他任务内容。"
-                else "通知未启用。拒绝权限不会影响任务的其他功能。",
-            )
-            Button(onClick = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !requested) {
-                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                } else {
-                    context.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                        },
-                    )
-                }
-            }) { Text(if (enabled || requested) "打开通知设置" else "启用任务提醒") }
-        }
-    }
-}
-
-@Composable
 internal fun EmptyStatistics() {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -448,10 +411,3 @@ private fun pointsColor(value: Int) = when {
 }
 
 private fun signed(value: Int): String = if (value > 0) "+$value" else value.toString()
-
-private fun Context.notificationsEnabled(): Boolean {
-    val manager = getSystemService(NotificationManager::class.java)
-    val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-    return permissionGranted && manager.areNotificationsEnabled()
-}
