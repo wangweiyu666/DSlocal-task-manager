@@ -3,11 +3,8 @@ package com.ds.localtaskmanager
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeUp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -33,13 +30,10 @@ class AppSmokeTest {
     }
 
     @Test
-    fun profileShowsUserInitiatedReminderPermissionEntry() {
+    fun settingsShowsUserInitiatedReminderPermissionEntry() {
         composeRule.onNodeWithText("我的").performClick()
-        composeRule.onNodeWithTag("profile-list").performTouchInput {
-            swipeUp()
-            swipeUp()
-            swipeUp()
-        }
+        composeRule.onNodeWithContentDescription("设置").performClick()
+        composeRule.onNodeWithText("设置").assertIsDisplayed()
         composeRule.onNodeWithText("任务提醒").assertIsDisplayed()
     }
 }
