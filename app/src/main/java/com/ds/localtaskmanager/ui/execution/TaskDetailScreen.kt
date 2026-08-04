@@ -1,7 +1,6 @@
 package com.ds.localtaskmanager.ui.execution
 
 import android.view.View
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +52,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
+import com.ds.localtaskmanager.ui.components.BackNavigationIcon
+import com.ds.localtaskmanager.ui.navigation.predictiveBackTransform
+import com.ds.localtaskmanager.ui.navigation.rememberPredictiveBackState
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -89,7 +91,7 @@ fun TaskDetailRoute(
     var shareImage by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.ds.localtaskmanager.sharing.GeneratedShareImage?>(null) }
 
     fun leave() = viewModel.flushNote(onBack)
-    BackHandler(onBack = ::leave)
+    val predictiveBack = rememberPredictiveBackState(enabled = shareImage == null, onBack = ::leave)
 
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -136,6 +138,7 @@ fun TaskDetailRoute(
                 }
             }
         },
+        modifier = Modifier.predictiveBackTransform(predictiveBack),
     )
     shareImage?.let {
         com.ds.localtaskmanager.ui.sharing.SharePreviewDialog(it, shareImageService, sensitive = true) { shareImage = null }
@@ -171,6 +174,7 @@ fun TaskDetailScreen(
     readOnly: Boolean = false,
     title: String = "任务详情",
     timeline: List<TaskDetailTimelineItem> = emptyList(),
+    modifier: Modifier = Modifier,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showUndoConfirmation by remember { mutableStateOf(false) }
@@ -182,11 +186,12 @@ fun TaskDetailScreen(
     }
 
     Scaffold(
+        modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(title) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
+                navigationIcon = { BackNavigationIcon(onBack) },
             )
         },
         bottomBar = {

@@ -25,8 +25,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -45,16 +43,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.ds.localtaskmanager.R
 import com.ds.localtaskmanager.settings.AppSettings
 import com.ds.localtaskmanager.settings.AppSettingsRepository
 import com.ds.localtaskmanager.settings.AppThemeMode
+import com.ds.localtaskmanager.ui.components.BackNavigationIcon
 import kotlinx.coroutines.launch
 
 @Composable
@@ -129,11 +126,7 @@ fun SettingsScreen(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("设置") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
-                    }
-                },
+                navigationIcon = { BackNavigationIcon(onBack) },
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },

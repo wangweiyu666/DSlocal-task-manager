@@ -1,7 +1,6 @@
 package com.ds.localtaskmanager.ui.sharing
 
 import android.os.Build
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -42,6 +41,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.ds.localtaskmanager.sharing.GeneratedShareImage
 import com.ds.localtaskmanager.sharing.ShareImageService
+import com.ds.localtaskmanager.ui.components.BackNavigationIcon
+import com.ds.localtaskmanager.ui.navigation.predictiveBackTransform
+import com.ds.localtaskmanager.ui.navigation.rememberPredictiveBackState
 import kotlinx.coroutines.launch
 
 private enum class PendingSensitiveAction { SAVE, SEND }
@@ -100,8 +102,14 @@ fun SharePreviewDialog(
         }
     }
 
-    BackHandler(onBack = onDismiss)
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    val predictiveBack = rememberPredictiveBackState(
+        enabled = pendingSensitiveAction == null,
+        onBack = onDismiss,
+    )
+    Surface(
+        modifier = Modifier.fillMaxSize().predictiveBackTransform(predictiveBack),
+        color = MaterialTheme.colorScheme.background,
+    ) {
         Box(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -118,7 +126,7 @@ fun SharePreviewDialog(
                 topBar = {
                     TopAppBar(
                         title = { Text("图片预览") },
-                        navigationIcon = { TextButton(onClick = onDismiss) { Text("返回") } },
+                        navigationIcon = { BackNavigationIcon(onDismiss) },
                     )
                 },
                 bottomBar = {

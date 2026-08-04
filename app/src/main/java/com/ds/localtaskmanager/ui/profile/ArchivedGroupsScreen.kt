@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ds.localtaskmanager.data.statistics.GroupStatistics
+import com.ds.localtaskmanager.ui.components.BackNavigationIcon
 import kotlin.math.roundToInt
 
 @Composable
@@ -42,7 +43,7 @@ fun ArchivedGroupsRoute(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("返回") }
+            BackNavigationIcon(onBack)
             Text("已归档积分组", style = MaterialTheme.typography.titleLarge)
         }
         when {

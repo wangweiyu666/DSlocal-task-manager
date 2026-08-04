@@ -1,6 +1,6 @@
 package com.ds.localtaskmanager.ui.history
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -10,6 +10,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ds.localtaskmanager.ui.execution.TaskDetailScreen
+import com.ds.localtaskmanager.ui.navigation.predictiveBackTransform
+import com.ds.localtaskmanager.ui.navigation.rememberPredictiveBackState
 import kotlinx.coroutines.launch
 
 @Composable
@@ -25,7 +27,7 @@ fun HistoryDetailRoute(
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var shareImage by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.ds.localtaskmanager.sharing.GeneratedShareImage?>(null) }
     fun leave() = viewModel.flushNote(onBack)
-    BackHandler(onBack = ::leave)
+    val predictiveBack = rememberPredictiveBackState(enabled = shareImage == null, onBack = ::leave)
 
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -67,6 +69,7 @@ fun HistoryDetailRoute(
                     .onFailure { android.widget.Toast.makeText(context, it.message ?: "暂时无法生成图片", android.widget.Toast.LENGTH_SHORT).show() }
             }
         },
+        modifier = Modifier.predictiveBackTransform(predictiveBack),
     )
     shareImage?.let {
         com.ds.localtaskmanager.ui.sharing.SharePreviewDialog(it, shareImageService, sensitive = true) { shareImage = null }

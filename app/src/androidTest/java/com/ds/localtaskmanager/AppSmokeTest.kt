@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
@@ -35,5 +36,18 @@ class AppSmokeTest {
         composeRule.onNodeWithContentDescription("设置").performClick()
         composeRule.onNodeWithText("设置").assertIsDisplayed()
         composeRule.onNodeWithText("任务提醒").assertIsDisplayed()
+    }
+
+    @Test
+    fun systemBackFromSettingsReturnsToProfile() {
+        composeRule.onNodeWithText("我的").performClick()
+        composeRule.onNodeWithContentDescription("设置").performClick()
+        composeRule.onNodeWithTag("settings-screen").assertIsDisplayed()
+
+        composeRule.runOnUiThread {
+            composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        composeRule.onNodeWithTag("profile-settings").assertIsDisplayed()
     }
 }

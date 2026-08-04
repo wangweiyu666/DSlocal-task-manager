@@ -22,7 +22,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -40,6 +39,7 @@ import com.ds.localtaskmanager.data.statistics.StatisticsPeriod
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import com.ds.localtaskmanager.ui.components.BackNavigationIcon
 
 @Composable
 fun LedgerRoute(viewModel: LedgerViewModel, onBack: () -> Unit) {
@@ -63,7 +63,7 @@ private fun LedgerScreen(state: LedgerUiState, viewModel: LedgerViewModel, onBac
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("返回") }
+            BackNavigationIcon(onBack)
             Text("积分流水", style = MaterialTheme.typography.titleLarge)
         }
         OutlinedTextField(
