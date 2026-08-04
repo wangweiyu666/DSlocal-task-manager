@@ -13,6 +13,7 @@ import com.ds.localtaskmanager.data.AppDatabase
 import com.ds.localtaskmanager.domain.result.DailyResultSnapshot
 import com.ds.localtaskmanager.ui.result.toPresentation
 import com.ds.localtaskmanager.settings.AppSettingsRepository
+import com.ds.localtaskmanager.diagnostics.DiagnosticEventStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,6 +23,7 @@ class ShareImageService(
     private val database: AppDatabase,
     private val renderer: ShareImageRenderer = ShareImageRenderer(),
     private val settingsRepository: AppSettingsRepository = AppSettingsRepository(appContext),
+    private val diagnosticEvents: DiagnosticEventStore? = null,
 ) {
     suspend fun generateResult(snapshot: DailyResultSnapshot): GeneratedShareImage = withContext(Dispatchers.Default) {
         renderer.renderResult(snapshot.toPresentation())
@@ -58,7 +60,7 @@ class ShareImageService(
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, image.fileName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/DST Sub")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/DStationery")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val uri = requireNotNull(appContext.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
@@ -84,4 +86,13 @@ class ShareImageService(
 
     fun informationPrivacyConfirmed(): Boolean = settingsRepository.settings.value.informationPrivacyConfirmed
     fun confirmInformationPrivacy() = settingsRepository.confirmInformationPrivacy()
+
+    fun cleanupTemporaryFiles(nowEpochMillis: Long = System.currentTimeMillis()) {
+        val cutoff = nowEpochMillis - 24L * 60 * 60 * 1000
+        File(appContext.cacheDir, "shared-images").listFiles().orEmpty().forEach { file ->
+            if (file.isFile && file.lastModified() < cutoff && !file.delete()) {
+                diagnosticEvents?.record("CLEANUP", "SHARED_IMAGE_DELETE_FAILED", false)
+            }
+        }
+    }
 }

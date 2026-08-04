@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,6 +33,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -52,13 +54,17 @@ import com.ds.localtaskmanager.settings.AppSettings
 import com.ds.localtaskmanager.settings.AppSettingsRepository
 import com.ds.localtaskmanager.settings.AppThemeMode
 import com.ds.localtaskmanager.ui.components.BackNavigationIcon
+import com.ds.localtaskmanager.diagnostics.DiagnosticService
 import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsRoute(
     repository: AppSettingsRepository,
+    diagnosticService: DiagnosticService,
     onBack: () -> Unit,
     onBackup: () -> Unit,
+    onPrivacy: () -> Unit,
+    onLicenses: () -> Unit,
     onNotificationPermissionChanged: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -67,6 +73,14 @@ fun SettingsRoute(
     var notificationsEnabled by remember { mutableStateOf(context.notificationsEnabled()) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var confirmDiagnosticExport by remember { mutableStateOf(false) }
+    val diagnosticLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) scope.launch {
+            runCatching { diagnosticService.writeTo(uri) }
+                .onSuccess { snackbarHostState.showSnackbar("诊断信息已导出") }
+                .onFailure { snackbarHostState.showSnackbar("诊断信息导出失败") }
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         repository.setNotificationPermissionRequested()
         notificationsEnabled = granted && context.notificationsEnabled()
@@ -92,6 +106,13 @@ fun SettingsRoute(
         snackbarHostState = snackbarHostState,
         onBack = onBack,
         onBackup = onBackup,
+        onExportDiagnostics = { confirmDiagnosticExport = true },
+        onClearDiagnostics = {
+            diagnosticService.clearEvents()
+            scope.launch { snackbarHostState.showSnackbar("诊断记录已清空") }
+        },
+        onPrivacy = onPrivacy,
+        onLicenses = onLicenses,
         onThemeMode = repository::setThemeMode,
         onReduceMotion = repository::setReduceMotion,
         onNotificationAction = {
@@ -108,6 +129,22 @@ fun SettingsRoute(
             scope.launch { snackbarHostState.showSnackbar("下次分享信息告知图片时将再次提醒") }
         },
     )
+    if (confirmDiagnosticExport) {
+        AlertDialog(
+            onDismissRequest = { confirmDiagnosticExport = false },
+            title = { Text("导出诊断信息") },
+            text = {
+                Text("将包含应用版本、Android API、数据库版本、权限与后台任务状态和脱敏错误码。不会包含任务、备注、业务 ID、文件路径、设备标识或异常堆栈。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDiagnosticExport = false
+                    diagnosticLauncher.launch("DStationery诊断.txt")
+                }) { Text("选择保存位置") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDiagnosticExport = false }) { Text("取消") } },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -123,6 +160,10 @@ fun SettingsScreen(
     onNotificationAction: () -> Unit,
     onResetPrivacy: () -> Unit,
     onBackup: () -> Unit = {},
+    onExportDiagnostics: () -> Unit = {},
+    onClearDiagnostics: () -> Unit = {},
+    onPrivacy: () -> Unit = {},
+    onLicenses: () -> Unit = {},
 ) {
     Scaffold(
         modifier = Modifier.fillMaxSize().testTag("settings-screen"),
@@ -233,6 +274,20 @@ fun SettingsScreen(
                         }
                         Text("›", style = MaterialTheme.typography.headlineSmall)
                     }
+                    HorizontalDivider()
+                    SettingsLinkRow(
+                        title = "导出诊断信息",
+                        description = "保存不含任务内容和设备标识的本地诊断摘要",
+                        tag = "settings-diagnostics",
+                        onClick = onExportDiagnostics,
+                    )
+                    HorizontalDivider()
+                    SettingsLinkRow(
+                        title = "清空诊断记录",
+                        description = "删除最多保留 7 天的脱敏错误码",
+                        tag = "clear-diagnostics",
+                        onClick = onClearDiagnostics,
+                    )
             }
             SettingsSection("隐私与分享") {
                     SettingsCardContent {
@@ -260,8 +315,26 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    HorizontalDivider()
+                    SettingsLinkRow("隐私说明", "了解本地数据、权限与文件导出边界", "settings-privacy", onPrivacy)
+                    HorizontalDivider()
+                    SettingsLinkRow("开源许可", "GPL-3.0-only 与第三方依赖许可", "settings-licenses", onLicenses)
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsLinkRow(title: String, description: String, tag: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).testTag(tag).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text("›", style = MaterialTheme.typography.headlineSmall)
     }
 }
 
@@ -317,5 +390,8 @@ private fun Context.openNotificationSettings(): Boolean {
 
 @Suppress("DEPRECATION")
 private fun Context.appVersionName(): String = runCatching {
-    packageManager.getPackageInfo(packageName, 0).versionName ?: "未知"
+    packageManager.getPackageInfo(packageName, 0).let {
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.longVersionCode else it.versionCode.toLong()
+        "${it.versionName ?: "未知"}（$versionCode）"
+    }
 }.getOrDefault("未知")

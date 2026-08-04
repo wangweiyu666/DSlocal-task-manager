@@ -83,6 +83,9 @@ import com.ds.localtaskmanager.ui.backup.BackupRoute
 import com.ds.localtaskmanager.ui.backup.BackupViewModel
 import com.ds.localtaskmanager.ui.backup.BackupViewModelFactory
 import com.ds.localtaskmanager.ui.settings.SettingsRoute
+import com.ds.localtaskmanager.ui.settings.LegalDocument
+import com.ds.localtaskmanager.ui.settings.LegalScreen
+import com.ds.localtaskmanager.diagnostics.DiagnosticService
 import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
 
 private enum class Destination(
@@ -103,6 +106,8 @@ private const val PROFILE_LEDGER_ROUTE = "profile/ledger/{period}/{groupKey}"
 private const val PROFILE_ARCHIVED_ROUTE = "profile/archived/{period}"
 private const val PROFILE_SETTINGS_ROUTE = "profile/settings"
 private const val PROFILE_BACKUP_ROUTE = "profile/settings/backup"
+private const val PROFILE_PRIVACY_ROUTE = "profile/settings/privacy"
+private const val PROFILE_LICENSES_ROUTE = "profile/settings/licenses"
 
 @Composable
 fun DstNavigation(
@@ -115,6 +120,7 @@ fun DstNavigation(
     statisticsRepository: StatisticsRepository,
     shareImageService: ShareImageService,
     settingsRepository: AppSettingsRepository,
+    diagnosticService: DiagnosticService,
     backupManager: BackupManager,
     backupRepository: RoomBackupRepository,
     reminderReconciler: ReminderReconciler,
@@ -211,10 +217,19 @@ fun DstNavigation(
             composable(PROFILE_SETTINGS_ROUTE) {
                 SettingsRoute(
                     repository = settingsRepository,
+                    diagnosticService = diagnosticService,
                     onBack = navController::popBackStack,
                     onBackup = { navController.navigate(PROFILE_BACKUP_ROUTE) },
+                    onPrivacy = { navController.navigate(PROFILE_PRIVACY_ROUTE) },
+                    onLicenses = { navController.navigate(PROFILE_LICENSES_ROUTE) },
                     onNotificationPermissionChanged = onNotificationPermissionChanged,
                 )
+            }
+            composable(PROFILE_PRIVACY_ROUTE) {
+                LegalScreen(LegalDocument.PRIVACY, navController::popBackStack)
+            }
+            composable(PROFILE_LICENSES_ROUTE) {
+                LegalScreen(LegalDocument.LICENSES, navController::popBackStack)
             }
             composable(PROFILE_BACKUP_ROUTE) {
                 val backupViewModel: BackupViewModel = viewModel(

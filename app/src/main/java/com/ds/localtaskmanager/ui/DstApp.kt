@@ -16,6 +16,7 @@ import com.ds.localtaskmanager.sharing.ShareImageService
 import com.ds.localtaskmanager.settings.AppSettingsRepository
 import com.ds.localtaskmanager.backup.BackupManager
 import com.ds.localtaskmanager.backup.RoomBackupRepository
+import com.ds.localtaskmanager.diagnostics.DiagnosticService
 
 @Composable
 fun DstApp(
@@ -28,6 +29,7 @@ fun DstApp(
     statisticsRepository: StatisticsRepository,
     shareImageService: ShareImageService,
     settingsRepository: AppSettingsRepository,
+    diagnosticService: DiagnosticService,
     backupManager: BackupManager,
     backupRepository: RoomBackupRepository,
     reminderReconciler: ReminderReconciler,
@@ -44,6 +46,7 @@ fun DstApp(
     statisticsRepository,
     shareImageService,
     settingsRepository,
+    diagnosticService,
     backupManager,
     backupRepository,
     reminderReconciler,

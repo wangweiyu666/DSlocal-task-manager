@@ -28,6 +28,8 @@ import com.ds.localtaskmanager.reminder.ReminderCoordinator
 import java.time.Clock
 import com.ds.localtaskmanager.sharing.ShareImageService
 import com.ds.localtaskmanager.settings.AppSettingsRepository
+import com.ds.localtaskmanager.diagnostics.DiagnosticEventStore
+import com.ds.localtaskmanager.diagnostics.DiagnosticService
 
 class DstApplication : Application() {
     val database: AppDatabase by lazy { AppDatabase.create(this) }
@@ -54,6 +56,8 @@ class DstApplication : Application() {
     val historyRepository: HistoryRepository by lazy { RoomHistoryRepository(database) }
     val statisticsRepository: StatisticsRepository by lazy { RoomStatisticsRepository(database, clock) }
     val settingsRepository: AppSettingsRepository by lazy { AppSettingsRepository(this) }
+    val diagnosticEvents: DiagnosticEventStore by lazy { DiagnosticEventStore(this) }
+    val diagnosticService: DiagnosticService by lazy { DiagnosticService(this, database, diagnosticEvents) }
     val backupRepository: RoomBackupRepository by lazy { RoomBackupRepository(database, settingsRepository) }
     val backupManager: BackupManager by lazy {
         BackupManager(
@@ -65,9 +69,12 @@ class DstApplication : Application() {
             reminderReconciler = reminderCoordinator,
             idGenerator = idGenerator,
             clock = clock,
+            diagnosticEvents = diagnosticEvents,
         )
     }
-    val shareImageService: ShareImageService by lazy { ShareImageService(this, database, settingsRepository = settingsRepository) }
+    val shareImageService: ShareImageService by lazy {
+        ShareImageService(this, database, settingsRepository = settingsRepository, diagnosticEvents = diagnosticEvents)
+    }
     private val reminderNotifier by lazy { AndroidReminderNotifier(this) }
     val reminderCoordinator: ReminderCoordinator by lazy {
         ReminderCoordinator(
@@ -83,6 +90,8 @@ class DstApplication : Application() {
         super.onCreate()
         reminderNotifier.createChannel()
         backupManager.cleanupTemporaryFiles()
+        shareImageService.cleanupTemporaryFiles()
+        diagnosticEvents.cleanup()
         backupManager.enqueueRecoveryIfNeeded()
     }
 }

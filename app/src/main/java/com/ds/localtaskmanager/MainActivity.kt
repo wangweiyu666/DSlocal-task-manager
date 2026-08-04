@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
                 statisticsRepository = application.statisticsRepository,
                 shareImageService = application.shareImageService,
                 settingsRepository = application.settingsRepository,
+                diagnosticService = application.diagnosticService,
                 backupManager = application.backupManager,
                 backupRepository = application.backupRepository,
                 reminderReconciler = application.reminderCoordinator,

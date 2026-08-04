@@ -1,0 +1,20 @@
+DStationery third-party notices
+
+The release APK uses AndroidX, Jetpack Compose, Room, WorkManager,
+Kotlin, Kotlin Coroutines and Kotlin Serialization. These components are
+distributed under the Apache License 2.0. Their source and notices are
+available from the Android Open Source Project, AndroidX and Kotlin
+repositories:
+
+https://source.android.com/docs/setup/about/licenses
+https://github.com/androidx/androidx
+https://github.com/JetBrains/kotlin
+https://github.com/Kotlin/kotlinx.coroutines
+https://github.com/Kotlin/kotlinx.serialization
+
+Apache License 2.0:
+https://www.apache.org/licenses/LICENSE-2.0.txt
+
+Test-only dependencies are not packaged into the release APK. Their
+licenses are listed by the release dependency report retained with the
+local release archive.

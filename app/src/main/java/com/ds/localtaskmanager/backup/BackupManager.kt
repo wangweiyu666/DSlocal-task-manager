@@ -1,5 +1,6 @@
 package com.ds.localtaskmanager.backup
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -20,6 +21,7 @@ import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.reminder.ReminderReconciler
 import com.ds.localtaskmanager.settings.AppSettingsRepository
 import com.ds.localtaskmanager.settings.AppThemeMode
+import com.ds.localtaskmanager.diagnostics.DiagnosticEventStore
 import java.io.File
 import java.time.Clock
 import java.time.LocalDate
@@ -32,6 +34,7 @@ data class RestoreResult(
     val reminderRebuildPending: Boolean,
 )
 
+@SuppressLint("ApplySharedPref") // Restore markers must be durable before database replacement begins.
 class BackupManager(
     context: Context,
     private val database: AppDatabase,
@@ -41,6 +44,7 @@ class BackupManager(
     private val reminderReconciler: ReminderReconciler,
     private val idGenerator: RecordIdGenerator,
     private val clock: Clock = Clock.systemDefaultZone(),
+    private val diagnosticEvents: DiagnosticEventStore? = null,
 ) {
     private val appContext = context.applicationContext
     private val workManager by lazy { WorkManager.getInstance(appContext) }
@@ -168,10 +172,12 @@ class BackupManager(
                 )
             }
             if (rollbackResult.isSuccess) {
+                diagnosticEvents?.record("BACKUP", "RESTORE_ROLLED_BACK", true)
                 preferences.edit().putBoolean(KEY_RESTORE_PENDING, false).commit()
                 rollbackFile.delete()
                 throw DstbException("恢复失败，已还原原有数据", error)
             }
+            diagnosticEvents?.record("BACKUP", "ROLLBACK_PENDING", false)
             throw DstbException("恢复失败，将在下次启动时继续还原原有数据", error)
         }
     }
@@ -189,6 +195,7 @@ class BackupManager(
         runCatching { reminderReconciler.reconcileAll("backup-rollback-recovered") }
         preferences.edit().putBoolean(KEY_RESTORE_PENDING, false).commit()
         rollbackFile.delete()
+        diagnosticEvents?.record("BACKUP", "ROLLBACK_RECOVERED", true)
         return true
     }
 
@@ -204,7 +211,9 @@ class BackupManager(
     fun cleanupTemporaryFiles() {
         val cutoff = clock.millis() - 24 * 60 * 60 * 1000L
         operationDirectory.listFiles().orEmpty().forEach { file ->
-            if (file.name != ROLLBACK_FILE && file.lastModified() < cutoff) file.delete()
+            if (file.name != ROLLBACK_FILE && file.lastModified() < cutoff && !file.delete()) {
+                diagnosticEvents?.record("CLEANUP", "BACKUP_TEMP_DELETE_FAILED", false)
+            }
         }
     }
 

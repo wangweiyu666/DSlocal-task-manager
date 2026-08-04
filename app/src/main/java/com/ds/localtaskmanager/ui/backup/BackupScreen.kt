@@ -498,7 +498,7 @@ private val BackupPage.title: String get() = when (this) {
 }
 
 private fun defaultBackupName(): String =
-    "本地任务备份_${DateTimeFormatter.ofPattern("yyyyMMdd_HHmm").withZone(ZoneId.systemDefault()).format(Instant.now())}.dstb"
+    "DStationery备份_${DateTimeFormatter.ofPattern("yyyyMMdd_HHmm").withZone(ZoneId.systemDefault()).format(Instant.now())}.dstb"
 
 private fun formatTime(epochMillis: Long): String =
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(epochMillis))
