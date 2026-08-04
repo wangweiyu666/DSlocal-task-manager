@@ -10,6 +10,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -24,7 +25,49 @@ class AppDatabaseMigrationTest {
         opened.forEach(AppDatabase::close)
         context.deleteDatabase(V1_DATABASE)
         context.deleteDatabase(V2_DATABASE)
+        context.deleteDatabase(V3_DATABASE)
         context.deleteDatabase(V4_DATABASE)
+        context.deleteDatabase(V5_DATABASE)
+    }
+
+    @Test
+    fun `version 3 migrates to current and preserves execution data`() {
+        createLegacyDatabase(V3_DATABASE, 3) { db ->
+            insertV1Task(db, "LegacyTaskV30001", "LegacyGroupV3001")
+            MIGRATION_1_2.migrate(db)
+            MIGRATION_2_3.migrate(db)
+            db.execSQL(
+                "INSERT INTO execution_progress VALUES ('LegacyTaskV30001', 'once', 'NORMAL', NULL, NULL, 202, 303)",
+            )
+        }
+
+        val database = openCurrent(V3_DATABASE)
+        val progress = database.openHelper.readableDatabase.query(
+            "SELECT executionKind, updatedAtEpochMillis FROM execution_progress WHERE taskId = 'LegacyTaskV30001'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getString(0) to cursor.getLong(1)
+        }
+
+        assertEquals("NORMAL" to 303L, progress)
+        assertNoForeignKeyViolations(database)
+    }
+
+    @Test
+    fun `version 5 opens without destructive recreation`() {
+        createLegacyDatabase(V5_DATABASE, 5) { db ->
+            insertV1Task(db, "LegacyTaskV50001", "LegacyGroupV5001")
+            MIGRATION_1_2.migrate(db)
+            MIGRATION_2_3.migrate(db)
+            MIGRATION_3_4.migrate(db)
+            MIGRATION_4_5.migrate(db)
+        }
+
+        val database = openCurrent(V5_DATABASE)
+        val definition = kotlinx.coroutines.runBlocking { database.definitionDao().getDefinition("LegacyTaskV50001") }
+
+        assertEquals("Legacy task", definition?.name)
+        assertNoForeignKeyViolations(database)
     }
 
     @Test
@@ -222,6 +265,8 @@ class AppDatabaseMigrationTest {
     private companion object {
         const val V1_DATABASE = "migration-v1.db"
         const val V2_DATABASE = "migration-v2.db"
+        const val V3_DATABASE = "migration-v3.db"
         const val V4_DATABASE = "migration-v4.db"
+        const val V5_DATABASE = "migration-v5.db"
     }
 }
