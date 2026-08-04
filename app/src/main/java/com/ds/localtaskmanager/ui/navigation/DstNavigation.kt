@@ -8,8 +8,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.Card
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -20,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
@@ -72,6 +77,11 @@ import com.ds.localtaskmanager.R
 import com.ds.localtaskmanager.reminder.ReminderReconciler
 import com.ds.localtaskmanager.sharing.ShareImageService
 import com.ds.localtaskmanager.settings.AppSettingsRepository
+import com.ds.localtaskmanager.backup.BackupManager
+import com.ds.localtaskmanager.backup.RoomBackupRepository
+import com.ds.localtaskmanager.ui.backup.BackupRoute
+import com.ds.localtaskmanager.ui.backup.BackupViewModel
+import com.ds.localtaskmanager.ui.backup.BackupViewModelFactory
 import com.ds.localtaskmanager.ui.settings.SettingsRoute
 import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
 
@@ -92,6 +102,7 @@ private const val HISTORY_DAY_ROUTE = "history/day/{taskDate}"
 private const val PROFILE_LEDGER_ROUTE = "profile/ledger/{period}/{groupKey}"
 private const val PROFILE_ARCHIVED_ROUTE = "profile/archived/{period}"
 private const val PROFILE_SETTINGS_ROUTE = "profile/settings"
+private const val PROFILE_BACKUP_ROUTE = "profile/settings/backup"
 
 @Composable
 fun DstNavigation(
@@ -104,6 +115,8 @@ fun DstNavigation(
     statisticsRepository: StatisticsRepository,
     shareImageService: ShareImageService,
     settingsRepository: AppSettingsRepository,
+    backupManager: BackupManager,
+    backupRepository: RoomBackupRepository,
     reminderReconciler: ReminderReconciler,
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
@@ -116,6 +129,8 @@ fun DstNavigation(
     val importState by todayViewModel.importState.collectAsStateWithLifecycle()
     val todayResultState by todayViewModel.resultState.collectAsStateWithLifecycle()
     val notificationKey by notificationTask.collectAsStateWithLifecycle()
+    val backupOperationActive by backupManager.operationActive.collectAsStateWithLifecycle(initialValue = false)
+    val backupRestoreActive by backupManager.restoreActive.collectAsStateWithLifecycle(initialValue = false)
     val reduceMotion = LocalReduceMotion.current
 
     LaunchedEffect(notificationKey) {
@@ -127,7 +142,7 @@ fun DstNavigation(
 
     Scaffold(
         bottomBar = {
-            if (onPrimaryDestination && !(currentRoute == Destination.Today.route && todayResultState.visible)) {
+            if (!backupRestoreActive && onPrimaryDestination && !(currentRoute == Destination.Today.route && todayResultState.visible)) {
                 DstBottomBar(currentRoute) { destination ->
                     navController.navigate(destination.route) {
                         popUpTo(navController.graph.findStartDestination().id) { saveState = true }
@@ -138,7 +153,7 @@ fun DstNavigation(
             }
         },
         floatingActionButton = {
-            if (currentRoute == Destination.Today.route && !todayResultState.visible) {
+            if (!backupOperationActive && currentRoute == Destination.Today.route && !todayResultState.visible) {
                 FloatingActionButton(
                     onClick = todayViewModel::openImport,
                     modifier = Modifier.semantics { contentDescription = "导入任务" },
@@ -148,10 +163,11 @@ fun DstNavigation(
             }
         },
     ) { contentPadding ->
+        Box(Modifier.fillMaxSize().padding(contentPadding)) {
         NavHost(
             navController = navController,
             startDestination = Destination.Today.route,
-            modifier = Modifier.padding(contentPadding),
+            modifier = Modifier.fillMaxSize(),
             enterTransition = { forwardEnterTransition(reduceMotion) },
             exitTransition = { forwardExitTransition(reduceMotion) },
             popEnterTransition = { popEnterTransition(reduceMotion) },
@@ -196,7 +212,25 @@ fun DstNavigation(
                 SettingsRoute(
                     repository = settingsRepository,
                     onBack = navController::popBackStack,
+                    onBackup = { navController.navigate(PROFILE_BACKUP_ROUTE) },
                     onNotificationPermissionChanged = onNotificationPermissionChanged,
+                )
+            }
+            composable(PROFILE_BACKUP_ROUTE) {
+                val backupViewModel: BackupViewModel = viewModel(
+                    key = "backup-and-restore",
+                    factory = BackupViewModelFactory(backupManager, backupRepository),
+                )
+                BackupRoute(
+                    viewModel = backupViewModel,
+                    settingsRepository = settingsRepository,
+                    onBack = navController::popBackStack,
+                    onRestoreComplete = {
+                        navController.navigate(Destination.Today.route) {
+                            popUpTo(navController.graph.findStartDestination().id)
+                            launchSingleTop = true
+                        }
+                    },
                 )
             }
             composable(PROFILE_LEDGER_ROUTE) { backStackEntry ->
@@ -273,9 +307,20 @@ fun DstNavigation(
                 )
             }
         }
+        if (backupRestoreActive && currentRoute != PROFILE_BACKUP_ROUTE) {
+            Box(
+                modifier = Modifier.fillMaxSize().clickable(onClick = {}),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Card(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("正在恢复数据，当前页面暂时只读", Modifier.padding(16.dp))
+                }
+            }
+        }
+        }
     }
 
-    if (importState.visible) {
+    if (importState.visible && !backupOperationActive) {
         ImportDialog(
             state = importState,
             onInputChange = todayViewModel::updateImportInput,

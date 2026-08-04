@@ -17,7 +17,7 @@ import com.ds.localtaskmanager.settings.AppThemeMode
 
 val LocalReduceMotion = staticCompositionLocalOf { false }
 
-private val Indigo = Color(0xFF6366F1)
+private val Indigo = Color(0xFF818CF8)
 private val LightIndigo = Color(0xFF818CF8)
 private val IndigoContainer = Color(0xFFE0E7FF)
 private val AppBackground = Color(0xFFF8FAFC)

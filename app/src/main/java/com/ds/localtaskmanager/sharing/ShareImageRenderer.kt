@@ -130,7 +130,7 @@ class ShareImageRenderer {
         private const val TITLE_LINE_HEIGHT = 66
         private const val BODY_LINE_HEIGHT = 52
         private const val TITLE_BODY_GAP = 18
-        private const val PRIMARY = 0xFF6366F1.toInt()
+        private const val PRIMARY = 0xFF818CF8.toInt()
         private const val BACKGROUND = 0xFFF8FAFC.toInt()
         private const val CARD = Color.WHITE
 

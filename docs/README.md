@@ -11,6 +11,7 @@
 | 架构约束、交付流程 | [工程约束与交付清单](w00-w01-engineering-playbook.md) |
 | 当前 Android 能力边界 | [Android 实现边界](android-phase-1.md) |
 | Android UI 层级与返回导航 | [Android UI 与返回导航](android-ui-navigation.md) |
+| DSTB1 文件格式与兼容 | [DSTB1 格式](dstb1-format.md)、[测试向量](dstb1-test-vectors.md) |
 | 模拟器与仪器测试 | [Android 模拟器测试环境](android-emulator-testing.md) |
 
 ## 已完成窗口
@@ -25,6 +26,7 @@
 - [W24：今日结果与分享](w24-results-and-sharing.md)
 - [W25：“我的”统计与积分流水](w25-profile-statistics.md)
 - [W26：独立设置页面](w26-settings.md)
+- [W31：DSTB1 备份与恢复](w31-backup-and-restore.md)
 
 窗口文档记录实现决策和验收证据，不重复定义产品规则。发生冲突时按以下顺序处理：
 

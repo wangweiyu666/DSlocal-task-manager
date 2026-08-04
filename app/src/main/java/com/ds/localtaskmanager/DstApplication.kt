@@ -1,6 +1,8 @@
 package com.ds.localtaskmanager
 
 import android.app.Application
+import com.ds.localtaskmanager.backup.BackupManager
+import com.ds.localtaskmanager.backup.RoomBackupRepository
 import com.ds.localtaskmanager.data.AppDatabase
 import com.ds.localtaskmanager.data.ImportService
 import com.ds.localtaskmanager.data.RoomImportService
@@ -52,6 +54,19 @@ class DstApplication : Application() {
     val historyRepository: HistoryRepository by lazy { RoomHistoryRepository(database) }
     val statisticsRepository: StatisticsRepository by lazy { RoomStatisticsRepository(database, clock) }
     val settingsRepository: AppSettingsRepository by lazy { AppSettingsRepository(this) }
+    val backupRepository: RoomBackupRepository by lazy { RoomBackupRepository(database, settingsRepository) }
+    val backupManager: BackupManager by lazy {
+        BackupManager(
+            context = this,
+            database = database,
+            repository = backupRepository,
+            settingsRepository = settingsRepository,
+            instanceGenerationService = instanceGenerationService,
+            reminderReconciler = reminderCoordinator,
+            idGenerator = idGenerator,
+            clock = clock,
+        )
+    }
     val shareImageService: ShareImageService by lazy { ShareImageService(this, database, settingsRepository = settingsRepository) }
     private val reminderNotifier by lazy { AndroidReminderNotifier(this) }
     val reminderCoordinator: ReminderCoordinator by lazy {
@@ -67,5 +82,7 @@ class DstApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         reminderNotifier.createChannel()
+        backupManager.cleanupTemporaryFiles()
+        backupManager.enqueueRecoveryIfNeeded()
     }
 }

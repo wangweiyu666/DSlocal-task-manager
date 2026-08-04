@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.ds.localtaskmanager.data.dao.AuditDao
+import com.ds.localtaskmanager.data.dao.BackupDao
 import com.ds.localtaskmanager.data.dao.DefinitionDao
 import com.ds.localtaskmanager.data.dao.ExecutionDao
 import com.ds.localtaskmanager.data.dao.InstanceDao
@@ -42,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun resultDao(): ResultDao
     abstract fun reminderDao(): ReminderDao
     abstract fun statisticsDao(): StatisticsDao
+    abstract fun backupDao(): BackupDao
 
     companion object {
         fun create(context: Context): AppDatabase =

@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 fun SettingsRoute(
     repository: AppSettingsRepository,
     onBack: () -> Unit,
+    onBackup: () -> Unit,
     onNotificationPermissionChanged: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -90,6 +91,7 @@ fun SettingsRoute(
         appVersion = context.appVersionName(),
         snackbarHostState = snackbarHostState,
         onBack = onBack,
+        onBackup = onBackup,
         onThemeMode = repository::setThemeMode,
         onReduceMotion = repository::setReduceMotion,
         onNotificationAction = {
@@ -120,6 +122,7 @@ fun SettingsScreen(
     onReduceMotion: (Boolean) -> Unit,
     onNotificationAction: () -> Unit,
     onResetPrivacy: () -> Unit,
+    onBackup: () -> Unit = {},
 ) {
     Scaffold(
         modifier = Modifier.fillMaxSize().testTag("settings-screen"),
@@ -209,6 +212,26 @@ fun SettingsScreen(
                                 else "启用任务提醒",
                             )
                         }
+                    }
+            }
+            SettingsSection("数据") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onBackup)
+                            .testTag("settings-backup")
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("数据与备份", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "导出本地备份，或从备份恢复数据",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text("›", style = MaterialTheme.typography.headlineSmall)
                     }
             }
             SettingsSection("隐私与分享") {

@@ -19,6 +19,9 @@ data class AppSettings(
     val lastStatisticsPeriod: StatisticsPeriod = StatisticsPeriod.SEVEN_DAYS,
     val informationPrivacyConfirmed: Boolean = false,
     val notificationPermissionRequested: Boolean = false,
+    val backupPrivacyConfirmed: Boolean = false,
+    val lastBackupExportAtEpochMillis: Long? = null,
+    val lastBackupRestoreAtEpochMillis: Long? = null,
 )
 
 class AppSettingsRepository(context: Context) {
@@ -49,6 +52,23 @@ class AppSettingsRepository(context: Context) {
 
     fun setNotificationPermissionRequested(requested: Boolean = true) =
         update(KEY_NOTIFICATION_PERMISSION_REQUESTED, requested)
+
+    fun confirmBackupPrivacy() = update(KEY_BACKUP_PRIVACY_CONFIRMED, true)
+
+    fun resetBackupPrivacy() = update(KEY_BACKUP_PRIVACY_CONFIRMED, false)
+
+    fun recordBackupExported(atEpochMillis: Long) = update(KEY_LAST_BACKUP_EXPORT_AT, atEpochMillis)
+
+    fun recordBackupRestored(atEpochMillis: Long) = update(KEY_LAST_BACKUP_RESTORE_AT, atEpochMillis)
+
+    fun restorePortableSettings(themeMode: AppThemeMode, reduceMotion: Boolean, period: StatisticsPeriod) {
+        preferences.edit()
+            .putString(KEY_THEME_MODE, themeMode.name)
+            .putBoolean(KEY_REDUCE_MOTION, reduceMotion)
+            .putString(KEY_STATISTICS_PERIOD, period.name)
+            .apply()
+        mutableSettings.value = readSettings()
+    }
 
     private fun migrateLegacyPreferences() {
         val editor = preferences.edit()
@@ -81,6 +101,11 @@ class AppSettingsRepository(context: Context) {
             .toEnumOrDefault(StatisticsPeriod.SEVEN_DAYS),
         informationPrivacyConfirmed = preferences.getBoolean(KEY_INFORMATION_PRIVACY_CONFIRMED, false),
         notificationPermissionRequested = preferences.getBoolean(KEY_NOTIFICATION_PERMISSION_REQUESTED, false),
+        backupPrivacyConfirmed = preferences.getBoolean(KEY_BACKUP_PRIVACY_CONFIRMED, false),
+        lastBackupExportAtEpochMillis = preferences.getLong(KEY_LAST_BACKUP_EXPORT_AT, Long.MIN_VALUE)
+            .takeUnless { it == Long.MIN_VALUE },
+        lastBackupRestoreAtEpochMillis = preferences.getLong(KEY_LAST_BACKUP_RESTORE_AT, Long.MIN_VALUE)
+            .takeUnless { it == Long.MIN_VALUE },
     )
 
     private fun update(key: String, value: String) {
@@ -90,6 +115,11 @@ class AppSettingsRepository(context: Context) {
 
     private fun update(key: String, value: Boolean) {
         preferences.edit().putBoolean(key, value).apply()
+        mutableSettings.value = readSettings()
+    }
+
+    private fun update(key: String, value: Long) {
+        preferences.edit().putLong(key, value).apply()
         mutableSettings.value = readSettings()
     }
 
@@ -103,6 +133,9 @@ class AppSettingsRepository(context: Context) {
         const val KEY_STATISTICS_PERIOD = "last_statistics_period"
         const val KEY_INFORMATION_PRIVACY_CONFIRMED = "information_privacy_confirmed"
         const val KEY_NOTIFICATION_PERMISSION_REQUESTED = "notification_permission_requested"
+        const val KEY_BACKUP_PRIVACY_CONFIRMED = "backup_privacy_confirmed"
+        const val KEY_LAST_BACKUP_EXPORT_AT = "last_backup_export_at"
+        const val KEY_LAST_BACKUP_RESTORE_AT = "last_backup_restore_at"
 
         const val LEGACY_NOTIFICATION_PREFERENCES = "notification_settings"
         const val LEGACY_NOTIFICATION_PERMISSION_REQUESTED = "permission_requested"

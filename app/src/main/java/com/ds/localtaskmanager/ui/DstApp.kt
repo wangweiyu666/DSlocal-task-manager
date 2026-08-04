@@ -14,6 +14,8 @@ import com.ds.localtaskmanager.data.result.ResultRepository
 import com.ds.localtaskmanager.data.statistics.StatisticsRepository
 import com.ds.localtaskmanager.sharing.ShareImageService
 import com.ds.localtaskmanager.settings.AppSettingsRepository
+import com.ds.localtaskmanager.backup.BackupManager
+import com.ds.localtaskmanager.backup.RoomBackupRepository
 
 @Composable
 fun DstApp(
@@ -26,6 +28,8 @@ fun DstApp(
     statisticsRepository: StatisticsRepository,
     shareImageService: ShareImageService,
     settingsRepository: AppSettingsRepository,
+    backupManager: BackupManager,
+    backupRepository: RoomBackupRepository,
     reminderReconciler: ReminderReconciler,
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
@@ -40,6 +44,8 @@ fun DstApp(
     statisticsRepository,
     shareImageService,
     settingsRepository,
+    backupManager,
+    backupRepository,
     reminderReconciler,
     notificationTask,
     onNotificationTaskConsumed,

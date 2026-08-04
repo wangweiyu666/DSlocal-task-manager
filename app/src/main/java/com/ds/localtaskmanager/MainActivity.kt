@@ -63,6 +63,8 @@ class MainActivity : ComponentActivity() {
                 statisticsRepository = application.statisticsRepository,
                 shareImageService = application.shareImageService,
                 settingsRepository = application.settingsRepository,
+                backupManager = application.backupManager,
+                backupRepository = application.backupRepository,
                 reminderReconciler = application.reminderCoordinator,
                 notificationTask = notificationTask,
                 onNotificationTaskConsumed = { notificationTask.value = null },
