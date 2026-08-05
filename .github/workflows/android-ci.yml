@@ -57,7 +57,11 @@ jobs:
 
       - name: Print dependency verification report
         if: steps.gradle_verify.outcome == 'failure'
-        run: find build/reports/dependency-verification -type f -name dependency-verification-report.html -print -exec cat {} \; || true
+        run: |
+          find build/reports/dependency-verification -type f -name dependency-verification-report.html -print -exec cat {} \; || true
+          ./gradlew checkDebugAarMetadata --write-verification-metadata sha256 --no-daemon || true
+          git diff -- gradle/verification-metadata.xml
+          git restore -- gradle/verification-metadata.xml
 
       - name: Check clean generated state
         run: git diff --check && test -z "$(git status --porcelain)"
