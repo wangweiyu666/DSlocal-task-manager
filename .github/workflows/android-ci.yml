@@ -51,7 +51,17 @@ jobs:
         run: bash scripts/ci/check-dco.sh "$BASE_SHA"
 
       - name: JVM screenshots lint and debug artifacts
+        id: gradle_verify
+        continue-on-error: true
         run: ./gradlew testDebugUnitTest validateDebugScreenshotTest lintRelease assembleDebug assembleDebugAndroidTest --no-daemon
+
+      - name: Print dependency verification report
+        if: steps.gradle_verify.outcome == 'failure'
+        run: find build/reports/dependency-verification -type f -name dependency-verification-report.html -print -exec cat {} \; || true
 
       - name: Check clean generated state
         run: git diff --check && test -z "$(git status --porcelain)"
+
+      - name: Enforce Gradle verification result
+        if: always()
+        run: test "${{ steps.gradle_verify.outcome }}" = success
