@@ -50,10 +50,10 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/check-dco.sh "$BASE_SHA"
 
-      - name: JVM screenshots lint and debug artifacts
+      - name: JVM lint and debug artifacts
         id: gradle_verify
         continue-on-error: true
-        run: ./gradlew testDebugUnitTest validateDebugScreenshotTest lintRelease assembleDebug assembleDebugAndroidTest --no-daemon
+        run: ./gradlew testDebugUnitTest lintRelease assembleDebug assembleDebugAndroidTest --no-daemon
 
       - name: Print dependency verification report
         if: steps.gradle_verify.outcome == 'failure'
@@ -69,3 +69,24 @@ jobs:
       - name: Enforce Gradle verification result
         if: always()
         run: test "${{ steps.gradle_verify.outcome }}" = success
+
+  screenshots:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Validate Windows screenshot baselines
+        run: .\gradlew.bat validateDebugScreenshotTest --no-daemon
