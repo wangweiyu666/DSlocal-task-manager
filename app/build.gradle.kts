@@ -89,6 +89,7 @@ android {
             "KaptUsageInsteadOfKsp",
             "ModifierParameter",
             "ObsoleteSdkInt",
+            "OldTargetApi",
         )
     }
 

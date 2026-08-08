@@ -88,5 +88,12 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      - name: Shorten Windows build paths
+        shell: pwsh
+        run: |
+          subst W: "$env:GITHUB_WORKSPACE"
+          subst G: "$env:GRADLE_USER_HOME"
+          "GRADLE_USER_HOME=G:\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Validate Windows screenshot baselines
-        run: .\gradlew.bat validateDebugScreenshotTest --no-daemon
+        run: W:\gradlew.bat -p W:\ validateDebugScreenshotTest --no-daemon
