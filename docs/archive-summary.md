@@ -39,6 +39,7 @@ W00–W32 已覆盖 DST1 契约与 Room 迁移、任务执行和重复实例、�
 
 ## 后续维护提醒
 
+- W33 已在本归档基线之后启动，新增 UI 配色选择；它不属于 `v0.1.0-alpha.1`，详见 [W33 实现说明](w33-ui-palettes.md)。
 - `scripts/release/publish-release.ps1` 当前仍引用旧仓库名 `wangweiyu666/DStationery`；下次发布前必须改为 `wangweiyu666/DSlocal-task-manager` 或改为参数化仓库目标。此项不影响已经发布的 `v0.1.0-alpha.1`。
 - 新工作应分配新的窗口编号，并同步更新本摘要、路线图、变更记录和版本号。
 - 数据结构变更必须继续提供连续 Room migration、导出 Schema 和数据保留测试；线格式不兼容时才升级协议主版本。

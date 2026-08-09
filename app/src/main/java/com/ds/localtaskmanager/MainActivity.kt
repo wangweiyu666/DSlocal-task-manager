@@ -52,7 +52,11 @@ class MainActivity : ComponentActivity() {
     private fun AppContent() {
         val application = application as DstApplication
         val settings by application.settingsRepository.settings.collectAsStateWithLifecycle()
-        DstTheme(themeMode = settings.themeMode, reduceMotion = settings.reduceMotion) {
+        DstTheme(
+            themeMode = settings.themeMode,
+            uiPalette = settings.uiPalette,
+            reduceMotion = settings.reduceMotion,
+        ) {
             DstApp(
                 todayViewModel = todayViewModel,
                 taskRepository = application.taskRepository,

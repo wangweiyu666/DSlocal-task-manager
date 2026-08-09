@@ -11,13 +11,16 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -43,8 +46,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -53,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ds.localtaskmanager.settings.AppSettings
 import com.ds.localtaskmanager.settings.AppSettingsRepository
 import com.ds.localtaskmanager.settings.AppThemeMode
+import com.ds.localtaskmanager.settings.UiPalette
 import com.ds.localtaskmanager.ui.components.BackNavigationIcon
 import com.ds.localtaskmanager.diagnostics.DiagnosticService
 import kotlinx.coroutines.launch
@@ -114,6 +120,7 @@ fun SettingsRoute(
         onPrivacy = onPrivacy,
         onLicenses = onLicenses,
         onThemeMode = repository::setThemeMode,
+        onUiPalette = repository::setUiPalette,
         onReduceMotion = repository::setReduceMotion,
         onNotificationAction = {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -156,6 +163,7 @@ fun SettingsScreen(
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     onBack: () -> Unit,
     onThemeMode: (AppThemeMode) -> Unit,
+    onUiPalette: (UiPalette) -> Unit = {},
     onReduceMotion: (Boolean) -> Unit,
     onNotificationAction: () -> Unit,
     onResetPrivacy: () -> Unit,
@@ -207,6 +215,26 @@ fun SettingsScreen(
                         }
                     }
                     HorizontalDivider()
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text("配色", style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            UiPalette.entries.forEach { palette ->
+                                PaletteChoiceCard(
+                                    palette = palette,
+                                    selected = settings.uiPalette == palette,
+                                    onClick = { onUiPalette(palette) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider()
                     Text(
                         "字体与字号跟随系统设置",
                         modifier = Modifier.padding(16.dp),
@@ -241,7 +269,7 @@ fun SettingsScreen(
                         Text("任务提醒", style = MaterialTheme.typography.titleMedium)
                         Text(
                             if (notificationsEnabled) "通知已允许" else "通知未允许",
-                            color = if (notificationsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            color = if (notificationsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
                             "提醒时间由导入的任务决定，设置页不能修改。通知不会显示任务名称或其他任务内容。",
@@ -325,6 +353,34 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun PaletteChoiceCard(
+    palette: UiPalette,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.testTag("palette-${palette.name.lowercase()}"),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                palette.previewColors.forEach { color ->
+                    Box(Modifier.size(20.dp).background(color, CircleShape))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(palette.displayName, modifier = Modifier.weight(1f))
+                RadioButton(selected = selected, onClick = null)
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsLinkRow(title: String, description: String, tag: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).testTag(tag).padding(16.dp),
@@ -368,6 +424,18 @@ private val AppThemeMode.displayName: String
         AppThemeMode.SYSTEM -> "跟随系统"
         AppThemeMode.LIGHT -> "浅色"
         AppThemeMode.DARK -> "深色"
+    }
+
+private val UiPalette.displayName: String
+    get() = when (this) {
+        UiPalette.INDIGO -> "靛紫"
+        UiPalette.SKY -> "晴空"
+    }
+
+private val UiPalette.previewColors: List<Color>
+    get() = when (this) {
+        UiPalette.INDIGO -> listOf(Color(0xFF818CF8), Color(0xFFE0E7FF), Color(0xFFF8FAFC), Color(0xFFF472B6))
+        UiPalette.SKY -> listOf(Color(0xFF78A4CB), Color(0xFF95BDD7), Color(0xFFB4E1EB), Color(0xFFF9E8A2))
     }
 
 private fun Context.notificationsEnabled(): Boolean {

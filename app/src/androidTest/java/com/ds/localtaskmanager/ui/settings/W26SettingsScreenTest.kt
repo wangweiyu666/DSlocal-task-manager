@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.ds.localtaskmanager.settings.AppSettings
 import com.ds.localtaskmanager.settings.AppThemeMode
+import com.ds.localtaskmanager.settings.UiPalette
 import com.ds.localtaskmanager.ui.theme.DstTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -22,6 +23,7 @@ class W26SettingsScreenTest {
     @Test
     fun appearanceAndReducedMotionActionsAreExposed() {
         var selectedTheme = AppThemeMode.SYSTEM
+        var selectedPalette = UiPalette.INDIGO
         var reducedMotion = false
         composeRule.setContent {
             DstTheme {
@@ -32,6 +34,7 @@ class W26SettingsScreenTest {
                     snackbarHostState = SnackbarHostState(),
                     onBack = {},
                     onThemeMode = { selectedTheme = it },
+                    onUiPalette = { selectedPalette = it },
                     onReduceMotion = { reducedMotion = it },
                     onNotificationAction = {},
                     onResetPrivacy = {},
@@ -41,8 +44,10 @@ class W26SettingsScreenTest {
 
         composeRule.onNodeWithText("设置").assertIsDisplayed()
         composeRule.onNodeWithText("深色").performClick()
+        composeRule.onNodeWithTag("palette-sky").performClick()
         composeRule.onNodeWithTag("reduce-motion-switch").performClick()
         assertEquals(AppThemeMode.DARK, selectedTheme)
+        assertEquals(UiPalette.SKY, selectedPalette)
         assertTrue(reducedMotion)
     }
 

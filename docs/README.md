@@ -29,10 +29,11 @@
 - [W26：独立设置页面](w26-settings.md)
 - [W31：DSTB1 备份与恢复](w31-backup-and-restore.md)
 - [W32：发布加固](w32-release-hardening.md)
+- [W33：UI 配色选择](w33-ui-palettes.md)
 
 ## 当前归档状态
 
-Android W00–W32 已完成并归档。公开基线为 `0.1.0-alpha.1`（versionCode 2），于 2026-08-09 作为 GitHub 预发布版本发布。发布链接、校验值、最终验证结果和明确后置项集中记录在 [W00–W32 归档摘要](archive-summary.md)。
+Android W00–W32 已完成并归档。公开基线为 `0.1.0-alpha.1`（versionCode 2），于 2026-08-09 作为 GitHub 预发布版本发布。发布链接、校验值、最终验证结果和明确后置项集中记录在 [W00–W32 归档摘要](archive-summary.md)。W33 是发布基线之后的首个增量窗口，尚未包含在该 Release 中。
 
 ## 配套资产
 

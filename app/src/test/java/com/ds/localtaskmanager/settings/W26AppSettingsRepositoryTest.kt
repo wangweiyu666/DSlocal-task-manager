@@ -30,6 +30,7 @@ class W26AppSettingsRepositoryTest {
         val settings = AppSettingsRepository(context).settings.value
 
         assertEquals(AppThemeMode.SYSTEM, settings.themeMode)
+        assertEquals(UiPalette.INDIGO, settings.uiPalette)
         assertFalse(settings.reduceMotion)
         assertEquals(StatisticsPeriod.SEVEN_DAYS, settings.lastStatisticsPeriod)
         assertFalse(settings.informationPrivacyConfirmed)
@@ -40,6 +41,7 @@ class W26AppSettingsRepositoryTest {
     fun settingsPersistAcrossRepositoryInstances() {
         AppSettingsRepository(context).apply {
             setThemeMode(AppThemeMode.DARK)
+            setUiPalette(UiPalette.SKY)
             setReduceMotion(true)
             setLastStatisticsPeriod(StatisticsPeriod.ALL)
             confirmInformationPrivacy()
@@ -48,6 +50,7 @@ class W26AppSettingsRepositoryTest {
 
         val restored = AppSettingsRepository(context).settings.value
         assertEquals(AppThemeMode.DARK, restored.themeMode)
+        assertEquals(UiPalette.SKY, restored.uiPalette)
         assertTrue(restored.reduceMotion)
         assertEquals(StatisticsPeriod.ALL, restored.lastStatisticsPeriod)
         assertTrue(restored.informationPrivacyConfirmed)
@@ -70,12 +73,14 @@ class W26AppSettingsRepositoryTest {
     fun invalidEnumValuesFallBackAndPrivacyCanBeReset() {
         context.getSharedPreferences("app_settings", Context.MODE_PRIVATE).edit()
             .putString("theme_mode", "UNKNOWN")
+            .putString("ui_palette", "UNKNOWN")
             .putString("last_statistics_period", "UNKNOWN")
             .putBoolean("information_privacy_confirmed", true)
             .commit()
         val repository = AppSettingsRepository(context)
 
         assertEquals(AppThemeMode.SYSTEM, repository.settings.value.themeMode)
+        assertEquals(UiPalette.INDIGO, repository.settings.value.uiPalette)
         assertEquals(StatisticsPeriod.SEVEN_DAYS, repository.settings.value.lastStatisticsPeriod)
         repository.resetInformationPrivacy()
         assertFalse(repository.settings.value.informationPrivacyConfirmed)

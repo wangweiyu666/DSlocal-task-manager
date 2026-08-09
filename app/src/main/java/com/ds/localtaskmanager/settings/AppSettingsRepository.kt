@@ -13,8 +13,14 @@ enum class AppThemeMode {
     DARK,
 }
 
+enum class UiPalette {
+    INDIGO,
+    SKY,
+}
+
 data class AppSettings(
     val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    val uiPalette: UiPalette = UiPalette.INDIGO,
     val reduceMotion: Boolean = false,
     val lastStatisticsPeriod: StatisticsPeriod = StatisticsPeriod.SEVEN_DAYS,
     val informationPrivacyConfirmed: Boolean = false,
@@ -41,6 +47,8 @@ class AppSettingsRepository(context: Context) {
     }
 
     fun setThemeMode(mode: AppThemeMode) = update(KEY_THEME_MODE, mode.name)
+
+    fun setUiPalette(palette: UiPalette) = update(KEY_UI_PALETTE, palette.name)
 
     fun setReduceMotion(enabled: Boolean) = update(KEY_REDUCE_MOTION, enabled)
 
@@ -96,6 +104,7 @@ class AppSettingsRepository(context: Context) {
 
     private fun readSettings() = AppSettings(
         themeMode = preferences.getString(KEY_THEME_MODE, null).toEnumOrDefault(AppThemeMode.SYSTEM),
+        uiPalette = preferences.getString(KEY_UI_PALETTE, null).toEnumOrDefault(UiPalette.INDIGO),
         reduceMotion = preferences.getBoolean(KEY_REDUCE_MOTION, false),
         lastStatisticsPeriod = preferences.getString(KEY_STATISTICS_PERIOD, null)
             .toEnumOrDefault(StatisticsPeriod.SEVEN_DAYS),
@@ -129,6 +138,7 @@ class AppSettingsRepository(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "app_settings"
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_UI_PALETTE = "ui_palette"
         const val KEY_REDUCE_MOTION = "reduce_motion"
         const val KEY_STATISTICS_PERIOD = "last_statistics_period"
         const val KEY_INFORMATION_PRIVACY_CONFIRMED = "information_privacy_confirmed"

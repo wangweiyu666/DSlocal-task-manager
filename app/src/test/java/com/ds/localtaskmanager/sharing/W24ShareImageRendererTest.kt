@@ -1,5 +1,6 @@
 package com.ds.localtaskmanager.sharing
 
+import com.ds.localtaskmanager.settings.UiPalette
 import com.ds.localtaskmanager.ui.result.ResultGroupPresentation
 import com.ds.localtaskmanager.ui.result.ResultPresentation
 import com.ds.localtaskmanager.ui.result.ResultTaskPresentation
@@ -32,6 +33,13 @@ class W24ShareImageRendererTest {
     @Test
     fun unsafeFileNameCharactersAreRemoved() {
         assertEquals("a-b-c", ShareImageRenderer.sanitizeFileName("a/b:c"))
+    }
+
+    @Test
+    fun skyPaletteChangesShareImageAccent() {
+        renderer.renderResult(resultPresentation(1), UiPalette.SKY)
+
+        assertEquals(0xFF78A4CB.toInt(), UiPalette.SKY.sharePrimaryColor)
     }
 
     private fun resultPresentation(count: Int) = ResultPresentation(

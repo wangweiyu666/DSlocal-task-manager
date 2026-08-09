@@ -26,7 +26,7 @@ class ShareImageService(
     private val diagnosticEvents: DiagnosticEventStore? = null,
 ) {
     suspend fun generateResult(snapshot: DailyResultSnapshot): GeneratedShareImage = withContext(Dispatchers.Default) {
-        renderer.renderResult(snapshot.toPresentation())
+        renderer.renderResult(snapshot.toPresentation(), settingsRepository.settings.value.uiPalette)
     }
 
     suspend fun generateInformation(
@@ -35,7 +35,7 @@ class ShareImageService(
         body: String,
     ): GeneratedShareImage = withContext(Dispatchers.Default) {
         val domName = database.profileDao().getProfile()?.domName
-        renderer.renderInformation(taskName, taskDate, domName, body)
+        renderer.renderInformation(taskName, taskDate, domName, body, settingsRepository.settings.value.uiPalette)
     }
 
     suspend fun cache(image: GeneratedShareImage): Uri = withContext(Dispatchers.IO) {

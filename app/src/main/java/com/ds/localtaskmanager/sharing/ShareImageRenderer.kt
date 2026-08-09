@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import com.ds.localtaskmanager.ui.result.ResultPresentation
 import com.ds.localtaskmanager.ui.result.formatChineseDate
 import com.ds.localtaskmanager.ui.result.formatPoints
+import com.ds.localtaskmanager.settings.UiPalette
 
 data class GeneratedShareImage(
     val bitmap: Bitmap,
@@ -18,10 +19,13 @@ data class GeneratedShareImage(
 class ShareImageTooLargeException : IllegalStateException("内容过多，无法生成图片，请复制结果")
 
 class ShareImageRenderer {
-    fun renderResult(result: ResultPresentation): GeneratedShareImage {
+    fun renderResult(
+        result: ResultPresentation,
+        palette: UiPalette = UiPalette.INDIGO,
+    ): GeneratedShareImage {
         val blocks = buildList {
             add(Block("今日结果", listOfNotNull(result.domName?.let { "来自 $it" }, result.dateLabel)))
-            add(Block(result.status, listOf("本日总积分 ${formatPoints(result.totalPoints)}"), accent = statusColor(result.status)))
+            add(Block(result.status, listOf("本日总积分 ${formatPoints(result.totalPoints)}"), accent = statusColor(result.status, palette)))
             result.groups.forEach { group ->
                 add(
                     Block(
@@ -33,12 +37,12 @@ class ShareImageRenderer {
                             }
                             group.message?.let(::add)
                         },
-                        accent = statusColor(group.status),
+                        accent = statusColor(group.status, palette),
                     ),
                 )
             }
         }
-        return GeneratedShareImage(render(blocks), "今日结果-${result.taskDate}.png")
+        return GeneratedShareImage(render(blocks, palette), "今日结果-${result.taskDate}.png")
     }
 
     fun renderInformation(
@@ -46,15 +50,16 @@ class ShareImageRenderer {
         taskDate: String,
         domName: String?,
         body: String,
+        palette: UiPalette = UiPalette.INDIGO,
     ): GeneratedShareImage {
         val blocks = listOf(
             Block("信息告知", listOfNotNull(domName?.takeIf(String::isNotBlank)?.let { "来自 $it" }, formatChineseDate(taskDate))),
-            Block(taskName, listOf(body), accent = PRIMARY),
+            Block(taskName, listOf(body), accent = palette.sharePrimaryColor),
         )
-        return GeneratedShareImage(render(blocks), "告知-${sanitizeFileName(taskName)}-$taskDate.png")
+        return GeneratedShareImage(render(blocks, palette), "告知-${sanitizeFileName(taskName)}-$taskDate.png")
     }
 
-    private fun render(blocks: List<Block>): Bitmap {
+    private fun render(blocks: List<Block>, palette: UiPalette): Bitmap {
         val measured = blocks.map(::measureBlock)
         val height = TOP_BOTTOM_PADDING * 2 + measured.sumOf { it.height } + BLOCK_GAP * (measured.size - 1).coerceAtLeast(0)
         if (height > MAX_HEIGHT || WIDTH.toLong() * height * 4 > MAX_BYTES) throw ShareImageTooLargeException()
@@ -63,7 +68,7 @@ class ShareImageRenderer {
         canvas.drawColor(BACKGROUND)
         var y = TOP_BOTTOM_PADDING.toFloat()
         measured.forEachIndexed { index, block ->
-            drawBlock(canvas, block, y)
+            drawBlock(canvas, block, y, palette.sharePrimaryColor)
             y += block.height
             if (index != measured.lastIndex) y += BLOCK_GAP
         }
@@ -80,11 +85,11 @@ class ShareImageRenderer {
         return MeasuredBlock(block, titleLines, bodyLines, height)
     }
 
-    private fun drawBlock(canvas: Canvas, measured: MeasuredBlock, top: Float) {
+    private fun drawBlock(canvas: Canvas, measured: MeasuredBlock, top: Float, primaryColor: Int) {
         val rect = RectF(MARGIN.toFloat(), top, (WIDTH - MARGIN).toFloat(), top + measured.height)
         cardPaint.color = CARD
         canvas.drawRoundRect(rect, 28f, 28f, cardPaint)
-        accentPaint.color = measured.block.accent
+        accentPaint.color = measured.block.accent ?: primaryColor
         canvas.drawRoundRect(RectF(rect.left, rect.top, rect.left + 12, rect.bottom), 12f, 12f, accentPaint)
         var y = top + CARD_PADDING - titlePaint.ascent()
         measured.titleLines.forEach { line ->
@@ -111,7 +116,7 @@ class ShareImageRenderer {
         return result
     }
 
-    private data class Block(val title: String, val lines: List<String>, val accent: Int = PRIMARY)
+    private data class Block(val title: String, val lines: List<String>, val accent: Int? = null)
     private data class MeasuredBlock(
         val block: Block,
         val titleLines: List<String>,
@@ -130,7 +135,6 @@ class ShareImageRenderer {
         private const val TITLE_LINE_HEIGHT = 66
         private const val BODY_LINE_HEIGHT = 52
         private const val TITLE_BODY_GAP = 18
-        private const val PRIMARY = 0xFF818CF8.toInt()
         private const val BACKGROUND = 0xFFF8FAFC.toInt()
         private const val CARD = Color.WHITE
 
@@ -153,11 +157,24 @@ class ShareImageRenderer {
             .take(60)
             .ifBlank { "任务" }
 
-        private fun statusColor(status: String): Int = when (status) {
-            "全部完成", "已完成" -> PRIMARY
-            "尚未完成", "待完成" -> 0xFF818CF8.toInt()
-            "有任务未完成", "未完成" -> 0xFFB3261E.toInt()
-            else -> 0xFF62676F.toInt()
+    }
+
+    private val UiPalette.secondaryColor: Int
+        get() = when (this) {
+            UiPalette.INDIGO -> 0xFF818CF8.toInt()
+            UiPalette.SKY -> 0xFF95BDD7.toInt()
         }
+
+    private fun statusColor(status: String, palette: UiPalette): Int = when (status) {
+        "全部完成", "已完成" -> palette.sharePrimaryColor
+        "尚未完成", "待完成" -> palette.secondaryColor
+        "有任务未完成", "未完成" -> 0xFFB9505A.toInt()
+        else -> 0xFF62676F.toInt()
     }
 }
+
+internal val UiPalette.sharePrimaryColor: Int
+    get() = when (this) {
+        UiPalette.INDIGO -> 0xFF818CF8.toInt()
+        UiPalette.SKY -> 0xFF78A4CB.toInt()
+    }
