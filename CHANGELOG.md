@@ -4,6 +4,18 @@
 
 尚无已记录变更。
 
+## [0.1.0-alpha.3] - 2026-08-09
+
+### Added
+
+- 今日结果分享预览支持“全部任务 / 仅未完成”筛选、双指缩放和双击放大。
+
+### Changed
+
+- 今日结果图改为连续成绩单版式，优先展示必做完成数，并以文字、图标和语义色共同表达状态。
+- 信息告知图改为任务标题优先的信笺版式，完整保留长正文。
+- 分享图不足一屏时在预览区域上下视觉居中；发送为主操作，保存为次操作。
+
 ## [0.1.0-alpha.2] - 2026-08-09
 
 ### Added
@@ -39,3 +51,4 @@
 
 [0.1.0-alpha.1]: https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.1
 [0.1.0-alpha.2]: https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.2
+[0.1.0-alpha.3]: https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.3

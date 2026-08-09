@@ -33,7 +33,7 @@
 
 ## 当前归档状态
 
-Android W00–W32 已完成并归档，历史基线见 [W00–W32 归档摘要](archive-summary.md)。当前公开基线为 `0.1.0-alpha.2`（versionCode 3），包含 W33 UI 配色选择。
+Android W00–W32 已完成并归档，历史基线见 [W00–W32 归档摘要](archive-summary.md)。当前公开基线为 `0.1.0-alpha.3`（versionCode 4），包含 W33 UI 配色选择和分享图片体验优化。
 
 ## 配套资产
 

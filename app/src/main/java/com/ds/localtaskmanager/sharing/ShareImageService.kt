@@ -25,8 +25,11 @@ class ShareImageService(
     private val settingsRepository: AppSettingsRepository = AppSettingsRepository(appContext),
     private val diagnosticEvents: DiagnosticEventStore? = null,
 ) {
-    suspend fun generateResult(snapshot: DailyResultSnapshot): GeneratedShareImage = withContext(Dispatchers.Default) {
-        renderer.renderResult(snapshot.toPresentation(), settingsRepository.settings.value.uiPalette)
+    suspend fun generateResult(
+        snapshot: DailyResultSnapshot,
+        taskFilter: ResultShareTaskFilter = ResultShareTaskFilter.ALL,
+    ): GeneratedShareImage = withContext(Dispatchers.Default) {
+        renderer.renderResult(snapshot.toPresentation(), settingsRepository.settings.value.uiPalette, taskFilter)
     }
 
     suspend fun generateInformation(

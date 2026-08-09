@@ -46,6 +46,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.ds.localtaskmanager.sharing.GeneratedShareImage
+import com.ds.localtaskmanager.sharing.ResultShareTaskFilter
 import com.ds.localtaskmanager.sharing.ShareImageService
 import com.ds.localtaskmanager.ui.result.ResultGroupPresentation
 import com.ds.localtaskmanager.ui.result.ResultTaskPresentation
@@ -115,7 +116,15 @@ fun TodayResultScreen(
     }
 
     generated?.let { image ->
-        SharePreviewDialog(image, shareService, sensitive = false, onDismiss = { generated = null })
+        SharePreviewDialog(
+            image = image,
+            service = shareService,
+            sensitive = false,
+            onResultFilterChange = { filter: ResultShareTaskFilter ->
+                shareService.generateResult(requireNotNull(snapshot), filter)
+            },
+            onDismiss = { generated = null },
+        )
     }
 }
 

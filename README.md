@@ -4,13 +4,13 @@ DStationery 是一款完全离线的 Android 本地任务、执行、积分、�
 
 ## 下载
 
-- [查看当前 Release](https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.2)
-- [下载 DStationery 0.1.0-alpha.2 APK](https://github.com/wangweiyu666/DSlocal-task-manager/releases/download/v0.1.0-alpha.2/DStationery-0.1.0-alpha.2.apk)
-- [下载 SHA-256 校验文件](https://github.com/wangweiyu666/DSlocal-task-manager/releases/download/v0.1.0-alpha.2/DStationery-0.1.0-alpha.2.apk.sha256)
+- [查看当前 Release](https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.3)
+- [下载 DStationery 0.1.0-alpha.3 APK](https://github.com/wangweiyu666/DSlocal-task-manager/releases/download/v0.1.0-alpha.3/DStationery-0.1.0-alpha.3.apk)
+- [下载 SHA-256 校验文件](https://github.com/wangweiyu666/DSlocal-task-manager/releases/download/v0.1.0-alpha.3/DStationery-0.1.0-alpha.3.apk.sha256)
 
 ## 当前版本
 
-- 预发布版本：`0.1.0-alpha.2`（versionCode 3）
+- 预发布版本：`0.1.0-alpha.3`（versionCode 4）
 - 最低系统：Android 8.0 / API 26
 - 包名：`com.ds.localtaskmanager`
 - 权限：通知、设备重启、振动；无网络、照片或广泛存储权限

@@ -11,6 +11,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.tooling.preview.Preview
@@ -50,7 +51,7 @@ fun TodayResultEmptyPreview() {
 @Composable
 fun ResultShareImagePreview() {
     val image = remember { ShareImageRenderer().renderResult(w24ResultSample()).bitmap.asImageBitmap() }
-    Box(Modifier.fillMaxSize().padding(12.dp)) {
+    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
         Image(image, "今日结果图片", Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth)
     }
 }
@@ -66,7 +67,7 @@ fun InformationShareImagePreview() {
             body = "今天已完成主要任务。\n专注过程顺利，明天会继续保持。",
         ).bitmap.asImageBitmap()
     }
-    Box(Modifier.fillMaxSize().padding(12.dp)) {
+    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
         Image(image, "信息告知图片", Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth)
     }
 }

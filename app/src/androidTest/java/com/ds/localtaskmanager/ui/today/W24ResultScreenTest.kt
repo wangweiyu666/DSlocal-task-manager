@@ -21,6 +21,7 @@ import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.execution.ExecutionState
 import com.ds.localtaskmanager.sharing.GeneratedShareImage
+import com.ds.localtaskmanager.sharing.ResultShareTaskFilter
 import com.ds.localtaskmanager.sharing.ShareImageRenderer
 import com.ds.localtaskmanager.ui.result.ResultGroupPresentation
 import com.ds.localtaskmanager.ui.result.ResultPresentation
@@ -153,6 +154,26 @@ class W24ResultScreenTest {
 
         composeRule.onNodeWithText("保存到相册").assertIsDisplayed()
         composeRule.onNodeWithText("发送给其他应用").assertIsDisplayed()
+    }
+
+    @Test
+    fun resultSharePreviewOffersTaskFilters() {
+        val app = ApplicationProvider.getApplicationContext<DstApplication>()
+        val image = GeneratedShareImage(Bitmap.createBitmap(108, 192, Bitmap.Config.ARGB_8888), "preview.png")
+        composeRule.setContent {
+            DstTheme {
+                com.ds.localtaskmanager.ui.sharing.SharePreviewDialog(
+                    image = image,
+                    service = app.shareImageService,
+                    sensitive = false,
+                    onResultFilterChange = { _: ResultShareTaskFilter -> image },
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("全部任务").assertIsDisplayed()
+        composeRule.onNodeWithText("仅未完成").assertIsDisplayed().performClick()
     }
 
     @Test
