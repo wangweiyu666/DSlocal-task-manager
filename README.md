@@ -2,6 +2,12 @@
 
 DStationery 是一款完全离线的 Android 本地任务、执行、积分、历史与备份应用。
 
+## 下载
+
+- [查看当前 Release](https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.1)
+- [下载 DStationery 0.1.0-alpha.1 APK](https://github.com/wangweiyu666/DSlocal-task-manager/releases/download/v0.1.0-alpha.1/DStationery-0.1.0-alpha.1.apk)
+- [下载 SHA-256 校验文件](https://github.com/wangweiyu666/DSlocal-task-manager/releases/download/v0.1.0-alpha.1/DStationery-0.1.0-alpha.1.apk.sha256)
+
 ## 当前版本
 
 - 预发布版本：`0.1.0-alpha.1`（versionCode 2）
