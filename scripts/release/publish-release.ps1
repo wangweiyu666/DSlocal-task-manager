@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$EvidencePath
+    [Parameter(Mandatory)][string]$EvidencePath,
+    [string]$Repository = 'wangweiyu666/DSlocal-task-manager'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,5 +28,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to create annotated Git tag.' }
 git push origin $tag
 if ($LASTEXITCODE -ne 0) { throw 'Unable to push Git tag.' }
 gh release create $tag $apk "$apk.sha256" (Join-Path (Split-Path -Parent $EvidencePath) 'THIRD_PARTY_NOTICES.txt') $EvidencePath `
-    --repo wangweiyu666/DStationery --title "DStationery $($evidence.version)" --prerelease --generate-notes
+    --repo $Repository --title "DStationery $($evidence.version)" --prerelease --generate-notes
 if ($LASTEXITCODE -ne 0) { throw 'Unable to create GitHub prerelease.' }

@@ -6,6 +6,6 @@ DSTB1 是用户主动导出的未加密备份，可能包含完整任务和历�
 
 应用仅使用通知、设备重启和振动权限。文件访问通过 Android 系统文件选择器完成，不申请照片或广泛存储权限。
 
-卸载应用或通过 Android 系统设置清除数据会删除本地数据。问题反馈请使用 [GitHub Issues](https://github.com/wangweiyu666/DStationery/issues)。
+卸载应用或通过 Android 系统设置清除数据会删除本地数据。问题反馈请使用 [GitHub Issues](https://github.com/wangweiyu666/DSlocal-task-manager/issues)。
 
 English: DStationery is fully offline. It requests no Internet permission, collects no data, and uploads nothing. User-created backups may contain private task data and are not encrypted.

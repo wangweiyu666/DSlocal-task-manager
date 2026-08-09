@@ -2,13 +2,19 @@
 
 ## [Unreleased]
 
+尚无已记录变更。
+
+## [0.1.0-alpha.2] - 2026-08-09
+
 ### Added
 
 - W33 新增“靛紫”和“晴空”两种内置 UI 配色，可在设置页即时切换。
+- 新增离线 Dom 任务生成网页及 GitHub Pages 发布流程。
 
 ### Changed
 
 - 分享图片跟随当前 UI 配色；错误色调整为更柔和的覆盆子红，并减少非错误场景中的红色使用。
+- 修正 Dom PWA 页面语言声明和应用内旧仓库链接。
 
 ## [0.1.0-alpha.1] - 2026-08-09
 
@@ -32,3 +38,4 @@
 - `#818CF8` 主色按钮上的白色文字未达到 WCAG AA 对比度，作为已确认视觉例外保留。
 
 [0.1.0-alpha.1]: https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.1
+[0.1.0-alpha.2]: https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.2

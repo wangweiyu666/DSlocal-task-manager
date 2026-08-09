@@ -24,7 +24,7 @@ private fun SkyPaletteSettings(themeMode: AppThemeMode) {
         SettingsScreen(
             settings = AppSettings(themeMode = themeMode, uiPalette = UiPalette.SKY),
             notificationsEnabled = false,
-            appVersion = "0.1.0-alpha.1",
+            appVersion = "0.1.0-alpha.2",
             onBack = {},
             onThemeMode = {},
             onUiPalette = {},

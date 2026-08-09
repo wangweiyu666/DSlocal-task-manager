@@ -1,6 +1,6 @@
 # Android 当前实现边界
 
-当前版本为 `0.1.0-alpha.1`（versionCode 2），协议为 DST1 v1，数据库为 Room v5。完整进度见[实施状态与路线图](android-phase-1-summary-and-roadmap.md)。
+当前版本为 `0.1.0-alpha.2`（versionCode 3），协议为 DST1 v1，数据库为 Room v5。完整进度见[实施状态与路线图](android-phase-1-summary-and-roadmap.md)。
 
 ## 已具备
 

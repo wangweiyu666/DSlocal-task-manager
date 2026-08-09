@@ -32,7 +32,7 @@ enum class LegalDocument(val title: String, val body: String) {
 
         删除全部数据：打开 Android 系统设置 → 应用 → DStationery → 存储 → 清除数据。
 
-        问题反馈：https://github.com/wangweiyu666/DStationery/issues
+        问题反馈：https://github.com/wangweiyu666/DSlocal-task-manager/issues
         """.trimIndent(),
     ),
     LICENSES(
@@ -46,7 +46,7 @@ enum class LegalDocument(val title: String, val body: String) {
 
         主要第三方组件：AndroidX、Jetpack Compose、Room、WorkManager、Kotlin、Kotlin Coroutines 与 Kotlin Serialization。它们分别依照各自许可证分发，完整文本见随版本发布的 THIRD_PARTY_NOTICES.txt。
 
-        源码：https://github.com/wangweiyu666/DStationery
+        源码：https://github.com/wangweiyu666/DSlocal-task-manager
         """.trimIndent(),
     ),
 }
