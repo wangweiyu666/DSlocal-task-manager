@@ -12,6 +12,9 @@ dist/
 .env
 .env.*
 npm-debug.log*
+*.tsbuildinfo
+test-results/
+playwright-report/
 
 # Android / Gradle
 .gradle/
