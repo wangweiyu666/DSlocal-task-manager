@@ -44,6 +44,14 @@ export function createDraftTask(fields: Partial<TaskFields> = {}, source: DraftT
   };
 }
 
+export function createTemporaryDraftTask(groupId: string | null = null): DraftTask {
+  return { ...createDraftTask(), groupId, recurrence: null };
+}
+
+export function createRecurringDraftTask(groupId: string | null = null): DraftTask {
+  return { ...createDraftTask(), groupId, recurrence: { f: 1 } };
+}
+
 export function draftTaskFromTask(task: TaskRecord, source: DraftTask["source"] = "existing"): DraftTask {
   const { id, groupId, createdAt: _createdAt, updatedAt: _updatedAt, lastGeneratedAt: _lastGeneratedAt, version: _version, ...fields } = task;
   return { ...fields, taskId: id, groupId, draftItemId: createLocalId("item"), source };

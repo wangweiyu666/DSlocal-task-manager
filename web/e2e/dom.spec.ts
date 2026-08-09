@@ -3,7 +3,8 @@ import { expect, test } from "@playwright/test";
 test("creates a draft task and reaches DST1 preview", async ({ page }, testInfo) => {
   await page.goto("/#/create");
   await expect(page.getByRole("heading", { name: "创建任务" })).toBeVisible();
-  await page.getByRole("button", { name: "在未分组添加任务" }).click();
+  await page.getByRole("button", { name: "在未分组添加临时任务" }).click();
+  await expect(page.getByLabel("任务类型")).toHaveValue("temporary");
   const taskName = page.getByLabel("任务名称 *");
   await taskName.pressSequentially("fastInputABC123", { delay: 0 });
   await expect(taskName).toHaveValue("fastInputABC123");
@@ -21,6 +22,25 @@ test("creates a draft task and reaches DST1 preview", async ({ page }, testInfo)
   await expect(preview).toBeVisible();
   await expect(preview.getByText(/个任务/u).first()).toBeVisible();
   await expect(page.locator("textarea.envelope-preview")).toHaveValue(/^DST1\./u);
+});
+
+test("separates recurring tasks at creation", async ({ page }) => {
+  await page.goto("/#/create");
+  await expect(page.getByRole("button", { name: "在未分组添加临时任务" })).toBeVisible();
+  await page.getByRole("button", { name: "在未分组添加重复任务" }).click();
+  await expect(page.getByLabel("任务类型")).toHaveValue("recurring");
+  await expect(page.getByLabel("重复频率")).toHaveValue("1");
+  await page.getByLabel("任务名称 *").fill("每日整理");
+  await page.getByRole("button", { name: "生成预览" }).click();
+  const json = page.locator(".json-preview");
+  await expect(json).toContainText('"x"');
+  await expect(json).toContainText('"f": 1');
+  await page.getByRole("button", { name: "保存并复制" }).click();
+  await expect(page.getByRole("dialog", { name: "生成预览" })).toBeHidden();
+  await page.goto("/#/library");
+  await expect(page.locator(".status-pill.recurring", { hasText: "重复任务" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "取消重复任务" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "某次延期" })).toHaveCount(0);
 });
 
 test("navigates through the complete local management surface", async ({ page }, testInfo) => {
@@ -58,7 +78,7 @@ test("persists a generated batch and exports configuration", async ({ page }, te
   await expect(page.getByRole("heading", { name: "验收积分组" })).toBeVisible();
 
   await page.getByRole("link", { name: "创建", exact: true }).click();
-  await page.getByRole("button", { name: "在验收积分组添加任务" }).click();
+  await page.getByRole("button", { name: "在验收积分组添加临时任务" }).click();
   await page.getByLabel("任务名称 *").fill("保存历史验收任务");
   await page.getByRole("button", { name: "生成预览" }).click();
   await page.getByRole("button", { name: "保存并复制" }).click();

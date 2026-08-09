@@ -63,8 +63,9 @@ export function TaskEditor({ value, groups, onChange }: { value: EditableTask; g
       {value.execution?.k === 3 && <p className="supporting span-2">Sub 必须填写告知正文并主动完成任务；上方描述将作为填写要求。</p>}
     </div></section>
 
-    <section className="form-section"><h3>重复规则</h3><div className="form-grid">
-      <label className="field"><span>频率</span><select value={value.recurrence?.f ?? 0} onChange={(event) => { const frequency = Number(event.target.value); patch({ recurrence: frequency === 1 ? { f: 1 } : frequency === 2 ? { f: 2, w: [1] } : null }); }}><option value={0}>不重复</option><option value={1}>每天</option><option value={2}>每周</option></select></label>
+    <section className="form-section"><h3>任务类型与重复规则</h3><div className="form-grid">
+      <label className="field"><span>任务类型</span><select value={value.recurrence ? "recurring" : "temporary"} onChange={(event) => patch({ recurrence: event.target.value === "recurring" ? { f: 1 } : null })}><option value="temporary">临时任务（仅生成一次）</option><option value="recurring">重复任务（按计划生成）</option></select></label>
+      {value.recurrence && <label className="field"><span>重复频率</span><select value={value.recurrence.f} onChange={(event) => { const frequency = Number(event.target.value); patch({ recurrence: frequency === 1 ? { f: 1 } : { f: 2, w: [1] } }); }}><option value={1}>每天</option><option value={2}>每周</option></select></label>}
       {value.recurrence && <><label className="field"><span>开始日期（可留空）</span><input type="date" value={value.recurrence.s ?? ""} onChange={(event) => patch({ recurrence: { ...value.recurrence!, s: event.target.value || undefined } })} /></label>
         <label className="field"><span>结束方式</span><select value={value.recurrence.e ? "date" : value.recurrence.c ? "count" : "none"} onChange={(event) => patch({ recurrence: { ...value.recurrence!, e: event.target.value === "date" ? new Date().toISOString().slice(0, 10) : undefined, c: event.target.value === "count" ? 1 : undefined } })}><option value="none">不限制</option><option value="date">截止日期</option><option value="count">次数</option></select></label>
         {value.recurrence.e !== undefined && <label className="field"><span>重复截止日期</span><input type="date" value={value.recurrence.e} onChange={(event) => patch({ recurrence: { ...value.recurrence!, e: event.target.value } })} /></label>}
