@@ -4,7 +4,10 @@ test("creates a draft task and reaches DST1 preview", async ({ page }, testInfo)
   await page.goto("/#/create");
   await expect(page.getByRole("heading", { name: "创建任务" })).toBeVisible();
   await page.getByRole("button", { name: "在未分组添加临时任务" }).click();
-  await expect(page.getByLabel("任务类型")).toHaveValue("temporary");
+  await expect(page.locator(".task-kind-summary.temporary")).toContainText("临时任务");
+  await expect(page.getByLabel("归属日期（可留空）")).toBeVisible();
+  await expect(page.getByLabel("归属日期（可留空）")).toHaveAttribute("lang", "en-CA");
+  await expect(page.getByLabel("重复频率")).toHaveCount(0);
   const taskName = page.getByLabel("任务名称 *");
   await taskName.pressSequentially("fastInputABC123", { delay: 0 });
   await expect(taskName).toHaveValue("fastInputABC123");
@@ -28,8 +31,11 @@ test("separates recurring tasks at creation", async ({ page }) => {
   await page.goto("/#/create");
   await expect(page.getByRole("button", { name: "在未分组添加临时任务" })).toBeVisible();
   await page.getByRole("button", { name: "在未分组添加重复任务" }).click();
-  await expect(page.getByLabel("任务类型")).toHaveValue("recurring");
+  await expect(page.locator(".task-kind-summary.recurring")).toContainText("重复任务");
   await expect(page.getByLabel("重复频率")).toHaveValue("1");
+  await expect(page.getByLabel("开始日期（可留空）")).toBeVisible();
+  await expect(page.getByLabel("开始日期（可留空）")).toHaveAttribute("lang", "en-CA");
+  await expect(page.getByLabel("归属日期（可留空）")).toHaveCount(0);
   await page.getByLabel("任务名称 *").fill("每日整理");
   await page.getByRole("button", { name: "生成预览" }).click();
   const json = page.locator(".json-preview");
