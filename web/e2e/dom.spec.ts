@@ -1,10 +1,21 @@
 import { expect, test } from "@playwright/test";
 
-test("creates a draft task and reaches DST1 preview", async ({ page }) => {
+test("creates a draft task and reaches DST1 preview", async ({ page }, testInfo) => {
   await page.goto("/#/create");
   await expect(page.getByRole("heading", { name: "创建任务" })).toBeVisible();
   await page.getByRole("button", { name: "在未分组添加任务" }).click();
-  await page.getByLabel("任务名称 *").fill("端到端测试任务");
+  const taskName = page.getByLabel("任务名称 *");
+  await taskName.pressSequentially("fastInputABC123", { delay: 0 });
+  await expect(taskName).toHaveValue("fastInputABC123");
+  await taskName.fill("");
+  await taskName.pressSequentially("中文输入测试", { delay: 5 });
+  await expect(taskName).toHaveValue("中文输入测试");
+  if (testInfo.project.name !== "android-chrome") {
+    const draftName = page.getByLabel("草稿名称");
+    await draftName.fill("");
+    await draftName.pressSequentially("中文草稿", { delay: 5 });
+    await expect(draftName).toHaveValue("中文草稿");
+  }
   await page.getByRole("button", { name: "生成预览" }).click();
   const preview = page.getByRole("dialog", { name: "生成预览" });
   await expect(preview).toBeVisible();

@@ -5,7 +5,7 @@ import { Modal } from "../components/Modal";
 import { TaskEditor, taskIssues, type EditableTask } from "../components/TaskEditor";
 import { useToast } from "../components/Toast";
 import { db } from "../db/database";
-import { getOrCreateActiveDraft, updateDraft } from "../db/operations";
+import { getOrCreateActiveDraft } from "../db/operations";
 import { createDraft, createDraftTask, draftTaskFromTemplate } from "../model/defaults";
 import type { DraftRecord, DraftTask, TaskRevision } from "../model/types";
 import { buildBatch, draftTaskToDst1, taskRecordFromDraft } from "../protocol/builder";
@@ -26,14 +26,21 @@ export function CreatePage() {
   const templates = useLiveQuery(() => db.templates.orderBy("updatedAt").reverse().toArray(), []) ?? [];
   const settings = useLiveQuery(() => db.settings.get("app"), []);
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [workingDraft, setWorkingDraft] = useState<DraftRecord | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [templateId, setTemplateId] = useState("");
   const { show } = useToast();
-  const draft = drafts.find((item) => item.id === draftId) ?? null;
+  const liveDraft = drafts.find((item) => item.id === draftId) ?? null;
+  const draft = workingDraft?.id === draftId ? workingDraft : liveDraft;
 
-  useEffect(() => { void getOrCreateActiveDraft().then((active) => setDraftId((current) => current ?? active.id)); }, []);
+  useEffect(() => { void getOrCreateActiveDraft().then((active) => setDraftId((current) => { if (current) return current; setWorkingDraft(active); return active.id; })); }, []);
   useEffect(() => { if (settings?.lastDraftId && !draftId) setDraftId(settings.lastDraftId); }, [draftId, settings]);
+  useEffect(() => {
+    if (!draftId) return;
+    const next = drafts.find((item) => item.id === draftId);
+    if (next) setWorkingDraft((current) => current?.id === draftId ? current : next);
+  }, [draftId, drafts]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); createPreview(); }
@@ -50,8 +57,13 @@ export function CreatePage() {
     return map;
   }, [draft]);
 
-  const writeDraft = (patch: Partial<DraftRecord>) => { if (draft) void updateDraft(draft.id, patch); };
-  const selectDraft = (id: string) => { setDraftId(id); setSelectedItemId(null); void db.settings.update("app", { lastDraftId: id, updatedAt: new Date().toISOString() }); };
+  const writeDraft = (patch: Partial<DraftRecord>) => {
+    if (!draft) return;
+    const next = { ...draft, ...patch, updatedAt: new Date().toISOString() };
+    setWorkingDraft(next);
+    void db.drafts.put(next).catch((error: unknown) => show(error instanceof Error ? `自动保存失败：${error.message}` : "自动保存失败", "error"));
+  };
+  const selectDraft = (id: string, nextDraft = drafts.find((item) => item.id === id) ?? null) => { setWorkingDraft(nextDraft); setDraftId(id); setSelectedItemId(null); void db.settings.update("app", { lastDraftId: id, updatedAt: new Date().toISOString() }); };
   const addTask = (groupId: string | null) => {
     if (!draft) return;
     const task = { ...createDraftTask(), groupId };
@@ -71,18 +83,18 @@ export function CreatePage() {
     if (!draft || !selectedTask || !confirm(`从草稿移除“${selectedTask.name || "未命名任务"}”？任务库中的原任务不会删除。`)) return;
     writeDraft({ tasks: draft.tasks.filter((task) => task.draftItemId !== selectedTask.draftItemId) }); setSelectedItemId(null);
   };
-  const createNewDraft = async () => { const next = createDraft(`批次 ${drafts.length + 1}`); await db.drafts.put(next); selectDraft(next.id); };
+  const createNewDraft = async () => { const next = createDraft(`批次 ${drafts.length + 1}`); await db.drafts.put(next); selectDraft(next.id, next); };
   const duplicateDraft = async () => {
     if (!draft) return;
     const next = createDraft(`${draft.name} · 副本`);
     next.description = draft.description; next.domNameMode = draft.domNameMode; next.domName = draft.domName; next.includeGroupIds = [...draft.includeGroupIds]; next.cancellations = [...draft.cancellations];
     next.tasks = draft.tasks.map((task) => ({ ...task, draftItemId: createLocalId("item"), taskId: ["new", "template"].includes(task.source) ? createTransportId() : task.taskId }));
-    await db.drafts.put(next); selectDraft(next.id);
+    await db.drafts.put(next); selectDraft(next.id, next);
   };
   const deleteDraft = async () => {
     if (!draft || !confirm(`永久删除草稿“${draft.name}”？此操作不会删除任务库和历史批次。`)) return;
     await db.drafts.delete(draft.id); const remaining = drafts.filter((item) => item.id !== draft.id);
-    if (remaining.length) selectDraft(remaining[0].id); else await createNewDraft();
+    if (remaining.length) selectDraft(remaining[0].id, remaining[0]); else await createNewDraft();
   };
 
   const createPreview = () => {
@@ -108,6 +120,7 @@ export function CreatePage() {
         nextTasks.push({ ...item, source: "existing" });
       }
       await db.drafts.update(draft.id, { tasks: nextTasks, updatedAt: now });
+      setWorkingDraft({ ...draft, tasks: nextTasks, updatedAt: now });
     });
     try { await copyText(preview.encoded.envelope); show("DST1 已保存到批次历史并复制", "success"); }
     catch { show("批次已保存，但浏览器拒绝访问剪贴板；请在预览中手动复制", "error"); }
