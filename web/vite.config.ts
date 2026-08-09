@@ -17,6 +17,7 @@ export default defineConfig({
         name: "DStationery Dom",
         short_name: "DS Dom",
         description: "完全离线的 DST1 任务生成器",
+        lang: "zh-CN",
         theme_color: "#6750a4",
         background_color: "#fffbfe",
         display: "standalone",
