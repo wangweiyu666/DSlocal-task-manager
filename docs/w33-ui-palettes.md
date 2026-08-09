@@ -40,3 +40,13 @@
 - 本窗口不要求全量仪器回归。
 
 验收结果：两组相关 JVM 测试共 8/8 通过；Preview 截图基线 20/20 通过，其中新增“晴空”浅色和深色 2 张；API 35 设置页 Compose 测试 2/2 通过；Debug APK 与 AndroidTest APK 构建通过。未运行全量仪器测试。
+
+## 发布结果
+
+W33 已纳入 `v0.1.0-alpha.2`（versionCode 3）预发布版本：
+
+- 发布提交：`b20bb3745fd1c294b5da86e00ae9468554afafae`；
+- [GitHub Release](https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.2)；
+- APK SHA-256：`fd208d834f853ceb1fd54365087965c4e3426d13028cc77da37a20b621a7bf60`；
+- 发布验证：JVM、20 张截图、Release Lint、R8、签名与权限审核通过；API 35 为 23/23，API 33 与 API 26 各为 2/2；
+- Android 13+ 实体设备复测经用户明确授权豁免，豁免信息保存在 Release 的 `release-evidence.json` 中。
