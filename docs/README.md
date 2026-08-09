@@ -7,7 +7,7 @@
 | 产品目标、业务规则、状态语义 | [需求总稿](preview.md) |
 | DST1 字段与校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
 | Room 表、索引、迁移 | [数据库 v4 基础规范](android-database-v4.md)、[W25 Room v5 统计索引](w25-profile-statistics.md#数据库与数据边界) |
-| 当前进度、后续窗口 | [实施状态与路线图](android-phase-1-summary-and-roadmap.md) |
+| 当前基线与归档状态 | [实施状态与路线图](android-phase-1-summary-and-roadmap.md)、[W00–W32 归档摘要](archive-summary.md) |
 | 架构约束、交付流程 | [工程约束与交付清单](w00-w01-engineering-playbook.md) |
 | 当前 Android 能力边界 | [Android 实现边界](android-phase-1.md) |
 | Android UI 层级与返回导航 | [Android UI 与返回导航](android-ui-navigation.md) |
@@ -16,6 +16,7 @@
 
 ## 已完成窗口
 
+- [W00–W01：协议、数据库与工程基线](w00-w01-engineering-playbook.md)
 - [W10：任务执行](w10-execution.md)
 - [W11：重复任务](w11-recurrence.md)
 - [W12：每日结果](w12-results.md)
@@ -27,6 +28,18 @@
 - [W25：“我的”统计与积分流水](w25-profile-statistics.md)
 - [W26：独立设置页面](w26-settings.md)
 - [W31：DSTB1 备份与恢复](w31-backup-and-restore.md)
+- [W32：发布加固](w32-release-hardening.md)
+
+## 当前归档状态
+
+Android W00–W32 已完成并归档。公开基线为 `0.1.0-alpha.1`（versionCode 2），于 2026-08-09 作为 GitHub 预发布版本发布。发布链接、校验值、最终验证结果和明确后置项集中记录在 [W00–W32 归档摘要](archive-summary.md)。
+
+## 配套资产
+
+- [`samples/`](../samples/README.md)：人工验收用 DST1 样例；
+- [`protocol-test-vectors/`](../protocol-test-vectors/README.md)：解析器共享协议向量；
+- [`app/schemas/`](../app/schemas/)：Room 导出 Schema；
+- [`app/src/test/`](../app/src/test/) 与 [`app/src/androidTest/`](../app/src/androidTest/)：JVM 和仪器测试。
 
 窗口文档记录实现决策和验收证据，不重复定义产品规则。发生冲突时按以下顺序处理：
 

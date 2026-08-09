@@ -1525,9 +1525,9 @@ Dom 少量手动调整时：
 已建立的技术基准包括：
 
 - [DST1 JSON Schema](dst1-schema.json) 与[协议测试向量](dst1-test-vectors.md)；
-- [Android Room v3 规范](android-database-v3.md)；
+- [Android Room v4 基础规范](android-database-v4.md)与[W25 Room v5 统计索引](w25-profile-statistics.md#数据库与数据边界)；
 - [DSTB1 格式规范](dstb1-format.md)与[备份测试向量](dstb1-test-vectors.md)；
 - [实施状态与路线图](android-phase-1-summary-and-roadmap.md)；
 - [工程约束与交付清单](w00-w01-engineering-playbook.md)。
 
-后续按窗口补充 Dom IndexedDB、通知调度、DSTB1 备份和界面设计文档。业务语义变化先更新本文；协议、数据库或窗口状态变化按[文档索引](README.md)中的变更规则同步维护。
+Android W00–W32 的通知、界面、DSTB1 备份恢复和发布文档均已归档；Dom IndexedDB 仍属于独立、未排期轨道。业务语义变化先更新本文；协议、数据库或窗口状态变化按[文档索引](README.md)中的变更规则同步维护。

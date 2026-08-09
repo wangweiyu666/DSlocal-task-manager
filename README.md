@@ -22,10 +22,19 @@ DStationery 是一款完全离线的 Android 本地任务、执行、积分、�
 使用 JDK 17、Android SDK 35 与仓库中的 Gradle Wrapper：
 
 ```text
-./gradlew testDebugUnitTest validateDebugScreenshotTest lintRelease assembleDebug
+./gradlew testDebugUnitTest lintRelease assembleDebug assembleDebugAndroidTest
 ```
 
+Preview 截图基线固定在 Windows、Temurin `17.0.19+10`、`Asia/Hong_Kong` 与简体中文环境验证；具体命令和模拟器配置见[测试环境说明](docs/android-emulator-testing.md)。
+
 签名 Release 需要先在仓库外配置发布密钥，参见 [`docs/w32-release-hardening.md`](docs/w32-release-hardening.md)。
+
+## 文档
+
+- [文档索引与权威来源](docs/README.md)
+- [W00–W32 归档摘要](docs/archive-summary.md)
+- [版本变更记录](CHANGELOG.md)
+- [W32 发布与验收记录](docs/w32-release-hardening.md)
 
 ## 隐私
 

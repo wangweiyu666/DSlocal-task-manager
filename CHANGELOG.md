@@ -2,10 +2,19 @@
 
 ## [Unreleased]
 
+尚无已记录变更。
+
+## [0.1.0-alpha.1] - 2026-08-09
+
+首个公开签名预发布版本。此前 Debug 用户需通过 DSTB1 完成首次数据迁移。
+
 ### Added
 
-- W32 发布加固、签名 Release 流程、CI、诊断导出、隐私与许可页面。
-- DStationery 品牌与 Android 自适应图标。
+- DST1 严格校验、预览、原子导入与完整任务执行流程。
+- 今日、历史、每日结果、分享图片、“我的”统计和独立设置页面。
+- 本地提醒、预测式返回、DSTB1 备份与合并/替换恢复。
+- 诊断导出、隐私与许可页面、DStationery 品牌和 Android 自适应图标。
+- 签名 Release 流程、跨平台 CI、发布审核与校验文件。
 
 ### Changed
 
@@ -16,6 +25,4 @@
 
 - `#818CF8` 主色按钮上的白色文字未达到 WCAG AA 对比度，作为已确认视觉例外保留。
 
-## [0.1.0-alpha.1] - Unreleased
-
-首个公开签名预发布版本。此前 Debug 用户需通过 DSTB1 完成首次数据迁移。
+[0.1.0-alpha.1]: https://github.com/wangweiyu666/DSlocal-task-manager/releases/tag/v0.1.0-alpha.1

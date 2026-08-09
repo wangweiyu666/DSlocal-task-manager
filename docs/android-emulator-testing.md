@@ -42,6 +42,17 @@
 - W22～W31：API 35 运行完整仪器测试，API 26 做关键流程兼容回归；
 - W32：三档 AVD 全量回归，并至少增加一台 Android 13+ 真机。
 
+## 归档验证结果
+
+`v0.1.0-alpha.1` 发布前完成 JVM 97/97、Preview 截图 18/18、API 35 仪器测试 23/23 与 API 26 W31 关键流程 3/3；发布证据覆盖 API 26、33、35 和 Android 13+ 真机。最终发布 CI 见 [GitHub Actions 31285405667](https://github.com/wangweiyu666/DSlocal-task-manager/actions/runs/31285405667)。
+
+Preview 截图基线固定使用 Windows、Temurin `17.0.19+10`、`Asia/Hong_Kong`、简体中文与 UTF-8，避免字体、时区和渲染器差异造成伪变化：
+
+```powershell
+$env:JAVA_TOOL_OPTIONS='-Duser.timezone=Asia/Hong_Kong -Duser.language=zh -Duser.country=CN -Dfile.encoding=UTF-8'
+.\gradlew.bat validateDebugScreenshotTest --no-daemon
+```
+
 报告位置：
 
 - JVM：`app/build/reports/tests/testDebugUnitTest/index.html`
