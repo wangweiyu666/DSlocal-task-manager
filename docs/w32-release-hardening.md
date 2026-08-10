@@ -15,7 +15,7 @@ Release 包名为 `com.ds.localtaskmanager`，Debug 使用 `.debug` 后缀并可
 
 运行 `scripts/release/setup-release-signing.ps1` 只会在文件不存在时创建 RSA 3072、SHA-256、30 年有效期的 `dstationery-release` 密钥。密钥和密码须分开做加密离线备份。
 
-`prepare-release.ps1` 要求干净提交，执行 JVM、截图、Release Lint、R8 签名构建和最终 APK 审核，并生成 SHA-256 与候选证据。`publish-release.ps1` 只接受与当前 `main` 提交和 APK 哈希一致、设备状态全部通过的 `approved` 证据，并要求人工键入版本标签确认。
+`prepare-release.ps1` 要求干净提交，执行 JVM、截图、Release Lint、R8 签名构建和最终 APK 审核，并生成 SHA-256 与候选证据。`publish-release.ps1` 只接受与当前 `main` 提交和 APK 哈希一致的 `approved` 证据；设备状态默认必须全部通过，若发布负责人明确授权跳过某项检查，则必须将该项记录为 `waived` 并在 `waivers` 中写明原因，不得伪装为 `passed`。发布前仍要求确认版本标签。
 
 ## 安全与隐私
 

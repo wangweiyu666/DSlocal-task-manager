@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$EvidencePath,
-    [string]$Repository = 'wangweiyu666/DSlocal-task-manager'
+    [string]$Repository = 'wangweiyu666/DSlocal-task-manager',
+    [string]$ConfirmTag
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,14 +15,21 @@ if ((git branch --show-current).Trim() -ne 'main') { throw 'Publishing is allowe
 $apk = Join-Path (Split-Path -Parent $EvidencePath) "DStationery-$($evidence.version).apk"
 $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $apk).Hash.ToLowerInvariant()
 if ($actualHash -ne $evidence.apkSha256) { throw 'APK hash does not match evidence.' }
-$pending = @($evidence.deviceChecks.psobject.Properties | Where-Object { $_.Value -ne 'passed' })
-if ($pending) { throw 'All device checks must be passed.' }
+$pending = @($evidence.deviceChecks.psobject.Properties | Where-Object { $_.Value -notin @('passed', 'waived') })
+if ($pending) { throw 'All device checks must be passed or explicitly waived.' }
+$waived = @($evidence.deviceChecks.psobject.Properties | Where-Object { $_.Value -eq 'waived' })
+foreach ($check in $waived) {
+    $waiver = if ($evidence.waivers) { $evidence.waivers.psobject.Properties[$check.Name] } else { $null }
+    if (-not $waiver -or [string]::IsNullOrWhiteSpace([string]$waiver.Value)) {
+        throw "Waived device check requires a recorded reason: $($check.Name)"
+    }
+}
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'GitHub CLI is required.' }
 gh auth status
 if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI is not authenticated.' }
 $tag = "v$($evidence.version)"
 if (git tag --list $tag) { throw "Tag already exists: $tag" }
-$confirmation = Read-Host "Type $tag to create and upload the prerelease"
+$confirmation = if ($ConfirmTag) { $ConfirmTag } else { Read-Host "Type $tag to create and upload the prerelease" }
 if ($confirmation -ne $tag) { throw 'Publishing cancelled.' }
 git tag -a $tag -m "DStationery $($evidence.version)"
 if ($LASTEXITCODE -ne 0) { throw 'Unable to create annotated Git tag.' }
