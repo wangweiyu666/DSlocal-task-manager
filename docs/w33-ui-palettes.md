@@ -2,7 +2,7 @@
 
 > 前置：W26、W32
 > 协议：保持 `DST1` / `v=1`
-> 数据库：保持 Room v5，无 migration
+> 数据库：保持 Room v1.5，无 migration
 
 ## 已实现
 

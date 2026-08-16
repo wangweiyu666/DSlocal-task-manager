@@ -2,7 +2,7 @@
 
 > 前置：W21、W25、W26
 > 文件格式：DSTB1 v1
-> 数据库：继续使用 Room v5，无 migration
+> 数据库：继续使用 Room v1.5，无 migration
 
 ## 页面与导航
 
@@ -23,7 +23,7 @@
 
 二进制格式由 [`dstb1-format.md`](dstb1-format.md) 定义。文件使用 UTF-8 JSON、zlib 和 CRC32，不设置密码且不加密。首次导出前单独提示：持有文件的人可以读取任务、告知正文、备注和积分记录。提示确认可在备份页重置，不与分享图片提示共用状态。
 
-备份覆盖 Room v5 中除 `reminder_record` 外的 13 张业务表：
+备份覆盖 Room v1.5 中除 `reminder_record` 外的 13 张业务表：
 
 - `app_profile`、`import_batch`；
 - `task_group`、`task_definition`、`task_step_definition`；

@@ -335,8 +335,8 @@ fun SettingsScreen(
             SettingsSection("关于") {
                     SettingsCardContent {
                         AboutRow("应用版本", appVersion)
-                        AboutRow("任务协议", "DST1 v1")
-                        AboutRow("本地数据库", "Room v5")
+                        AboutRow("任务协议", "DST1 / DST1.1")
+                        AboutRow("本地数据库", "Room v1.6")
                         HorizontalDivider()
                         Text(
                             "任务和设置数据仅保存在本机，应用不申请网络权限。",

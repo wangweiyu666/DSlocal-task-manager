@@ -3,13 +3,14 @@ import { Ban, CalendarClock, Copy, FileInput, History, Plus, Repeat2, RotateCcw,
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Modal } from "../components/Modal";
+import { ExceptionEditor } from "../components/ExceptionEditor";
 import { TaskEditor, taskIssues, type EditableTask } from "../components/TaskEditor";
 import { useToast } from "../components/Toast";
 import { db } from "../db/database";
 import { getOrCreateActiveDraft, updateDraft } from "../db/operations";
 import { draftTaskFromTask } from "../model/defaults";
 import { fieldsFromDst1 } from "../model/converters";
-import type { GroupRecord, TaskRecord } from "../model/types";
+import type { GroupRecord, TaskExceptionRecord, TaskRecord } from "../model/types";
 import { decodeDst1 } from "../protocol/dst1";
 import { createTransportId } from "../protocol/id";
 import type { Dst1Batch, Dst1Task } from "../protocol/types";
@@ -20,10 +21,13 @@ export function LibraryPage() {
   const tasks = useLiveQuery(() => db.tasks.orderBy("updatedAt").reverse().toArray(), []) ?? [];
   const groups = useLiveQuery(() => db.groups.orderBy("order").toArray(), []) ?? [];
   const revisions = useLiveQuery(() => db.taskRevisions.toArray(), []) ?? [];
+  const exceptions = useLiveQuery(() => db.taskExceptions.orderBy("date").toArray(), []) ?? [];
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState("all");
   const [editing, setEditing] = useState<TaskRecord | null>(null);
+  const [exceptionTask, setExceptionTask] = useState<TaskRecord | null>(null);
+  const [editingException, setEditingException] = useState<TaskExceptionRecord | null>(null);
   const [restoreText, setRestoreText] = useState<string | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
   const [useImported, setUseImported] = useState<Set<string>>(new Set());
@@ -61,13 +65,31 @@ export function LibraryPage() {
     if (!editing) return;
     const issues = taskIssues(editing);
     if (issues.length) { show(issues[0], "error"); return; }
+    const exceptionDates = exceptions.filter((item) => item.taskId === editing.id).map((item) => item.date);
+    if (exceptionDates.length > 0 && !confirm(`该重复模板有 ${exceptionDates.length} 个单日例外：${exceptionDates.join("、")}。尚未生成的日期会继承新模板；Sub 中已生成的日期不会自动变化。继续保存？`)) return;
     await db.tasks.put({ ...editing, name: editing.name.trim().normalize("NFC"), updatedAt: new Date().toISOString() }); setEditing(null); show("任务工作副本已保存", "success");
+  };
+  const saveException = async (task: TaskRecord, directive: import("../protocol/types").Dst11Exception) => {
+    const draft = await getOrCreateActiveDraft();
+    if (draft.cancellations.includes(task.id)) { show("当前草稿正在整项撤销该任务，不能同时设置单日例外", "error"); return; }
+    const now = new Date().toISOString();
+    const id = `${task.id}|${directive.y}`;
+    const clear = Object.keys(directive).every((key) => key === "i" || key === "y");
+    const existing = await db.taskExceptions.get(id);
+    if (clear) await db.taskExceptions.delete(id);
+    else await db.taskExceptions.put({ id, taskId: task.id, date: directive.y, directive, createdAt: existing?.createdAt ?? now, updatedAt: now });
+    const next = [...(draft.exceptions ?? []).filter((item) => `${item.directive.i}|${item.directive.y}` !== id), { draftItemId: createTransportId(), directive }];
+    await updateDraft(draft.id, { exceptions: next });
+    setExceptionTask(null); setEditingException(null); show(clear ? "恢复模板指令已加入草稿" : "单日例外已保存并加入草稿", "success"); navigate("/create");
   };
   const parseRestore = async () => {
     if (restoreText === null) return;
     try {
       const { batch } = decodeDst1(restoreText.trim());
       const ids = [...(batch.t ?? []), ...(batch.g?.flatMap((group) => group.t ?? []) ?? [])].map((task) => task.i);
+      const localIds = new Set((await db.tasks.toCollection().primaryKeys()).map(String));
+      const unresolved = batch.e?.find((item) => !localIds.has(item.i) && !ids.includes(item.i));
+      if (unresolved) throw new Error(`单日例外 ${unresolved.i} / ${unresolved.y} 无法关联本地重复模板；请使用 DSDOM v1.2 完整备份恢复`);
       const existing = await db.tasks.where("id").anyOf(ids).primaryKeys();
       setRestorePreview({ batch, conflicts: new Set(existing.map(String)) }); setUseImported(new Set());
     } catch (error) { show(error instanceof Error ? error.message : "DST1 解析失败", "error"); }
@@ -76,7 +98,7 @@ export function LibraryPage() {
     if (!restorePreview) return;
     const now = new Date().toISOString();
     try {
-      await db.transaction("rw", [db.groups, db.tasks], async () => {
+      await db.transaction("rw", [db.groups, db.tasks, db.taskExceptions], async () => {
         for (const group of restorePreview.batch.g ?? []) {
           const existing = await db.groups.get(group.i);
           if (!existing && group.n) await db.groups.add({ id: group.i, name: group.n, completeMessage: group.cm ?? "", incompleteMessage: group.im ?? "", order: (await db.groups.count()) + 1, createdAt: now, updatedAt: now });
@@ -89,6 +111,17 @@ export function LibraryPage() {
         };
         for (const group of restorePreview.batch.g ?? []) for (const task of group.t ?? []) await saveTask(task, group.i);
         for (const task of restorePreview.batch.t ?? []) await saveTask(task, null);
+        for (const directive of restorePreview.batch.e ?? []) {
+          const task = await db.tasks.get(directive.i);
+          if (!task?.recurrence) throw new Error(`单日例外 ${directive.i} / ${directive.y} 的目标不是重复模板`);
+          const id = `${directive.i}|${directive.y}`;
+          const clear = Object.keys(directive).every((key) => key === "i" || key === "y");
+          if (clear) await db.taskExceptions.delete(id);
+          else {
+            const existing = await db.taskExceptions.get(id);
+            await db.taskExceptions.put({ id, taskId: directive.i, date: directive.y, directive, createdAt: existing?.createdAt ?? now, updatedAt: now });
+          }
+        }
       });
       show("旧字符串中的任务定义已恢复；未创建发送历史", "success"); setRestorePreview(null); setRestoreText(null);
     } catch (error) { show(error instanceof Error ? error.message : "恢复失败", "error"); }
@@ -105,11 +138,13 @@ export function LibraryPage() {
           <p>{task.description || "无描述"}</p>
           <div className="meta-row"><span>{groupMap.get(task.groupId ?? "") ?? "未分组"}</span>{recurring && <span>{task.recurrence?.f === 1 ? "每天" : "每周"}</span>}<span>{task.points} 分</span><span>v{task.version}</span><span className="mono">{task.id}</span></div>
         </div>
-        <div className="card-actions"><button className="button tonal" onClick={() => addToDraft(task)}><Plus size={16} />{recurring ? "更新重复任务" : "更新临时任务"}</button><button className="button text" onClick={() => duplicateTask(task)}><Copy size={16} />复制</button>{!recurring && <button className="button text" onClick={() => addToDraft(task, "delay")}><CalendarClock size={16} />延期</button>}<button className="button text" onClick={() => addToDraft(task)}><RotateCcw size={16} />恢复</button><button className="button text danger" onClick={() => cancelInDraft(task)}><Ban size={16} />{recurring ? "取消重复任务" : "撤销临时任务"}</button></div>
+        <div className="card-actions"><button className="button tonal" onClick={() => addToDraft(task)}><Plus size={16} />{recurring ? "更新重复任务" : "更新临时任务"}</button>{recurring && <button className="button tonal" onClick={() => { setEditingException(null); setExceptionTask(task); }}><CalendarClock size={16} />单日例外</button>}<button className="button text" onClick={() => duplicateTask(task)}><Copy size={16} />复制</button>{!recurring && <button className="button text" onClick={() => addToDraft(task, "delay")}><CalendarClock size={16} />延期</button>}<button className="button text" onClick={() => addToDraft(task)}><RotateCcw size={16} />恢复</button><button className="button text danger" onClick={() => cancelInDraft(task)}><Ban size={16} />{recurring ? "取消重复任务" : "撤销临时任务"}</button></div>
+        {recurring && exceptions.some((item) => item.taskId === task.id) && <div className="revision-note"><CalendarClock size={15} />{exceptions.filter((item) => item.taskId === task.id).map((item) => <button className="button text" key={item.id} onClick={() => { setEditingException(item); setExceptionTask(task); }}>{item.date} · {item.directive.c === 1 ? "已撤销" : "已调整"}</button>)}</div>}
         {revisions.some((item) => item.taskId === task.id) && <div className="revision-note"><History size={15} />已保存 {revisions.filter((item) => item.taskId === task.id).length} 个不可变版本</div>}
       </article>;
     })}</div>}
     {editing && <Modal title="编辑任务工作副本" onClose={() => setEditing(null)} wide><TaskEditor value={editing} groups={groups} onChange={(value) => setEditing({ ...editing, ...value })} /><div className="modal-actions"><button className="button text" onClick={() => setEditing(null)}>取消</button><button className="button primary" onClick={saveEdit}>保存工作副本</button></div></Modal>}
+    {exceptionTask && <Modal title={`单日例外 · ${exceptionTask.name}`} onClose={() => { setExceptionTask(null); setEditingException(null); }} wide><ExceptionEditor task={exceptionTask} initial={editingException?.directive} onCancel={() => { setExceptionTask(null); setEditingException(null); }} onSave={(value) => void saveException(exceptionTask, value)} /></Modal>}
     {restoreText !== null && !restorePreview && <Modal title="从旧 DST1 恢复" onClose={() => setRestoreText(null)} wide><p className="supporting">只恢复积分组和任务定义；不会创建发送历史，也不会推断 Sub 状态。</p><label className="field"><span>DST1 字符串</span><textarea className="mono" rows={9} value={restoreText} onChange={(event) => setRestoreText(event.target.value)} autoFocus /></label><div className="modal-actions"><button className="button text" onClick={() => setRestoreText(null)}>取消</button><button className="button primary" onClick={parseRestore}>解析并预览</button></div></Modal>}
     {restorePreview && <Modal title="恢复预览" onClose={() => setRestorePreview(null)} wide><div className="preview-stats"><span><strong>{restoredTasks.length}</strong> 个任务</span><span><strong>{restorePreview.batch.g?.length ?? 0}</strong> 个积分组</span><span><strong>{restorePreview.conflicts.size}</strong> 个任务冲突</span></div><div className="conflict-list">{restoredTasks.map((task) => <label key={task.i} className="conflict-row"><div><strong>{task.n}</strong><small className="mono">{task.i}</small></div>{restorePreview.conflicts.has(task.i) ? <span><input type="checkbox" checked={useImported.has(task.i)} onChange={(event) => setUseImported((current) => { const next = new Set(current); event.target.checked ? next.add(task.i) : next.delete(task.i); return next; })} />使用导入版本（默认保留本地）</span> : <span className="status-pill optional">新增</span>}</label>)}</div><div className="modal-actions"><button className="button text" onClick={() => setRestorePreview(null)}>返回</button><button className="button primary" onClick={restoreTasks}>确认恢复</button></div></Modal>}
   </div>;

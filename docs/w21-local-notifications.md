@@ -2,7 +2,7 @@
 
 > 前置：W00、W01、W11、W20
 > 协议：仅实现 DST1 v1 已有 `h`，没有新增字段或语义
-> 数据库：继续使用 Room v3，无 migration
+> 数据库：继续使用 Room v1.3，无 migration
 
 ## 交付
 

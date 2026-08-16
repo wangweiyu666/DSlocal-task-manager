@@ -35,6 +35,22 @@ export interface Dst1Task {
   u?: Dst1Execution;
 }
 
+export interface Dst11Exception {
+  i: string;
+  y: string;
+  c?: 1;
+  n?: string;
+  r?: RequiredFlag;
+  d?: string;
+  l?: string | null;
+  p?: number;
+  o?: number | null;
+  s?: Dst1Step[];
+  m?: string | null;
+  h?: number[];
+  u?: Dst1Execution | null;
+}
+
 export interface Dst1Group {
   i: string;
   n?: string;
@@ -45,12 +61,14 @@ export interface Dst1Group {
 
 export interface Dst1Batch {
   v: 1;
+  sv?: 1;
   b: string;
   d?: string;
   m?: string;
   g?: Dst1Group[];
   t?: Dst1Task[];
   z?: string[];
+  e?: Dst11Exception[];
 }
 
 export type Dst1ErrorCode =

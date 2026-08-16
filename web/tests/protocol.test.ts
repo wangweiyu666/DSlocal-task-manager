@@ -7,6 +7,7 @@ import daily from "../../protocol-test-vectors/valid/daily-recurrence.json";
 import weekly from "../../protocol-test-vectors/valid/weekly-recurrence.json";
 import reminders from "../../protocol-test-vectors/valid/reminders.json";
 import clearFields from "../../protocol-test-vectors/valid/clear-fields.json";
+import dst11Exceptions from "../../protocol-test-vectors/valid/dst11-occurrence-exceptions.json";
 import minimalEnvelope from "../../protocol-test-vectors/valid/minimal-step.dst1?raw";
 import badCrc from "../../protocol-test-vectors/invalid/bad-crc.dst1?raw";
 import { decodeDst1, encodeDst1 } from "../src/protocol/dst1";
@@ -16,7 +17,7 @@ import manifest from "../../protocol-test-vectors/manifest.json";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const validVectors = [minimalJson, counter, timer, information, daily, weekly, reminders, clearFields];
+const validVectors = [minimalJson, counter, timer, information, daily, weekly, reminders, clearFields, dst11Exceptions];
 const repositoryRoot = resolve(process.cwd(), "..");
 const invalidJsonCases = manifest.cases.filter((item) => item.source.kind === "json" && item.spec.result === "ERROR");
 
@@ -39,6 +40,19 @@ describe("DST1 v1 shared contract", () => {
   it("rejects a task that is both updated and cancelled", () => {
     const task = minimalJson.g[0].t[0];
     expect(() => validateDst1Batch({ ...minimalJson, z: [task.i] })).toThrowError(expect.objectContaining({ code: "CONFLICTING_FIELDS" }));
+  });
+
+  it("uses DST1.1 only when occurrence exceptions are present", () => {
+    const encoded = encodeDst1(dst11Exceptions as Dst1Batch);
+    expect(encoded.envelope.startsWith("DST1.1.")).toBe(true);
+    expect(decodeDst1(encoded.envelope).batch).toEqual(dst11Exceptions);
+    expect(encodeDst1(minimalJson as Dst1Batch).envelope.startsWith("DST1.")).toBe(true);
+  });
+
+  it("rejects duplicate occurrence targets and cancellation overrides", () => {
+    const exception = dst11Exceptions.e[0];
+    expect(() => validateDst1Batch({ ...dst11Exceptions, e: [exception, exception] })).toThrowError(expect.objectContaining({ code: "DUPLICATE_VALUE" }));
+    expect(() => validateDst1Batch({ ...dst11Exceptions, e: [{ i: exception.i, y: exception.y, c: 1, n: "invalid" }] })).toThrowError(expect.objectContaining({ code: "CONFLICTING_FIELDS" }));
   });
 
   it.each(invalidJsonCases)("matches the shared error contract for $id", (testCase) => {

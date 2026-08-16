@@ -1,6 +1,6 @@
 # DStationery Dom Web
 
-完全离线的 DST1 v1 任务生成 PWA，与仓库中的 Android Sub 共用 `docs/dst1-schema.json` 和 `protocol-test-vectors/`。
+完全离线的 DST1 / DST1.1 任务生成 PWA，与仓库中的 Android Sub 共用 `docs/dst1-schema.json` 和 `protocol-test-vectors/`。当前 Web 版本为 `0.2.0`。
 
 ```text
 npm install

@@ -1,11 +1,11 @@
-# Android Room v4 规范
+# Android Room v1.4 规范
 
 > 数据库：`dst-sub.db`
 > Room 版本：4
 > 应用版本：`0.1.0-alpha`
 > 迁移：`1→2→3→4`
 
-Room v4 完整继承 [v3 冻结规范](android-database-v3.md)，继续禁止破坏性迁移，并要求连续 migration、导出 Schema、最终 Schema 校验和数据保留测试。
+Room v1.4 完整继承 [v1.3 冻结规范](android-database-v3.md)，继续禁止破坏性迁移，并要求连续 migration、导出 Schema、最终 Schema 校验和数据保留测试。
 
 ## v4 变更
 

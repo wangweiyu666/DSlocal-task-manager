@@ -1,6 +1,6 @@
 # Android 当前实现边界
 
-当前版本为 `0.1.0-alpha.3`（versionCode 4），协议为 DST1 v1，数据库为 Room v5。完整进度见[实施状态与路线图](android-phase-1-summary-and-roadmap.md)。
+当前开发版本为 `0.1.0-alpha.4`（versionCode 5），协议支持 DST1 与 DST1.1，数据库产品版本为 Room v1.6（内部 Schema version 6）。完整进度见[实施状态与路线图](android-phase-1-summary-and-roadmap.md)。
 
 ## 已具备
 

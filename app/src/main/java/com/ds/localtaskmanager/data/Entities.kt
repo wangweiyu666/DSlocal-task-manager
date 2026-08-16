@@ -1,6 +1,7 @@
 package com.ds.localtaskmanager.data
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -90,6 +91,28 @@ data class TaskStepDefinitionEntity(
 )
 
 @Entity(
+    tableName = "recurrence_exception",
+    primaryKeys = ["taskId", "occurrenceDate"],
+    foreignKeys = [
+        ForeignKey(
+            entity = TaskDefinitionEntity::class,
+            parentColumns = ["taskId"],
+            childColumns = ["taskId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("taskId"), Index("occurrenceDate")],
+)
+data class RecurrenceExceptionEntity(
+    val taskId: String,
+    val occurrenceDate: String,
+    val cancelled: Boolean,
+    val patchJson: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
     tableName = "task_instance",
     primaryKeys = ["taskId", "occurrenceKey"],
     foreignKeys = [
@@ -137,6 +160,7 @@ data class TaskInstanceEntity(
     val reminderMinutesJson: String? = null,
     val publishedAtEpochMillis: Long = createdAtEpochMillis,
     val groupNameSnapshot: String? = null,
+    @ColumnInfo(defaultValue = "0") val singleDayAdjusted: Boolean = false,
 )
 
 @Entity(

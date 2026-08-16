@@ -7,6 +7,7 @@ import com.ds.localtaskmanager.data.ImportBatchEntity
 import com.ds.localtaskmanager.data.InformationSubmissionEntity
 import com.ds.localtaskmanager.data.InstanceStepEntity
 import com.ds.localtaskmanager.data.PointsLedgerEntity
+import com.ds.localtaskmanager.data.RecurrenceExceptionEntity
 import com.ds.localtaskmanager.data.ResultRevisionEntity
 import com.ds.localtaskmanager.data.TaskDefinitionEntity
 import com.ds.localtaskmanager.data.TaskGroupEntity
@@ -17,13 +18,14 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class BackupPayload(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val settings: PortableSettings = PortableSettings(),
     val profiles: List<ProfileBackup> = emptyList(),
     val importBatches: List<ImportBatchBackup> = emptyList(),
     val groups: List<GroupBackup> = emptyList(),
     val definitions: List<DefinitionBackup> = emptyList(),
     val definitionSteps: List<DefinitionStepBackup> = emptyList(),
+    val recurrenceExceptions: List<RecurrenceExceptionBackup> = emptyList(),
     val instances: List<InstanceBackup> = emptyList(),
     val instanceSteps: List<InstanceStepBackup> = emptyList(),
     val progress: List<ProgressBackup> = emptyList(),
@@ -46,7 +48,7 @@ data class BackupMetadata(
     val createdAtEpochMillis: Long,
     val appVersion: String,
     val sourceTimeZone: String,
-    val payloadSchemaVersion: Int = 1,
+    val payloadSchemaVersion: Int = 2,
     val counts: BackupCounts,
 )
 
@@ -102,6 +104,15 @@ data class DefinitionBackup(
 
 @Serializable data class DefinitionStepBackup(val taskId: String, val position: Int, val name: String, val required: Boolean)
 
+@Serializable data class RecurrenceExceptionBackup(
+    val taskId: String,
+    val occurrenceDate: String,
+    val cancelled: Boolean,
+    val patchJson: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
 @Serializable
 data class InstanceBackup(
     val taskId: String,
@@ -126,6 +137,7 @@ data class InstanceBackup(
     val reminderMinutesJson: String?,
     val publishedAtEpochMillis: Long,
     val groupNameSnapshot: String?,
+    val singleDayAdjusted: Boolean = false,
 )
 
 @Serializable data class InstanceStepBackup(
@@ -208,6 +220,8 @@ internal fun TaskGroupEntity.toBackup() = GroupBackup(groupId, name, completeMes
 internal fun GroupBackup.toEntity() = TaskGroupEntity(groupId, name, completeMessage, incompleteMessage, archived, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun TaskStepDefinitionEntity.toBackup() = DefinitionStepBackup(taskId, position, name, required)
 internal fun DefinitionStepBackup.toEntity() = TaskStepDefinitionEntity(taskId, position, name, required)
+internal fun RecurrenceExceptionEntity.toBackup() = RecurrenceExceptionBackup(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
+internal fun RecurrenceExceptionBackup.toEntity() = RecurrenceExceptionEntity(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun InstanceStepEntity.toBackup() = InstanceStepBackup(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis)
 internal fun InstanceStepBackup.toEntity() = InstanceStepEntity(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis)
 internal fun ExecutionProgressEntity.toBackup() = ProgressBackup(taskId, occurrenceKey, executionKind, counterValue, elapsedMillis, createdAtEpochMillis, updatedAtEpochMillis)
@@ -243,12 +257,12 @@ internal fun TaskInstanceEntity.toBackup() = InstanceBackup(
     taskId, occurrenceKey, name, description, taskDate, deadline, groupId, required, points,
     sortOrder, completionMessage, status, completedAtEpochMillis, createdAtEpochMillis,
     updatedAtEpochMillis, category, executionKind, executionAction, executionTarget,
-    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot,
+    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted,
 )
 
 internal fun InstanceBackup.toEntity() = TaskInstanceEntity(
     taskId, occurrenceKey, name, description, taskDate, deadline, groupId, required, points,
     sortOrder, completionMessage, status, completedAtEpochMillis, createdAtEpochMillis,
     updatedAtEpochMillis, category, executionKind, executionAction, executionTarget,
-    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot,
+    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted,
 )

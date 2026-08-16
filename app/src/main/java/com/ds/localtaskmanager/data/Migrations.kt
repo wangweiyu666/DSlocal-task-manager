@@ -172,6 +172,17 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `task_instance` ADD COLUMN `singleDayAdjusted` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `recurrence_exception` (`taskId` TEXT NOT NULL, `occurrenceDate` TEXT NOT NULL, `cancelled` INTEGER NOT NULL, `patchJson` TEXT NOT NULL, `createdAtEpochMillis` INTEGER NOT NULL, `updatedAtEpochMillis` INTEGER NOT NULL, PRIMARY KEY(`taskId`, `occurrenceDate`), FOREIGN KEY(`taskId`) REFERENCES `task_definition`(`taskId`) ON UPDATE NO ACTION ON DELETE CASCADE)",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_recurrence_exception_taskId` ON `recurrence_exception` (`taskId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_recurrence_exception_occurrenceDate` ON `recurrence_exception` (`occurrenceDate`)")
+    }
+}
+
 private fun SupportSQLiteDatabase.execAll(statements: List<String>) {
     statements.forEach(::execSQL)
 }

@@ -50,6 +50,7 @@ export function buildBatch(draft: DraftRecord, groups: GroupRecord[]): Dst1Batch
   });
   if (ungrouped.length) batch.t = ungrouped.map(draftTaskToDst1);
   if (draft.cancellations.length) batch.z = [...new Set(draft.cancellations)];
+  if (draft.exceptions?.length) batch.e = draft.exceptions.map((item) => item.directive);
   return batch;
 }
 

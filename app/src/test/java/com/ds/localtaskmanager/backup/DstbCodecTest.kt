@@ -63,6 +63,37 @@ class DstbCodecTest {
         assertTrue(runCatching { BackupValidator.validate(decoded) }.exceptionOrNull()?.message.orEmpty().contains("重复"))
     }
 
+    @Test
+    fun `business schema 2 preserves recurrence exceptions and schema 1 remains readable`() {
+        val created = 1_700_000_000_000
+        val recurring = DefinitionBackup(
+            taskId = "task-recurring", name = "每日", description = "", groupId = null,
+            required = true, taskDate = "2026-08-05", deadline = null, points = 1,
+            sortOrder = null, completionMessage = "完成", stepsFingerprint = "", cancelled = false,
+            createdAtEpochMillis = created, updatedAtEpochMillis = created,
+            recurrenceFrequency = 1, recurrenceStartDate = "2026-08-05",
+        )
+        val v2 = BackupPayload(
+            definitions = listOf(recurring),
+            recurrenceExceptions = listOf(
+                RecurrenceExceptionBackup(
+                    "task-recurring", "2026-08-06", true,
+                    "{\"i\":\"task-recurring\",\"y\":\"2026-08-06\",\"c\":1}", created, created,
+                ),
+            ),
+        )
+        val v2Metadata = metadata().copy(counts = BackupCounts(0, 1, 0, 0, 0, 0))
+        val decodedV2 = DstbCodec.decode(DstbCodec.encode(v2Metadata, v2))
+        BackupValidator.validate(decodedV2)
+        assertEquals(v2.recurrenceExceptions, decodedV2.payload.recurrenceExceptions)
+
+        val v1 = BackupPayload(schemaVersion = 1, groups = payload().groups)
+        val v1Metadata = metadata().copy(payloadSchemaVersion = 1)
+        val decodedV1 = DstbCodec.decode(DstbCodec.encode(v1Metadata, v1))
+        BackupValidator.validate(decodedV1)
+        assertTrue(decodedV1.payload.recurrenceExceptions.isEmpty())
+    }
+
     private fun rewriteCrc(bytes: ByteArray) {
         val crc = CRC32().apply { update(bytes, 0, bytes.size - 4) }.value
         repeat(4) { index -> bytes[bytes.size - 4 + index] = ((crc ushr (index * 8)) and 0xff).toByte() }

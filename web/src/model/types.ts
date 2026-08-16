@@ -1,4 +1,4 @@
-import type { Dst1Batch, Dst1Execution, Dst1Recurrence, Dst1Step, Dst1Task } from "../protocol/types";
+import type { Dst11Exception, Dst1Batch, Dst1Execution, Dst1Recurrence, Dst1Step, Dst1Task } from "../protocol/types";
 
 export interface GroupRecord {
   id: string;
@@ -44,6 +44,30 @@ export interface TaskRevision {
   snapshot: Dst1Task;
 }
 
+export interface TaskExceptionRecord {
+  id: string;
+  taskId: string;
+  date: string;
+  directive: Dst11Exception;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DraftException {
+  draftItemId: string;
+  directive: Dst11Exception;
+}
+
+export interface TaskExceptionRevision {
+  id: string;
+  exceptionId: string;
+  taskId: string;
+  date: string;
+  generatedAt: string;
+  batchId: string;
+  snapshot: Dst11Exception;
+}
+
 export interface TemplateRecord extends TaskFields {
   id: string;
   title: string;
@@ -68,6 +92,7 @@ export interface DraftRecord {
   includeGroupIds: string[];
   tasks: DraftTask[];
   cancellations: string[];
+  exceptions: DraftException[];
   createdAt: string;
   updatedAt: string;
 }
@@ -95,6 +120,7 @@ export interface AppSettings {
 export interface DomBackup {
   format: "DSDOM";
   version: 1;
+  minorVersion?: 2;
   createdAt: string;
   groups: GroupRecord[];
   tasks: TaskRecord[];
@@ -102,10 +128,12 @@ export interface DomBackup {
   drafts: DraftRecord[];
   batchHistory: BatchHistoryRecord[];
   taskRevisions: TaskRevision[];
+  taskExceptions: TaskExceptionRecord[];
+  exceptionRevisions: TaskExceptionRevision[];
   settings: AppSettings;
 }
 
-export type BackupTable = "groups" | "tasks" | "templates" | "drafts" | "batchHistory" | "taskRevisions";
+export type BackupTable = "groups" | "tasks" | "templates" | "drafts" | "batchHistory" | "taskRevisions" | "taskExceptions" | "exceptionRevisions";
 
 export interface BackupConflict {
   key: string;

@@ -26,25 +26,30 @@ const groupRecord = z.object({ id, name: z.string().min(1).max(50), completeMess
 const taskRecord = z.object({ ...taskFieldsShape, id, groupId: id.nullable(), createdAt: timestamp, updatedAt: timestamp, lastGeneratedAt: timestamp.nullable(), version: z.number().int().nonnegative() }).strict();
 const templateRecord = z.object({ ...taskFieldsShape, id, title: z.string().min(1).max(100), groupId: id.nullable(), createdAt: timestamp, updatedAt: timestamp }).strict();
 const draftTask = z.object({ ...taskFieldsShape, draftItemId: id, taskId: id, groupId: id.nullable(), source: z.enum(["new", "existing", "template", "delay"]) }).strict();
-const draftRecord = z.object({ id, name: z.string().max(100), description: z.string().max(500), domNameMode: z.enum(["preserve", "set", "clear"]), domName: z.string().max(50), includeGroupIds: z.array(id), tasks: z.array(draftTask), cancellations: z.array(id).max(100), createdAt: timestamp, updatedAt: timestamp }).strict();
+const draftException = z.object({ draftItemId: id, directive: z.unknown() }).strict();
+const draftRecord = z.object({ id, name: z.string().max(100), description: z.string().max(500), domNameMode: z.enum(["preserve", "set", "clear"]), domName: z.string().max(50), includeGroupIds: z.array(id), tasks: z.array(draftTask), cancellations: z.array(id).max(100), exceptions: z.array(draftException).default([]), createdAt: timestamp, updatedAt: timestamp }).strict();
 const batchHistoryRecord = z.object({ id, draftName: z.string(), generatedAt: timestamp, envelope: z.string(), jsonBytes: z.number().int().nonnegative(), envelopeChars: z.number().int().nonnegative(), taskCount: z.number().int().nonnegative(), snapshot: z.unknown() }).strict();
 const taskRevision = z.object({ id, taskId: id, version: z.number().int().positive(), generatedAt: timestamp, batchId: id, snapshot: z.unknown() }).strict();
 const settingsRecord = z.object({ id: z.literal("app"), domName: z.string().max(50), theme: z.enum(["system", "light", "dark"]), timeZone: z.string().min(1), lastDraftId: id.nullable(), updatedAt: timestamp }).strict();
+const taskExceptionRecord = z.object({ id, taskId: id, date: z.string(), directive: z.unknown(), createdAt: timestamp, updatedAt: timestamp }).strict();
+const exceptionRevision = z.object({ id, exceptionId: id, taskId: id, date: z.string(), generatedAt: timestamp, batchId: id, snapshot: z.unknown() }).strict();
 
 const backupSchema = z.object({
   format: z.literal("DSDOM"),
   version: z.literal(1),
+  minorVersion: z.literal(2).optional(),
   createdAt: z.string().datetime(),
   groups: z.array(groupRecord), tasks: z.array(taskRecord), templates: z.array(templateRecord), drafts: z.array(draftRecord),
-  batchHistory: z.array(batchHistoryRecord), taskRevisions: z.array(taskRevision), settings: settingsRecord
+  batchHistory: z.array(batchHistoryRecord), taskRevisions: z.array(taskRevision),
+  taskExceptions: z.array(taskExceptionRecord).default([]), exceptionRevisions: z.array(exceptionRevision).default([]), settings: settingsRecord
 }).strict();
 
 export async function createBackup(): Promise<DomBackup> {
-  const [groups, tasks, templates, drafts, batchHistory, taskRevisions, settings] = await Promise.all([
+  const [groups, tasks, templates, drafts, batchHistory, taskRevisions, taskExceptions, exceptionRevisions, settings] = await Promise.all([
     db.groups.toArray(), db.tasks.toArray(), db.templates.toArray(), db.drafts.toArray(),
-    db.batchHistory.toArray(), db.taskRevisions.toArray(), getSettings()
+    db.batchHistory.toArray(), db.taskRevisions.toArray(), db.taskExceptions.toArray(), db.exceptionRevisions.toArray(), getSettings()
   ]);
-  return { format: "DSDOM", version: 1, createdAt: new Date().toISOString(), groups, tasks, templates, drafts, batchHistory, taskRevisions, settings };
+  return { format: "DSDOM", version: 1, minorVersion: 2, createdAt: new Date().toISOString(), groups, tasks, templates, drafts, batchHistory, taskRevisions, taskExceptions, exceptionRevisions, settings };
 }
 
 export function parseBackup(json: string): DomBackup {
@@ -53,8 +58,8 @@ export function parseBackup(json: string): DomBackup {
   catch (error) { throw new Error("配置文件不是有效的 JSON", { cause: error }); }
   const parsed = backupSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`配置文件结构无效：${parsed.error.issues[0]?.path.join(".") || "$"} ${parsed.error.issues[0]?.message ?? "未知错误"}`);
-  const backup = raw as DomBackup;
-  for (const key of ["groups", "tasks", "templates", "drafts", "batchHistory", "taskRevisions"] as const) {
+  const backup = parsed.data as DomBackup;
+  for (const key of ["groups", "tasks", "templates", "drafts", "batchHistory", "taskRevisions", "taskExceptions", "exceptionRevisions"] as const) {
     const ids = backup[key].map((record) => record.id);
     if (new Set(ids).size !== ids.length) throw new Error(`配置文件结构无效：${key} 中存在重复 ID`);
   }
@@ -62,6 +67,7 @@ export function parseBackup(json: string): DomBackup {
   if ([...backup.tasks, ...backup.templates].some((record) => record.groupId !== null && !groupIds.has(record.groupId))) throw new Error("配置文件结构无效：任务或模板引用了不存在的积分组");
   for (const draft of backup.drafts) {
     if (draft.tasks.some((task) => task.groupId !== null && !groupIds.has(task.groupId)) || draft.includeGroupIds.some((groupId) => !groupIds.has(groupId))) throw new Error(`配置文件结构无效：草稿“${draft.name}”引用了不存在的积分组`);
+    for (const item of draft.exceptions) validateDst1Batch({ v: 1, sv: 1, b: "BackupCheck00004", e: [item.directive] });
   }
   for (const history of backup.batchHistory) {
     validateDst1Batch(history.snapshot);
@@ -69,6 +75,12 @@ export function parseBackup(json: string): DomBackup {
     if (decoded.b !== history.id || history.snapshot.b !== history.id || JSON.stringify(decoded) !== JSON.stringify(history.snapshot)) throw new Error(`配置文件结构无效：历史批次 ${history.id} 的字符串与快照不一致`);
   }
   for (const revision of backup.taskRevisions) validateDst1Batch({ v: 1, b: "BackupCheck00001", t: [revision.snapshot] });
+  const taskIds = new Set(backup.tasks.filter((task) => task.recurrence !== null).map((task) => task.id));
+  for (const exception of backup.taskExceptions) {
+    if (!taskIds.has(exception.taskId) || exception.directive.i !== exception.taskId || exception.directive.y !== exception.date) throw new Error(`配置文件结构无效：单日例外 ${exception.id} 无法关联重复模板`);
+    validateDst1Batch({ v: 1, sv: 1, b: "BackupCheck00002", e: [exception.directive] });
+  }
+  for (const revision of backup.exceptionRevisions) validateDst1Batch({ v: 1, sv: 1, b: "BackupCheck00003", e: [revision.snapshot] });
   return backup;
 }
 
@@ -78,11 +90,13 @@ const labels: Record<BackupTable, string> = {
   templates: "模板",
   drafts: "草稿",
   batchHistory: "历史批次",
-  taskRevisions: "任务版本"
+  taskRevisions: "任务版本",
+  taskExceptions: "单日例外",
+  exceptionRevisions: "例外版本"
 };
 
 export async function analyzeBackupConflicts(backup: DomBackup): Promise<BackupConflict[]> {
-  const tables: BackupTable[] = ["groups", "tasks", "templates", "drafts", "batchHistory", "taskRevisions"];
+  const tables: BackupTable[] = ["groups", "tasks", "templates", "drafts", "batchHistory", "taskRevisions", "taskExceptions", "exceptionRevisions"];
   const conflicts: BackupConflict[] = [];
   for (const table of tables) {
     const incoming = backup[table] as Array<{ id: string; name?: string; title?: string; draftName?: string }>;
@@ -102,9 +116,9 @@ export async function importBackup(
   mode: "replace" | "merge",
   useImportedConflictKeys: Set<string> = new Set()
 ): Promise<void> {
-  await db.transaction("rw", [db.groups, db.tasks, db.templates, db.drafts, db.batchHistory, db.taskRevisions, db.settings], async () => {
+  await db.transaction("rw", [db.groups, db.tasks, db.templates, db.drafts, db.batchHistory, db.taskRevisions, db.taskExceptions, db.exceptionRevisions, db.settings], async () => {
     if (mode === "replace") {
-      await Promise.all([db.groups.clear(), db.tasks.clear(), db.templates.clear(), db.drafts.clear(), db.batchHistory.clear(), db.taskRevisions.clear(), db.settings.clear()]);
+      await Promise.all([db.groups.clear(), db.tasks.clear(), db.templates.clear(), db.drafts.clear(), db.batchHistory.clear(), db.taskRevisions.clear(), db.taskExceptions.clear(), db.exceptionRevisions.clear(), db.settings.clear()]);
     }
     const putSelected = async (table: BackupTable): Promise<void> => {
       const target = db.table(table);
@@ -119,6 +133,8 @@ export async function importBackup(
     await putSelected("drafts");
     await putSelected("batchHistory");
     await putSelected("taskRevisions");
+    await putSelected("taskExceptions");
+    await putSelected("exceptionRevisions");
     if (mode === "replace" || useImportedConflictKeys.has("settings:app")) await db.settings.put(backup.settings);
   });
 }

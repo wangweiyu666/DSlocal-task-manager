@@ -162,6 +162,22 @@ CRC32 仅用于发现复制、粘贴或传输损坏，不承担防篡改功能�
 
 ---
 
+### 3.5 DST1.1 单日例外
+
+没有单日例外时 Dom 继续输出三段 `DST1.<payload>.<checksum>`，JSON 保持 `v:1`。存在单日例外时输出四段 `DST1.1.<payload>.<checksum>`，JSON 同时包含 `v:1`、`sv:1` 和顶层 `e` 数组。新版 Sub 同时接受 DST1 与 DST1.1。
+
+`e` 最多 100 项，以 `i + y` 唯一定位重复任务和计划日期。字段包括：
+
+- `c:1`：仅撤销该计划日，必须独占，不能与其他覆盖字段共存；
+- `n/r/d/l/p/o/s/m/h/u`：分别覆盖名称、必做、描述、截止时间、积分、顺序、步骤、完成文案、提醒和执行方式；未出现的字段继承 Sub 导入时的最新模板；
+- `i + y`：不含其他字段时清除已有例外，恢复为模板值。
+
+同一任务和日期的后一个记录完整替换先前例外，而不是逐字段合并。`l:null` 表示无截止时间，`o:null` 表示默认顺序，`m:null` 表示系统默认完成文案，`u:null` 表示普通执行；`d:""`、`s:[]`、`h:[]` 分别清空描述、步骤和提醒。例外不能修改积分组、任务 ID、计划日期或重复规则。
+
+Sub 以同一批次任务更新后的最终模板校验例外。目标必须是有效重复任务；已有重复实例仍可命中，即使最新规则已不再包含该日期。未生成的过去日期不回填。例外与同任务的顶层 `z` 撤销冲突时整批拒绝。
+
+撤销日仍生成 `CANCELLED` 实例、消耗重复次数，不补偿额外执行日，也不产生结果或积分。已完成实例不可变；已错过实例只接受撤销或通过未来截止时间重开。今天页和当前任务详情显示“单日调整”，历史详情不额外标记。
+
 ## 4. 顶层 JSON 结构
 
 ```json
@@ -1525,7 +1541,7 @@ Dom 少量手动调整时：
 已建立的技术基准包括：
 
 - [DST1 JSON Schema](dst1-schema.json) 与[协议测试向量](dst1-test-vectors.md)；
-- [Android Room v4 基础规范](android-database-v4.md)与[W25 Room v5 统计索引](w25-profile-statistics.md#数据库与数据边界)；
+- [Android Room v1.4 基础规范](android-database-v4.md)、[W25 Room v1.5 统计索引](w25-profile-statistics.md#数据库与数据边界)与[Room v1.6 单日例外](android-database-v1.6.md)；
 - [DSTB1 格式规范](dstb1-format.md)与[备份测试向量](dstb1-test-vectors.md)；
 - [实施状态与路线图](android-phase-1-summary-and-roadmap.md)；
 - [工程约束与交付清单](w00-w01-engineering-playbook.md)。

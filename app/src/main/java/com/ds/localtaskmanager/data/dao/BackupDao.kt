@@ -11,6 +11,7 @@ import com.ds.localtaskmanager.data.InformationSubmissionEntity
 import com.ds.localtaskmanager.data.InstanceStepEntity
 import com.ds.localtaskmanager.data.PointsLedgerEntity
 import com.ds.localtaskmanager.data.ResultRevisionEntity
+import com.ds.localtaskmanager.data.RecurrenceExceptionEntity
 import com.ds.localtaskmanager.data.TaskDefinitionEntity
 import com.ds.localtaskmanager.data.TaskGroupEntity
 import com.ds.localtaskmanager.data.TaskInstanceEntity
@@ -33,6 +34,9 @@ interface BackupDao {
 
     @Query("SELECT * FROM task_step_definition ORDER BY taskId, position")
     suspend fun definitionSteps(): List<TaskStepDefinitionEntity>
+
+    @Query("SELECT * FROM recurrence_exception ORDER BY taskId, occurrenceDate")
+    suspend fun recurrenceExceptions(): List<RecurrenceExceptionEntity>
 
     @Query("SELECT * FROM task_instance ORDER BY taskId, occurrenceKey")
     suspend fun instances(): List<TaskInstanceEntity>
@@ -63,6 +67,7 @@ interface BackupDao {
     @Upsert suspend fun upsertGroups(values: List<TaskGroupEntity>)
     @Upsert suspend fun upsertDefinitions(values: List<TaskDefinitionEntity>)
     @Upsert suspend fun upsertDefinitionSteps(values: List<TaskStepDefinitionEntity>)
+    @Upsert suspend fun upsertRecurrenceExceptions(values: List<RecurrenceExceptionEntity>)
     @Upsert suspend fun upsertInstances(values: List<TaskInstanceEntity>)
     @Upsert suspend fun upsertInstanceSteps(values: List<InstanceStepEntity>)
     @Upsert suspend fun upsertProgress(values: List<ExecutionProgressEntity>)
@@ -81,6 +86,7 @@ interface BackupDao {
     @Query("DELETE FROM execution_progress") suspend fun clearProgress()
     @Query("DELETE FROM instance_step") suspend fun clearInstanceSteps()
     @Query("DELETE FROM task_instance") suspend fun clearInstances()
+    @Query("DELETE FROM recurrence_exception") suspend fun clearRecurrenceExceptions()
     @Query("DELETE FROM task_step_definition") suspend fun clearDefinitionSteps()
     @Query("DELETE FROM task_definition") suspend fun clearDefinitions()
     @Query("DELETE FROM task_group") suspend fun clearGroups()

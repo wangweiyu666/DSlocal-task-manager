@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- DST1.1 重复任务单日修改、撤销和恢复，Dom Web 与 Sub Android 同步支持。
+- Dom 使用 DSDOM v1.2 保存单日例外；Sub 使用 Room v1.6（内部 Schema 6）和 DSTB1 业务 schema v2 持久化。
+
+### Changed
+
+- Android 开发版本更新为 `0.1.0-alpha.4`（versionCode 5），Web 更新为 `0.2.0`。
+
+## [Unreleased]
+
 尚无已记录变更。
 
 ## [0.1.0-alpha.3] - 2026-08-09

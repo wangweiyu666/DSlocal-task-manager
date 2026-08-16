@@ -12,6 +12,7 @@
     {"id":"weekly-recurrence","source":{"kind":"json","path":"valid/weekly-recurrence.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
 
     {"id":"reminders","source":{"kind":"json","path":"valid/reminders.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
+    {"id":"dst11-occurrence-exceptions","source":{"kind":"json","path":"valid/dst11-occurrence-exceptions.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
 
     {"id":"bad-crc","source":{"kind":"dst1","path":"invalid/bad-crc.dst1"},"spec":{"result":"ERROR","code":"CHECKSUM_MISMATCH","path":"$.checksum"},"android":{"result":"ERROR","code":"CHECKSUM_MISMATCH","path":"$.checksum"}},
     {"id":"unknown-field","source":{"kind":"json","path":"invalid/unknown-field.json"},"spec":{"result":"ERROR","code":"UNKNOWN_FIELD","path":"future"},"android":{"result":"ERROR","code":"UNKNOWN_FIELD","path":"future"}},

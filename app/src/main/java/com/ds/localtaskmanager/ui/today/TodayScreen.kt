@@ -236,6 +236,9 @@ private fun TaskCard(
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(instance.name, style = MaterialTheme.typography.titleMedium)
+                if (instance.singleDayAdjusted) {
+                    Text("单日调整", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+                }
                 Text(
                     buildString {
                         append(if (instance.required) "必做" else "选做")

@@ -13,7 +13,10 @@ object BackupValidator {
     fun validate(decoded: DecodedBackup) {
         if (decoded.metadata.createdAtEpochMillis < 0) throw DstbException("备份创建时间无效")
         val payload = decoded.payload
-        if (payload.schemaVersion != 1) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion !in 1..2) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion == 1 &&
+            (payload.recurrenceExceptions.isNotEmpty() || payload.instances.any { it.singleDayAdjusted })
+        ) throw DstbException("备份数据 v1 不能包含单日例外")
         runCatching { AppThemeMode.valueOf(payload.settings.themeMode) }
             .getOrElse { throw DstbException("备份中的主题设置无效") }
         runCatching { StatisticsPeriod.valueOf(payload.settings.lastStatisticsPeriod) }
@@ -25,6 +28,7 @@ object BackupValidator {
         unique(payload.definitions, { it.taskId }, "任务")
         unique(payload.definitionSteps, { "${it.taskId}|${it.position}" }, "任务步骤")
         unique(payload.instances, { "${it.taskId}|${it.occurrenceKey}" }, "任务实例")
+        unique(payload.recurrenceExceptions, { "${it.taskId}|${it.occurrenceDate}" }, "单日例外")
         unique(payload.instanceSteps, { "${it.taskId}|${it.occurrenceKey}|${it.position}" }, "实例步骤")
         unique(payload.progress, { "${it.taskId}|${it.occurrenceKey}" }, "任务进度")
         unique(payload.information, { "${it.taskId}|${it.occurrenceKey}" }, "告知正文")
@@ -91,6 +95,14 @@ object BackupValidator {
                 throw DstbException("$label 的状态或执行方式无效")
             }
             if (it.completedAtEpochMillis != null && it.completedAtEpochMillis > snapshotLimit) throw DstbException("$label 的完成时间晚于备份时间")
+        }
+        payload.recurrenceExceptions.forEach {
+            if (it.taskId !in taskIds) throw DstbException("单日例外引用了不存在的任务")
+            val definition = payload.definitions.first { definition -> definition.taskId == it.taskId }
+            if (definition.recurrenceFrequency == null) throw DstbException("单日例外目标不是重复任务")
+            parseDate(it.occurrenceDate, "单日例外日期")
+            if (it.patchJson.isBlank() || it.patchJson.length > 16_384) throw DstbException("单日例外内容无效")
+            requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "单日例外")
         }
         payload.instanceSteps.forEach {
             requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "实例步骤")

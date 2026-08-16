@@ -6,11 +6,11 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 协议 | DST1 v1 |
-| 应用 | `0.1.0-alpha.3`（versionCode 4） |
-| Room | v5，显式 `1→2→3→4→5` migration |
-| 自动测试 | 97/97 项 JVM 测试、18/18 项 Preview 截图、API 35 全量仪器测试 23/23、API 26 W31 关键仪器测试 3/3 通过 |
-| 最近完成 | 分享图片与预览体验优化；`v0.1.0-alpha.3` 已发布 |
+| 协议 | DST1 / DST1.1 |
+| 应用 | `0.1.0-alpha.4`（versionCode 5） |
+| Room | v1.6（内部 Schema 6），显式 `1→2→3→4→5→6` migration |
+| 自动测试 | 111/111 项 JVM 测试通过；既有 Preview 截图与仪器测试基线保持不变 |
+| 最近完成 | DST1.1 重复任务单日例外；`v0.1.0-alpha.4` 开发中 |
 | 尚未开放的 DST1 能力 | 无 |
 
 已形成的数据闭环：
@@ -38,7 +38,7 @@ DST1 校验与预览
 | 窗口 | 交付 | 提交 | 说明 |
 |---|---|---|---|
 | W00 | DST1 契约、Schema、共享测试向量 | `54055c5` | [`dst1-test-vectors.md`](dst1-test-vectors.md) |
-| W01 | Room v3、连续迁移、模块边界 | `169ca26` | [`android-database-v3.md`](android-database-v3.md) |
+| W01 | Room v1.3、连续迁移、模块边界 | `169ca26` | [`android-database-v3.md`](android-database-v3.md) |
 | W10 | 计数、计时、信息告知 | `fa3f527` | [`w10-execution.md`](w10-execution.md) |
 | W11 | 每日/每周重复实例 | `fa3f527` | [`w11-recurrence.md`](w11-recurrence.md) |
 | W12 | 每日结果、积分迁移、结果修订 | `7735418` | [`w12-results.md`](w12-results.md) |

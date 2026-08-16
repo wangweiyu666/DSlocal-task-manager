@@ -13,5 +13,5 @@ fun encodeDst1ForTest(json: String): String {
     val payload = Base64.getUrlEncoder().withoutPadding().encodeToString(compressed)
     val checksum = CRC32().apply { update(compressed) }
         .value.toString(16).padStart(8, '0').uppercase(Locale.ROOT)
-    return "DST1.$payload.$checksum"
+    return "${if (Regex("\\\"sv\\\"\\s*:\\s*1").containsMatchIn(json)) "DST1.1" else "DST1"}.$payload.$checksum"
 }

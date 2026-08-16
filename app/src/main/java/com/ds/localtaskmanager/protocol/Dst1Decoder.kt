@@ -14,27 +14,34 @@ object Dst1Decoder {
     const val MAX_COMPRESSED_BYTES = 96 * 1024
     const val MAX_JSON_BYTES = 256 * 1024
 
-    fun decode(value: String): String {
+    data class DecodedEnvelope(val json: String, val minorVersion: Int)
+
+    fun decode(value: String): String = decodeEnvelope(value).json
+
+    fun decodeEnvelope(value: String): DecodedEnvelope {
         if (value.length > MAX_INPUT_CHARS) {
             invalid(Dst1ErrorCode.INPUT_TOO_LARGE, "$", "任务字符串过长")
         }
 
         val parts = value.split('.')
-        if (parts.size != 3 || parts[0] != "DST1") {
-            invalid(Dst1ErrorCode.INVALID_ENVELOPE, "$", "不是有效的 DST1 字符串")
+        val minorVersion = if (parts.size == 4 && parts[0] == "DST1" && parts[1] == "1") 1 else 0
+        if (!((minorVersion == 0 && parts.size == 3 && parts[0] == "DST1") || minorVersion == 1)) {
+            invalid(Dst1ErrorCode.INVALID_ENVELOPE, "$", "不是有效的 DST1 或 DST1.1 字符串")
         }
+        val payloadIndex = if (minorVersion == 1) 2 else 1
+        val checksumIndex = if (minorVersion == 1) 3 else 2
 
-        val expectedChecksum = parts[2]
+        val expectedChecksum = parts[checksumIndex]
         if (!expectedChecksum.matches(Regex("[0-9A-F]{8}"))) {
             invalid(Dst1ErrorCode.INVALID_CHECKSUM_FORMAT, "$.checksum", "CRC32 格式无效")
         }
 
-        if (!parts[1].matches(Regex("[A-Za-z0-9_-]+"))) {
+        if (!parts[payloadIndex].matches(Regex("[A-Za-z0-9_-]+"))) {
             invalid(Dst1ErrorCode.INVALID_BASE64URL, "$.payload", "payload 不是无填充 Base64URL")
         }
 
         val compressed = try {
-            Base64.getUrlDecoder().decode(parts[1])
+            Base64.getUrlDecoder().decode(parts[payloadIndex])
         } catch (error: IllegalArgumentException) {
             invalid(Dst1ErrorCode.INVALID_BASE64URL, "$.payload", "Base64URL 解码失败", error)
         }
@@ -69,7 +76,7 @@ object Dst1Decoder {
         } catch (error: Exception) {
             invalid(Dst1ErrorCode.DECOMPRESSION_FAILED, "$.payload", "zlib 解压失败", error)
         }
-        return try {
+        val json = try {
             Charsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT)
@@ -78,6 +85,7 @@ object Dst1Decoder {
         } catch (error: Exception) {
             invalid(Dst1ErrorCode.INVALID_UTF8, "$.json", "JSON 不是有效的 UTF-8", error)
         }
+        return DecodedEnvelope(json, minorVersion)
     }
 
     private fun invalid(

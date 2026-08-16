@@ -32,7 +32,7 @@ class Dst1Parser {
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         .withResolverStyle(ResolverStyle.STRICT)
 
-    fun parse(jsonText: String, importedAt: LocalDateTime): DstBatch {
+    fun parse(jsonText: String, importedAt: LocalDateTime, envelopeMinorVersion: Int? = null): DstBatch {
         val root = try {
             json.parseToJsonElement(jsonText) as? JsonObject
                 ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, "$", "顶层 JSON 必须是对象")
@@ -51,6 +51,10 @@ class Dst1Parser {
         if (version != 1) {
             invalid(Dst1ErrorCode.INVALID_VALUE, "v", "不支持的 JSON 协议版本：$version")
         }
+        val minorVersion = root.optionalInt("sv", "顶层") ?: 0
+        if ((envelopeMinorVersion != null && minorVersion != envelopeMinorVersion) || minorVersion !in 0..1) {
+            invalid(Dst1ErrorCode.INVALID_VALUE, "sv", "信封版本与 JSON 次版本不一致")
+        }
         val batchId = root.requiredId("b", "顶层")
         val domName = root.optionalTextField("d", 50, allowEmpty = true, context = "顶层")
         val note = root.optionalText("m", 500, allowEmpty = false, context = "顶层")
@@ -66,6 +70,18 @@ class Dst1Parser {
         val cancelled = root.optionalNonEmptyArray("z", "顶层")
             ?.mapIndexed { index, element -> element.asId("z[$index]") }
             ?: emptyList()
+        val exceptions = root.optionalNonEmptyArray("e", "顶层")
+            ?.mapIndexed { index, element -> parseException(element, "e[$index]") }
+            ?: emptyList()
+        if (minorVersion == 1 && exceptions.isEmpty()) {
+            invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, "e", "DST1.1 必须包含单日例外")
+        }
+        if (minorVersion == 0 && exceptions.isNotEmpty()) {
+            invalid(Dst1ErrorCode.CONFLICTING_FIELDS, "e", "DST1 不能包含单日例外")
+        }
+        if (exceptions.size > 100) {
+            invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "e", "单日例外不能超过 100 条")
+        }
         if (cancelled.size > 100) {
             invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "z", "撤销任务 ID 不能超过 100 个")
         }
@@ -90,13 +106,105 @@ class Dst1Parser {
                 "同一 taskId 不能同时出现在任务列表和 z 中",
             )
         }
+        if (exceptions.map { it.taskId to it.occurrenceDate }.toSet().size != exceptions.size) {
+            invalid(Dst1ErrorCode.DUPLICATE_VALUE, "e", "同一任务日期不能重复出现单日例外")
+        }
+        if (exceptions.any { it.taskId in cancelled }) {
+            invalid(Dst1ErrorCode.CONFLICTING_FIELDS, "e", "任务不能同时整项撤销和设置单日例外")
+        }
         val hasOperation = root.containsKey("d") || groups.isNotEmpty() ||
-            ungrouped.isNotEmpty() || cancelled.isNotEmpty()
+            ungrouped.isNotEmpty() || cancelled.isNotEmpty() || exceptions.isNotEmpty()
         if (!hasOperation) {
             invalid(Dst1ErrorCode.EMPTY_OPERATION, "$", "批次不包含实际操作")
         }
 
-        return DstBatch(version, batchId, domName, note, groups, ungrouped, cancelled)
+        return DstBatch(version, minorVersion, batchId, domName, note, groups, ungrouped, cancelled, exceptions)
+    }
+
+    fun parseExceptionJson(jsonText: String): DstOccurrenceException = try {
+        parseException(json.parseToJsonElement(jsonText), "e")
+    } catch (error: Dst1ValidationException) {
+        throw error
+    } catch (error: Exception) {
+        throw Dst1ValidationException(Dst1ErrorCode.INVALID_JSON, "e", "单日例外 JSON 无效：${error.message}")
+    }
+
+    private fun parseException(element: JsonElement, context: String): DstOccurrenceException {
+        val value = element.asObject(context)
+        value.requireKeys(EXCEPTION_KEYS, context)
+        val taskId = value.requiredId("i", context)
+        val date = value.optionalDate("y", context)
+            ?: invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, "$context.y", "$context 缺少计划日期")
+        val cancelled = value.optionalInt("c", context)?.also {
+            if (it != 1) invalid(Dst1ErrorCode.INVALID_VALUE, "$context.c", "$context.c 只能是 1")
+        } == 1
+        val overrideKeys = EXCEPTION_KEYS - setOf("i", "y", "c")
+        if (cancelled && value.keys.any { it in overrideKeys }) {
+            invalid(Dst1ErrorCode.CONFLICTING_FIELDS, context, "撤销单日实例时不能同时包含覆盖字段")
+        }
+        val name = value.optionalTextField("n", 100, allowEmpty = false, context)
+        val required = if (!value.containsKey("r")) Field.Missing else {
+            val flag = value.requiredInt("r", context)
+            if (flag !in 0..1) invalid(Dst1ErrorCode.INVALID_VALUE, "$context.r", "$context.r 只能是 0 或 1")
+            Field.Value(flag == 1)
+        }
+        val description = value.optionalTextField("d", 2_000, allowEmpty = true, context)
+        val deadline: Field<LocalDateTime?> = when (val raw = value["l"]) {
+            null -> Field.Missing
+            JsonNull -> Field.Value(null)
+            else -> Field.Value(parseDateTime(raw.asString("$context.l"), "$context.l"))
+        }
+        val points: Field<Int> = if (!value.containsKey("p")) Field.Missing else {
+            val parsed = value.requiredInt("p", context)
+            if (parsed !in 0..9_999) invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.p", "$context.p 必须在 0..9999")
+            Field.Value(parsed)
+        }
+        val sortOrder: Field<Int?> = when (val raw = value["o"]) {
+            null -> Field.Missing
+            JsonNull -> Field.Value(null)
+            else -> Field.Value(raw.asInt("$context.o"))
+        }
+        val steps: Field<List<DstStep>> = if (!value.containsKey("s")) Field.Missing else {
+            val parsed = value.optionalArray("s", context)!!.mapIndexed { index, step -> parseStep(step, "$context.s[$index]") }
+            if (parsed.size > 50) invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.s", "$context.s 不能超过 50 个步骤")
+            Field.Value(parsed)
+        }
+        val completionMessage: Field<String?> = when (val raw = value["m"]) {
+            null -> Field.Missing
+            JsonNull -> Field.Value(null)
+            else -> Field.Value(normalizeText(raw.asString("$context.m"), 500, true, "$context.m"))
+        }
+        val reminders: Field<List<Int>> = if (!value.containsKey("h")) Field.Missing else {
+            Field.Value(parseExceptionReminders(value.getValue("h"), "$context.h"))
+        }
+        if (deadline is Field.Value && deadline.value == null && reminders is Field.Value && reminders.value.isNotEmpty()) {
+            invalid(Dst1ErrorCode.CONFLICTING_FIELDS, "$context.h", "永不截止的单日例外不能设置提醒")
+        }
+        val execution: Field<ExecutionSpec> = when (val raw = value["u"]) {
+            null -> Field.Missing
+            JsonNull -> Field.Value(ExecutionSpec.Normal)
+            else -> Field.Value(parseExecution(raw, "$context.u"))
+        }
+        val canonical = JsonObject(EXCEPTION_KEYS.mapNotNull { key -> value[key]?.let { key to it } }.toMap()).toString()
+        return DstOccurrenceException(
+            taskId, date, cancelled, name, required, description, deadline, points, sortOrder,
+            steps, completionMessage, reminders, execution, canonical,
+        )
+    }
+
+    private fun parseExceptionReminders(element: JsonElement, context: String): List<Int> {
+        val reminders = element as? JsonArray
+            ?: invalid(Dst1ErrorCode.TYPE_MISMATCH, context, "$context 必须是数组")
+        if (reminders.size > 5) invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, context, "$context 不能超过 5 个提醒")
+        val values = reminders.mapIndexed { index, value ->
+            value.asInt("$context[$index]").also {
+                if (it !in 0..10_080) invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context[$index]", "$context[$index] 必须在 0..10080")
+            }
+        }
+        if (values.distinct() != values || values.sortedDescending() != values) {
+            invalid(Dst1ErrorCode.DUPLICATE_VALUE, context, "$context 必须唯一并降序")
+        }
+        return values
     }
 
     private fun parseGroup(
@@ -488,11 +596,12 @@ class Dst1Parser {
         throw Dst1ValidationException(code, path, message)
 
     private companion object {
-        val TOP_KEYS = setOf("v", "b", "d", "m", "g", "t", "z")
+        val TOP_KEYS = setOf("v", "sv", "b", "d", "m", "g", "t", "z", "e")
         val GROUP_KEYS = setOf("i", "n", "cm", "im", "t")
         val TASK_KEYS = setOf("i", "n", "r", "d", "y", "l", "p", "o", "s", "x", "m", "h", "u")
         val STEP_KEYS = setOf("n", "r")
         val RECURRENCE_KEYS = setOf("f", "s", "e", "c", "w", "t")
         val EXECUTION_KEYS = setOf("k", "a", "v")
+        val EXCEPTION_KEYS = linkedSetOf("i", "y", "c", "n", "r", "d", "l", "p", "o", "s", "m", "h", "u")
     }
 }

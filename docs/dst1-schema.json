@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local-task-manager.invalid/schema/dst1-v1.json",
-  "title": "DST1 v1 task batch",
-  "description": "Canonical JSON payload transported inside a DST1 envelope. Cross-record uniqueness, ordering, NFC, compressed size, and implementation capability checks are specified in docs/dst1-test-vectors.md.",
+  "title": "DST 1.x task batch",
+  "description": "Canonical JSON payload transported inside a DST1 or DST1.1 envelope. DST1.1 is identified by sv=1 and adds per-occurrence exceptions in e.",
   "type": "object",
   "additionalProperties": false,
   "required": ["v", "b"],
   "properties": {
     "v": { "const": 1 },
+    "sv": { "const": 1 },
     "b": { "$ref": "#/$defs/id" },
     "d": { "$ref": "#/$defs/text50Empty" },
     "m": { "$ref": "#/$defs/text500" },
@@ -29,13 +30,27 @@
       "maxItems": 100,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/id" }
+    },
+    "e": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/exception" }
     }
   },
+  "allOf": [
+    {
+      "if": { "required": ["sv"] },
+      "then": { "required": ["e"] },
+      "else": { "not": { "required": ["e"] } }
+    }
+  ],
   "anyOf": [
     { "required": ["d"] },
     { "required": ["g"] },
     { "required": ["t"] },
-    { "required": ["z"] }
+    { "required": ["z"] },
+    { "required": ["e"] }
   ],
   "$defs": {
     "id": {
@@ -203,6 +218,79 @@
         {
           "if": { "properties": { "l": { "type": "null" } }, "required": ["l"] },
           "then": { "not": { "required": ["h"] } }
+        }
+      ]
+    },
+    "exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["i", "y"],
+      "properties": {
+        "i": { "$ref": "#/$defs/id" },
+        "y": { "$ref": "#/$defs/date" },
+        "c": { "const": 1 },
+        "n": { "$ref": "#/$defs/text100" },
+        "r": { "type": "integer", "enum": [0, 1] },
+        "d": { "$ref": "#/$defs/text2000Empty" },
+        "l": {
+          "oneOf": [
+            { "$ref": "#/$defs/dateTime" },
+            { "type": "null" }
+          ]
+        },
+        "p": { "type": "integer", "minimum": 0, "maximum": 9999 },
+        "o": {
+          "oneOf": [
+            { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+            { "type": "null" }
+          ]
+        },
+        "s": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/step" }
+        },
+        "m": {
+          "oneOf": [
+            { "$ref": "#/$defs/text500Empty" },
+            { "type": "null" }
+          ]
+        },
+        "h": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0, "maximum": 10080 }
+        },
+        "u": {
+          "oneOf": [
+            { "$ref": "#/$defs/execution" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["c"] },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["n"] }, { "required": ["r"] }, { "required": ["d"] },
+                { "required": ["l"] }, { "required": ["p"] }, { "required": ["o"] },
+                { "required": ["s"] }, { "required": ["m"] }, { "required": ["h"] },
+                { "required": ["u"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": { "properties": { "l": { "type": "null" } }, "required": ["l"] },
+          "then": {
+            "not": {
+              "properties": { "h": { "minItems": 1 } },
+              "required": ["h"]
+            }
+          }
         }
       ]
     }

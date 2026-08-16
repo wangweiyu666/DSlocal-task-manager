@@ -100,6 +100,39 @@ class W11RecurrenceServiceTest {
     }
 
     @Test
+    fun `DST 1_1 applies current override and materializes future cancellation`() = runTest {
+        importJson(dailyJson("RepeatBatch00001", name = "Base", points = 1, count = 3))
+        importJson(
+            """{"v":1,"sv":1,"b":"ExceptBatch00001","e":[{"i":"$TASK_ID","y":"2026-07-18","n":"Adjusted","p":9},{"i":"$TASK_ID","y":"2026-07-19","c":1}]}""",
+        )
+
+        val current = database.instanceDao().getInstance(TASK_ID, "2026-07-18")!!
+        assertEquals("Adjusted", current.name)
+        assertEquals(9, current.points)
+        assertEquals(true, current.singleDayAdjusted)
+
+        clock.instantValue = Instant.parse("2026-07-19T10:00:00Z")
+        generationService.reconcileAll(TaskDay.from(LocalDateTime.ofInstant(clock.instant(), clock.zone)))
+        val cancelled = database.instanceDao().getInstance(TASK_ID, "2026-07-19")!!
+        assertEquals(TaskStatus.CANCELLED.name, cancelled.status)
+        assertEquals(true, cancelled.singleDayAdjusted)
+        assertEquals(2, database.instanceDao().generationSummaries(listOf(TASK_ID)).single().generatedCount)
+    }
+
+    @Test
+    fun `clear exception rebases mutable instance onto current template`() = runTest {
+        importJson(dailyJson("RepeatBatch00001", name = "Base", points = 1, count = 3))
+        importJson("""{"v":1,"sv":1,"b":"ExceptBatch00001","e":[{"i":"$TASK_ID","y":"2026-07-18","n":"Adjusted","p":9}]}""")
+        importJson("""{"v":1,"sv":1,"b":"ExceptBatch00002","e":[{"i":"$TASK_ID","y":"2026-07-18"}]}""")
+
+        val current = database.instanceDao().getInstance(TASK_ID, "2026-07-18")!!
+        assertEquals("Base", current.name)
+        assertEquals(1, current.points)
+        assertEquals(false, current.singleDayAdjusted)
+        assertNull(database.recurrenceExceptionDao().get(TASK_ID, "2026-07-18"))
+    }
+
+    @Test
     fun `generated count limits actual occurrences`() = runTest {
         importJson(dailyJson("RepeatBatch00001", count = 2))
         clock.instantValue = Instant.parse("2026-07-25T10:00:00Z")

@@ -1,4 +1,4 @@
-# Android Room v3 冻结规范
+# Android Room v1.3 冻结规范
 
 > 数据库：`dst-sub.db`  
 > Room 版本：3  

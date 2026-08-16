@@ -2,7 +2,7 @@
 
 > 前置：W12、W23、W24
 > 协议：保持 `DST1` / `v=1`
-> 数据库：Room v5，新增 `4→5` 索引 migration
+> 数据库：Room v1.5，新增内部 Schema `4→5` 索引 migration
 
 ## 页面结构
 
@@ -54,7 +54,7 @@ W25 只保留“我的”页面底部已有的任务提醒卡片，不实现产�
 
 ## 数据库与数据边界
 
-Room v5 不新增业务表或业务字段，只增加：
+Room v1.5 不新增业务表或业务字段，只增加：
 
 - `points_ledger(createdAtEpochMillis)`；
 - `points_ledger(reason, createdAtEpochMillis)`；

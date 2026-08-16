@@ -65,8 +65,18 @@ class AppDatabaseMigrationTest {
 
         val database = openCurrent(V5_DATABASE)
         val definition = kotlinx.coroutines.runBlocking { database.definitionDao().getDefinition("LegacyTaskV50001") }
+        val instanceColumns = database.openHelper.readableDatabase.query("PRAGMA table_info(`task_instance`)").use { cursor ->
+            buildSet {
+                while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+            }
+        }
+        val exceptionTable = database.openHelper.readableDatabase.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'recurrence_exception'",
+        ).use { it.moveToFirst() }
 
         assertEquals("Legacy task", definition?.name)
+        assertTrue("singleDayAdjusted" in instanceColumns)
+        assertTrue(exceptionTable)
         assertNoForeignKeyViolations(database)
     }
 
@@ -216,7 +226,7 @@ class AppDatabaseMigrationTest {
 
     private fun openCurrent(name: String): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .allowMainThreadQueries()
             .build()
             .also {

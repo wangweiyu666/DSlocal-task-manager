@@ -1,4 +1,4 @@
-# DST1 v1 测试向量规范
+# DST1 / DST1.1 测试向量规范
 
 > Schema：`docs/dst1-schema.json`  
 > 共享清单：`protocol-test-vectors/manifest.json`  
@@ -48,7 +48,7 @@
 | 代码 | 典型路径 | 含义 |
 |---|---|---|
 | `INPUT_TOO_LARGE` | `$` | 输入超过 128 KiB 字符上限 |
-| `INVALID_ENVELOPE` | `$` | 不是三段 `DST1.payload.checksum` |
+| `INVALID_ENVELOPE` | `$` | 既不是三段 `DST1.payload.checksum`，也不是四段 `DST1.1.payload.checksum` |
 | `INVALID_CHECKSUM_FORMAT` | `$.checksum` | CRC32 不是 8 位大写十六进制 |
 | `INVALID_BASE64URL` | `$.payload` | payload 不是无填充 Base64URL |
 | `COMPRESSED_DATA_TOO_LARGE` | `$.payload` | 解码后的压缩数据超过 96 KiB |
@@ -148,6 +148,12 @@ JSON Schema 的 `maxLength` 按 Unicode 字符计算，但 NFC、首尾裁剪、
 
 ## 8. 变更规则
 
+## DST1.1 单日例外覆盖
+
+`valid/dst11-occurrence-exceptions.json` 同时用于 Web 编码/解码与 Android 解析测试，覆盖内容修改、单日撤销和清除例外。DST1.1 使用四段 envelope，并要求 JSON 中 `sv:1` 与 envelope 次版本一致。
+
+非法测试至少覆盖：重复 `i+y`、`c:1` 与覆盖字段共存、与顶层 `z` 冲突、超过 100 项、非法日期/截止时间，以及不存在或非重复的目标任务。
+
 增加或修改 DST1 字段时，必须在同一变更中同步：
 
 1. `docs/dst1-schema.json`；
@@ -157,4 +163,4 @@ JSON Schema 的 `maxLength` 按 Unicode 字符计算，但 NFC、首尾裁剪、
 5. Android 解析器及统一加载测试；
 6. 未来 Dom 编码器和同一清单的加载测试。
 
-只有不兼容的字段或业务语义变化才升级 DST 主版本。能力从 `CAPABILITY_NOT_IMPLEMENTED` 变为支持时，协议仍保持 DST1 v1，只更新 Android 预期。
+只有不兼容的字段或业务语义变化才升级 DST 主版本。DST1.1 是 DST1 主版本下的兼容次版本；没有 `e` 时仍输出 DST1，有 `e` 时才输出 DST1.1。

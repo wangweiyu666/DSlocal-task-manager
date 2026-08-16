@@ -28,6 +28,7 @@ export function createDraft(name = "未命名批次"): DraftRecord {
     includeGroupIds: [],
     tasks: [],
     cancellations: [],
+    exceptions: [],
     createdAt: now,
     updatedAt: now
   };

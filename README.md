@@ -10,7 +10,8 @@ DStationery 是一款完全离线的 Android 本地任务、执行、积分、�
 
 ## 当前版本
 
-- 预发布版本：`0.1.0-alpha.3`（versionCode 4）
+- 当前已发布预览版：`0.1.0-alpha.3`（versionCode 4）
+- 当前开发版：Android `0.1.0-alpha.4`（versionCode 5），Web `0.2.0`
 - 最低系统：Android 8.0 / API 26
 - 包名：`com.ds.localtaskmanager`
 - 权限：通知、设备重启、振动；无网络、照片或广泛存储权限

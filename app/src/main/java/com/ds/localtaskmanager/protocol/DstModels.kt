@@ -12,12 +12,14 @@ sealed interface Field<out T> {
 
 data class DstBatch(
     val version: Int,
+    val minorVersion: Int,
     val batchId: String,
     val domName: Field<String>,
     val note: String?,
     val groups: List<DstGroupPatch>,
     val ungroupedTasks: List<DstTask>,
     val cancelledTaskIds: List<String>,
+    val exceptions: List<DstOccurrenceException>,
 )
 
 data class DstGroupPatch(
@@ -51,5 +53,28 @@ data class DstStep(
     val name: String,
     val required: Boolean,
 )
+
+data class DstOccurrenceException(
+    val taskId: String,
+    val occurrenceDate: LocalDate,
+    val cancelled: Boolean,
+    val name: Field<String>,
+    val required: Field<Boolean>,
+    val description: Field<String>,
+    val deadline: Field<LocalDateTime?>,
+    val points: Field<Int>,
+    val sortOrder: Field<Int?>,
+    val steps: Field<List<DstStep>>,
+    val completionMessage: Field<String?>,
+    val reminders: Field<List<Int>>,
+    val execution: Field<ExecutionSpec>,
+    val patchJson: String,
+) {
+    val clearsException: Boolean
+        get() = !cancelled && listOf(
+            name, required, description, deadline, points, sortOrder, steps,
+            completionMessage, reminders, execution,
+        ).all { it is Field.Missing }
+}
 
 fun DstBatch.allTasks(): List<DstTask> = groups.flatMap { it.tasks } + ungroupedTasks

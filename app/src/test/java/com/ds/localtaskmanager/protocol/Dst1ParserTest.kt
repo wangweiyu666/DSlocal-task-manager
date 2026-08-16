@@ -78,6 +78,32 @@ class Dst1ParserTest {
     }
 
     @Test
+    fun `DST 1_1 occurrence exceptions preserve missing null empty and cancellation`() {
+        val batch = parser.parse(resource("valid/dst11-occurrence-exceptions.json"), importedAt)
+        assertEquals(1, batch.minorVersion)
+        assertEquals(2, batch.exceptions.size)
+        val adjusted = batch.exceptions.first()
+        assertEquals(Field.Value("Adjusted"), adjusted.name)
+        assertEquals(Field.Value(null), adjusted.sortOrder)
+        assertEquals(Field.Value(emptyList<DstStep>()), adjusted.steps)
+        assertEquals(Field.Value(null), adjusted.completionMessage)
+        assertEquals(Field.Value(ExecutionSpec.Normal), adjusted.execution)
+        assertTrue(batch.exceptions.last().cancelled)
+    }
+
+    @Test
+    fun `DST 1_1 cancellation cannot carry overrides`() {
+        val error = runCatching {
+            parser.parse(
+                """{"v":1,"sv":1,"b":"Dst11Batch000002","e":[{"i":"Dst11Task0000001","y":"2026-08-18","c":1,"n":"No"}]}""",
+                importedAt,
+            )
+        }.exceptionOrNull() as Dst1ValidationException
+        assertEquals(Dst1ErrorCode.CONFLICTING_FIELDS, error.code)
+        assertEquals("e[0]", error.path)
+    }
+
+    @Test
     fun `task model preserves whether y and l were explicitly supplied`() {
         val omitted = parser.parse(
             """{"v":1,"b":"DateBatch0000001","t":[{"i":"DateTask00000001","n":"Task","r":1}]}""",
@@ -149,7 +175,7 @@ class Dst1ParserTest {
         )
         assertEquals("false", schema.getValue("additionalProperties").toString())
         val definitions = schema.getValue("\$defs").jsonObject
-        listOf("group", "step", "recurrence", "task").forEach { name ->
+        listOf("group", "step", "recurrence", "task", "exception").forEach { name ->
             assertEquals("false", definitions.getValue(name).jsonObject.getValue("additionalProperties").toString())
         }
     }

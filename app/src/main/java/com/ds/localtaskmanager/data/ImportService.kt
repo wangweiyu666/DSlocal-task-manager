@@ -14,6 +14,7 @@ import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.StepFingerprint
 import com.ds.localtaskmanager.domain.TaskDay
 import com.ds.localtaskmanager.domain.TaskStatus
+import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.domain.execution.ExecutionSpec
 import com.ds.localtaskmanager.domain.update.InstanceUpdatePlan
 import com.ds.localtaskmanager.domain.update.InstanceUpdatePlanner
@@ -26,12 +27,16 @@ import com.ds.localtaskmanager.protocol.Dst1Parser
 import com.ds.localtaskmanager.protocol.DstBatch
 import com.ds.localtaskmanager.protocol.DstGroupPatch
 import com.ds.localtaskmanager.protocol.DstTask
+import com.ds.localtaskmanager.protocol.DstOccurrenceException
+import com.ds.localtaskmanager.protocol.Dst1ErrorCode
+import com.ds.localtaskmanager.protocol.Dst1ValidationException
 import com.ds.localtaskmanager.protocol.Field
 import com.ds.localtaskmanager.protocol.allTasks
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 
 enum class ImportChangeType {
@@ -53,6 +58,11 @@ enum class ImportChangeType {
     RECURRENCE_UPDATED,
     RECURRENCE_DISABLED,
     RECURRENCE_RESUMED,
+    OCCURRENCE_UPDATED,
+    OCCURRENCE_CANCELLED,
+    OCCURRENCE_RESTORED,
+    OCCURRENCE_CLEARED,
+    OCCURRENCE_IGNORED,
 }
 
 data class TaskImportChange(
@@ -110,14 +120,16 @@ class RoomImportService(
     private val pointsTransferService by lazy { HistoricalPointsTransferService(database, clock, idGenerator) }
 
     override suspend fun preview(encoded: String): ImportPreview {
-        val batch = parser.parse(Dst1Decoder.decode(encoded.trim()), nowDateTime())
+        val decoded = Dst1Decoder.decodeEnvelope(encoded.trim())
+        val batch = parser.parse(decoded.json, nowDateTime(), decoded.minorVersion)
         return preview(batch)
     }
 
     override suspend fun import(preview: ImportPreview): ImportPreview = database.withTransaction {
         if (profileDao.hasBatch(preview.batch.batchId)) throw DuplicateBatchException(preview.batch.batchId)
         val freshPreview = preview(preview.batch)
-        val taskIds = (freshPreview.batch.allTasks().map { it.taskId } + freshPreview.batch.cancelledTaskIds).distinct()
+        val taskIds = (freshPreview.batch.allTasks().map { it.taskId } + freshPreview.batch.cancelledTaskIds +
+            freshPreview.batch.exceptions.map { it.taskId }).distinct()
         val oldDefinitions = if (taskIds.isEmpty()) emptyMap() else {
             definitionDao.getDefinitions(taskIds).associateBy { it.taskId }
         }
@@ -153,7 +165,7 @@ class RoomImportService(
     private suspend fun preview(batch: DstBatch): ImportPreview {
         if (profileDao.hasBatch(batch.batchId)) throw DuplicateBatchException(batch.batchId)
         val tasks = batch.allTasks()
-        val ids = (tasks.map { it.taskId } + batch.cancelledTaskIds).distinct()
+        val ids = (tasks.map { it.taskId } + batch.cancelledTaskIds + batch.exceptions.map { it.taskId }).distinct()
         val oldDefinitions = if (ids.isEmpty()) emptyMap() else {
             definitionDao.getDefinitions(ids).associateBy { it.taskId }
         }
@@ -268,6 +280,41 @@ class RoomImportService(
             }
             changes += TaskImportChange(id, definition?.name ?: id, setOf(type))
         }
+        batch.exceptions.forEachIndexed { index, exception ->
+            val definition = desiredDefinitions[exception.taskId] ?: oldDefinitions[exception.taskId]
+            validateExceptionTarget(exception, definition, index)
+            val instance = instanceDao.getInstance(exception.taskId, exception.occurrenceDate.toString())
+            val stored = database.recurrenceExceptionDao().get(exception.taskId, exception.occurrenceDate.toString())
+            val types = linkedSetOf(when {
+                exception.clearsException -> ImportChangeType.OCCURRENCE_CLEARED
+                instance?.status == TaskStatus.COMPLETED.name -> ImportChangeType.OCCURRENCE_IGNORED
+                instance?.status == TaskStatus.MISSED.name && !exception.cancelled && !exception.reopensMissed() ->
+                    ImportChangeType.OCCURRENCE_IGNORED
+                exception.cancelled -> ImportChangeType.OCCURRENCE_CANCELLED
+                instance?.status == TaskStatus.CANCELLED.name || stored?.cancelled == true ->
+                    ImportChangeType.OCCURRENCE_RESTORED
+                else -> ImportChangeType.OCCURRENCE_UPDATED
+            })
+            if (ImportChangeType.OCCURRENCE_IGNORED !in types) {
+                if (exception.clearsException || exception.steps is Field.Value) types += ImportChangeType.STEP_RESET
+                if (exception.clearsException || exception.cancelled || exception.execution is Field.Value) {
+                    types += ImportChangeType.EXECUTION_RESET
+                }
+                if (!exception.cancelled && exception.description is Field.Value &&
+                    (exception.execution.valueOr(definition?.toExecutionSpec()) is ExecutionSpec.Information)
+                ) types += ImportChangeType.INFORMATION_REVIEW_REQUIRED
+            }
+            changes += TaskImportChange(
+                taskId = exception.taskId,
+                name = definition?.name ?: exception.taskId,
+                types = types,
+                oldDate = exception.occurrenceDate.toString(),
+                newDate = exception.occurrenceDate.toString(),
+                oldDeadline = instance?.deadline,
+                newDeadline = (exception.deadline as? Field.Value)?.value?.toString() ?: instance?.deadline,
+                oldStatus = instance?.status,
+            )
+        }
         return ImportPreview(
             batch = batch,
             taskChanges = changes,
@@ -283,7 +330,40 @@ class RoomImportService(
         applyProfile(batch, now)
         applyGroups(batch.groups, now)
         applyTasks(batch, now)
+        applyExceptions(batch, now)
         applyCancellations(batch, now)
+    }
+
+    private suspend fun validateExceptionTarget(
+        exception: DstOccurrenceException,
+        definition: TaskDefinitionEntity?,
+        index: Int,
+    ) {
+        if (definition == null || definition.cancelled || definition.recurrenceFrequency == null) {
+            throw Dst1ValidationException(
+                Dst1ErrorCode.INVALID_VALUE,
+                "e[$index].i",
+                "单日例外目标必须是有效的重复模板",
+            )
+        }
+        val date = exception.occurrenceDate
+        val existing = instanceDao.getInstance(exception.taskId, date.toString())
+        val effectiveDeadline = exception.deadline.valueOr(definition.deadlineForOccurrence(date))
+        val effectiveReminders = exception.reminders.valueOr(definition.reminderMinutesJson.toReminderList())
+        if (effectiveReminders.isNotEmpty() && effectiveDeadline == null) {
+            throw Dst1ValidationException(
+                Dst1ErrorCode.CONFLICTING_FIELDS,
+                "e[$index].h",
+                "单日提醒需要模板或例外提供截止时间",
+            )
+        }
+        if (existing != null) return
+        if (date < TaskDay.from(nowDateTime())) {
+            throw Dst1ValidationException(Dst1ErrorCode.INVALID_DATE, "e[$index].y", "不能为未生成的过去日期补建单日例外")
+        }
+        if (date !in generationService.previewDefinition(definition, date)) {
+            throw Dst1ValidationException(Dst1ErrorCode.INVALID_DATE, "e[$index].y", "日期不属于重复任务的有效计划或已超出剩余次数")
+        }
     }
 
     private suspend fun applyProfile(batch: DstBatch, now: Long) {
@@ -373,10 +453,12 @@ class RoomImportService(
                         ),
                     ),
                 )
+                cleanupInvalidFutureExceptions(definitions.first { it.taskId == task.taskId }, batch.batchId, now)
                 generationService.reconcileTask(task.taskId, TaskDay.from(nowDateTime()), batch.batchId)
                 return@forEach
             }
             if (oldDefinition?.recurrenceFrequency != null) {
+                deleteUngeneratedExceptions(task.taskId, batch.batchId, now)
                 allOldInstances[task.taskId].orEmpty()
                     .filter { it.occurrenceKey != "once" }
                     .forEach { cancelForTemplateConversion(it, batch.batchId, now) }
@@ -452,6 +534,208 @@ class RoomImportService(
             )
         }
     }
+
+    private suspend fun cleanupInvalidFutureExceptions(
+        definition: TaskDefinitionEntity,
+        batchId: String,
+        now: Long,
+    ) {
+        val today = TaskDay.from(nowDateTime())
+        val candidates = database.recurrenceExceptionDao().forTasks(listOf(definition.taskId))
+        for (stored in candidates) {
+            val date = LocalDate.parse(stored.occurrenceDate)
+            val exists = instanceDao.getInstance(definition.taskId, stored.occurrenceDate) != null
+            val stalePast = date < today && !exists
+            val invalidFuture = date >= today && !exists && date !in generationService.previewDefinition(definition, date)
+            if (stalePast || invalidFuture) {
+                database.recurrenceExceptionDao().delete(definition.taskId, stored.occurrenceDate)
+                auditDao.insertLogs(
+                    listOf(
+                        ActionLogEntity(
+                            idGenerator.next(), definition.taskId, null, batchId,
+                            "OCCURRENCE_EXCEPTION_INVALIDATED", "{\"date\":\"${stored.occurrenceDate}\"}", now,
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
+    private suspend fun deleteUngeneratedExceptions(taskId: String, batchId: String, now: Long) {
+        for (stored in database.recurrenceExceptionDao().forTask(taskId)) {
+            if (instanceDao.getInstance(taskId, stored.occurrenceDate) != null) continue
+            database.recurrenceExceptionDao().delete(taskId, stored.occurrenceDate)
+            auditDao.insertLogs(
+                listOf(
+                    ActionLogEntity(
+                        idGenerator.next(), taskId, null, batchId,
+                        "OCCURRENCE_EXCEPTION_INVALIDATED",
+                        "{\"date\":\"${stored.occurrenceDate}\",\"reason\":\"recurrence_removed\"}", now,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private suspend fun applyExceptions(batch: DstBatch, now: Long) {
+        for (exception in batch.exceptions) {
+            val definition = checkNotNull(definitionDao.getDefinition(exception.taskId))
+            val date = exception.occurrenceDate.toString()
+            val existing = instanceDao.getInstance(exception.taskId, date)
+            val stored = database.recurrenceExceptionDao().get(exception.taskId, date)
+
+            if (exception.clearsException) {
+                database.recurrenceExceptionDao().delete(exception.taskId, date)
+                if (existing != null && existing.status in setOf(
+                        TaskStatus.NOT_STARTED.name,
+                        TaskStatus.PENDING.name,
+                        TaskStatus.CANCELLED.name,
+                    )
+                ) {
+                    applyExceptionToInstance(definition, exception, existing, batch.batchId, now, clearing = true)
+                }
+                auditOccurrence(exception, batch.batchId, "OCCURRENCE_EXCEPTION_CLEARED", now)
+                continue
+            }
+            if (existing?.status == TaskStatus.COMPLETED.name ||
+                (existing?.status == TaskStatus.MISSED.name && !exception.cancelled && !exception.reopensMissed())
+            ) {
+                auditOccurrence(exception, batch.batchId, "OCCURRENCE_EXCEPTION_IGNORED", now)
+                continue
+            }
+            database.recurrenceExceptionDao().upsert(
+                RecurrenceExceptionEntity(
+                    taskId = exception.taskId,
+                    occurrenceDate = date,
+                    cancelled = exception.cancelled,
+                    patchJson = exception.patchJson,
+                    createdAtEpochMillis = stored?.createdAtEpochMillis ?: now,
+                    updatedAtEpochMillis = now,
+                ),
+            )
+            if (existing != null) {
+                applyExceptionToInstance(definition, exception, existing, batch.batchId, now, clearing = false)
+            }
+            auditOccurrence(
+                exception,
+                batch.batchId,
+                if (exception.cancelled) "OCCURRENCE_CANCELLED" else "OCCURRENCE_EXCEPTION_APPLIED",
+                now,
+            )
+        }
+    }
+
+    private suspend fun applyExceptionToInstance(
+        definition: TaskDefinitionEntity,
+        exception: DstOccurrenceException,
+        existing: TaskInstanceEntity,
+        batchId: String,
+        now: Long,
+        clearing: Boolean,
+    ) {
+        val date = exception.occurrenceDate
+        val deadline = if (clearing) definition.deadlineForOccurrence(date) else {
+            exception.deadline.valueOr(definition.deadlineForOccurrence(date))
+        }
+        val execution = if (clearing) definition.toExecutionSpec() else {
+            exception.execution.valueOr(definition.toExecutionSpec())
+        }
+        val reminderMinutes = if (clearing) definition.reminderMinutesJson.toReminderList() else {
+            exception.reminders.valueOr(definition.reminderMinutesJson.toReminderList())
+        }
+        val status = when {
+            !clearing && exception.cancelled -> TaskStatus.CANCELLED
+            else -> TaskStateMachine.statusAt(date, deadline, nowDateTime())
+        }
+        val updated = existing.copy(
+            name = if (clearing) definition.name else exception.name.valueOr(definition.name),
+            description = if (clearing) definition.description else exception.description.valueOr(definition.description),
+            deadline = deadline?.toString(),
+            required = if (clearing) definition.required else exception.required.valueOr(definition.required),
+            points = if (clearing) definition.points else exception.points.valueOr(definition.points),
+            sortOrder = if (clearing) definition.sortOrder else exception.sortOrder.valueOr(definition.sortOrder),
+            completionMessage = if (clearing) definition.completionMessage else
+                exception.completionMessage.valueOr(definition.completionMessage) ?: "任务已完成",
+            status = status.name,
+            executionKind = execution.kindName(),
+            executionAction = execution.actionValue(),
+            executionTarget = execution.targetValue(),
+            reminderMinutesJson = reminderMinutes.toStorageJson(),
+            publishedAtEpochMillis = now,
+            updatedAtEpochMillis = now,
+            singleDayAdjusted = !clearing,
+        )
+        instanceDao.upsertInstances(listOf(updated))
+
+        val resetSteps = clearing || exception.steps is Field.Value
+        if (resetSteps) {
+            val steps = if (clearing) {
+                definitionDao.getStepDefinitions(definition.taskId).map {
+                    com.ds.localtaskmanager.protocol.DstStep(it.name, it.required)
+                }
+            } else {
+                exception.steps.valueOr(emptyList())
+            }
+            instanceDao.deleteInstanceSteps(existing.taskId, existing.occurrenceKey)
+            instanceDao.insertInstanceSteps(steps.mapIndexed { index, step ->
+                InstanceStepEntity(existing.taskId, existing.occurrenceKey, index, step.name, step.required, false, now)
+            })
+            auditOccurrence(exception, batchId, "OCCURRENCE_STEPS_RESET", now)
+        }
+        if (clearing || exception.cancelled || exception.execution is Field.Value) {
+            executionDao.deleteProgress(existing.taskId, existing.occurrenceKey)
+            auditOccurrence(exception, batchId, "OCCURRENCE_EXECUTION_RESET", now)
+        }
+    }
+
+    private suspend fun auditOccurrence(
+        exception: DstOccurrenceException,
+        batchId: String,
+        action: String,
+        now: Long,
+    ) {
+        val date = exception.occurrenceDate.toString()
+        val occurrenceKey = date.takeIf { instanceDao.getInstance(exception.taskId, it) != null }
+        auditDao.insertLogs(
+            listOf(
+                ActionLogEntity(
+                    eventId = idGenerator.next(),
+                    taskId = exception.taskId,
+                    occurrenceKey = occurrenceKey,
+                    batchId = batchId,
+                    action = action,
+                    detail = if (occurrenceKey == null) "{\"date\":\"$date\"}" else null,
+                    createdAtEpochMillis = now,
+                ),
+            ),
+        )
+    }
+
+    private fun DstOccurrenceException.reopensMissed(): Boolean =
+        (deadline as? Field.Value)?.value?.isAfter(nowDateTime()) == true
+
+    private fun TaskDefinitionEntity.deadlineForOccurrence(date: LocalDate): LocalDateTime? =
+        recurrenceDeadlineTime?.let { timeText ->
+            val time = LocalTime.parse(timeText)
+            (if (!time.isAfter(LocalTime.of(4, 0))) date.plusDays(1) else date).atTime(time)
+        }
+
+    private fun TaskDefinitionEntity.toExecutionSpec(): ExecutionSpec = when (executionKind) {
+        "COUNTER" -> ExecutionSpec.Counter(
+            action = if (executionAction == 1) com.ds.localtaskmanager.domain.execution.CounterAction.SLIDER
+            else com.ds.localtaskmanager.domain.execution.CounterAction.CLICK,
+            target = checkNotNull(executionTarget),
+        )
+        "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
+        "INFORMATION" -> ExecutionSpec.Information
+        else -> ExecutionSpec.Normal
+    }
+
+    private fun String?.toReminderList(): List<Int> = this
+        ?.removePrefix("[")?.removeSuffix("]")
+        ?.takeIf(String::isNotBlank)
+        ?.split(',')?.map(String::toInt)
+        .orEmpty()
 
     private suspend fun applyCancellations(batch: DstBatch, now: Long) {
         if (batch.cancelledTaskIds.isEmpty()) return

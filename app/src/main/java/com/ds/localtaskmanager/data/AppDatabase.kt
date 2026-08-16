@@ -10,6 +10,7 @@ import com.ds.localtaskmanager.data.dao.DefinitionDao
 import com.ds.localtaskmanager.data.dao.ExecutionDao
 import com.ds.localtaskmanager.data.dao.InstanceDao
 import com.ds.localtaskmanager.data.dao.ProfileDao
+import com.ds.localtaskmanager.data.dao.RecurrenceExceptionDao
 import com.ds.localtaskmanager.data.dao.ReminderDao
 import com.ds.localtaskmanager.data.dao.ResultDao
 import com.ds.localtaskmanager.data.dao.StatisticsDao
@@ -21,6 +22,7 @@ import com.ds.localtaskmanager.data.dao.StatisticsDao
         TaskGroupEntity::class,
         TaskDefinitionEntity::class,
         TaskStepDefinitionEntity::class,
+        RecurrenceExceptionEntity::class,
         TaskInstanceEntity::class,
         InstanceStepEntity::class,
         ExecutionProgressEntity::class,
@@ -31,7 +33,7 @@ import com.ds.localtaskmanager.data.dao.StatisticsDao
         ResultRevisionEntity::class,
         ReminderRecordEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -44,6 +46,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reminderDao(): ReminderDao
     abstract fun statisticsDao(): StatisticsDao
     abstract fun backupDao(): BackupDao
+    abstract fun recurrenceExceptionDao(): RecurrenceExceptionDao
 
     companion object {
         fun create(context: Context): AppDatabase =
@@ -52,7 +55,7 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 "dst-sub.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

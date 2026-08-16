@@ -379,6 +379,7 @@ private fun Header(instance: TaskInstanceEntity) {
         Text(instance.name, style = MaterialTheme.typography.headlineLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             StatusPill(instance.status)
+            if (instance.singleDayAdjusted) Text("单日调整", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             Text(if (instance.required) "必做" else "选做", style = MaterialTheme.typography.labelLarge)
             Text("${instance.points} 分", style = MaterialTheme.typography.labelLarge)
         }

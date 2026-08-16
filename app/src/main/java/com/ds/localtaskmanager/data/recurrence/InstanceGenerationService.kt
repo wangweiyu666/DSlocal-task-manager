@@ -12,6 +12,7 @@ import com.ds.localtaskmanager.data.result.ResultRevisionReason
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
+import com.ds.localtaskmanager.domain.execution.ExecutionSpec
 import com.ds.localtaskmanager.domain.recurrence.EffectiveRecurrence
 import com.ds.localtaskmanager.domain.recurrence.RecurrenceDeadline
 import com.ds.localtaskmanager.domain.recurrence.RecurrenceFrequency
@@ -19,6 +20,8 @@ import com.ds.localtaskmanager.domain.recurrence.RecurrencePlanRequest
 import com.ds.localtaskmanager.domain.recurrence.RecurrencePlanner
 import com.ds.localtaskmanager.domain.recurrence.WeekdayMask
 import com.ds.localtaskmanager.domain.recurrence.deadlineFor
+import com.ds.localtaskmanager.protocol.Dst1Parser
+import com.ds.localtaskmanager.protocol.Field
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
@@ -55,6 +58,7 @@ class RoomInstanceGenerationService(
     private val idGenerator: RecordIdGenerator,
 ) : InstanceGenerationService {
     private val resultService by lazy { ResultRecalculationService(database, clock, idGenerator) }
+    private val exceptionParser = Dst1Parser()
     override suspend fun previewDefinition(
         definition: TaskDefinitionEntity,
         throughDate: LocalDate,
@@ -179,44 +183,63 @@ class RoomInstanceGenerationService(
         val nowDateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(now), clock.zone)
         val created = mutableListOf<TaskInstanceKey>()
         dates.forEach { date ->
-            val deadline = deadlineFor(date, recurrence.deadline)
+            val storedException = database.recurrenceExceptionDao().get(definition.taskId, date.toString())
+            val exception = storedException?.let { exceptionParser.parseExceptionJson(it.patchJson) }
+            val deadline = exception?.deadline.valueOr(deadlineFor(date, recurrence.deadline))
+            val execution = exception?.execution.valueOr(definition.toExecutionSpec()) ?: definition.toExecutionSpec()
+            val reminders = exception?.reminders.valueOr(definition.reminderMinutesJson.toReminderList())
+                ?: definition.reminderMinutesJson.toReminderList()
+            val exceptionSteps = (exception?.steps as? Field.Value)?.value
+            val effectiveSteps = exceptionSteps?.mapIndexed { index, step ->
+                InstanceStepEntity(
+                    taskId = definition.taskId,
+                    occurrenceKey = date.toString(),
+                    position = index,
+                    name = step.name,
+                    required = step.required,
+                    completed = false,
+                    updatedAtEpochMillis = now,
+                )
+            } ?: stepDefinitions.map { step ->
+                InstanceStepEntity(
+                    taskId = definition.taskId,
+                    occurrenceKey = date.toString(),
+                    position = step.position,
+                    name = step.name,
+                    required = step.required,
+                    completed = false,
+                    updatedAtEpochMillis = now,
+                )
+            }
             val instance = TaskInstanceEntity(
                 taskId = definition.taskId,
                 occurrenceKey = date.toString(),
-                name = definition.name,
-                description = definition.description,
+                name = exception?.name.valueOr(definition.name) ?: definition.name,
+                description = exception?.description.valueOr(definition.description) ?: definition.description,
                 taskDate = date.toString(),
                 deadline = deadline?.toString(),
                 groupId = definition.groupId,
-                required = definition.required,
-                points = definition.points,
-                sortOrder = definition.sortOrder,
-                completionMessage = definition.completionMessage,
-                status = TaskStateMachine.statusAt(date, deadline, nowDateTime).name,
+                required = exception?.required.valueOr(definition.required) ?: definition.required,
+                points = exception?.points.valueOr(definition.points) ?: definition.points,
+                sortOrder = exception?.sortOrder.valueOr(definition.sortOrder) ?: definition.sortOrder,
+                completionMessage = exception?.completionMessage.valueOr(definition.completionMessage)
+                    ?: "任务已完成",
+                status = if (exception?.cancelled == true) "CANCELLED" else TaskStateMachine.statusAt(date, deadline, nowDateTime).name,
                 completedAtEpochMillis = null,
                 createdAtEpochMillis = now,
                 updatedAtEpochMillis = now,
                 category = recurrence.frequency.category,
-                executionKind = definition.executionKind,
-                executionAction = definition.executionAction,
-                executionTarget = definition.executionTarget,
-                reminderMinutesJson = definition.reminderMinutesJson,
+                executionKind = execution.kindName(),
+                executionAction = execution.actionValue(),
+                executionTarget = execution.targetValue(),
+                reminderMinutesJson = reminders.toStorageJson(),
                 publishedAtEpochMillis = now,
                 groupNameSnapshot = groupNameSnapshot,
+                singleDayAdjusted = exception != null,
             )
             if (database.instanceDao().insertInstance(instance) == -1L) return@forEach
             database.instanceDao().insertInstanceSteps(
-                stepDefinitions.map { step ->
-                    InstanceStepEntity(
-                        taskId = definition.taskId,
-                        occurrenceKey = date.toString(),
-                        position = step.position,
-                        name = step.name,
-                        required = step.required,
-                        completed = false,
-                        updatedAtEpochMillis = now,
-                    )
-                },
+                effectiveSteps,
             )
             database.auditDao().insertLogs(
                 listOf(
@@ -284,5 +307,44 @@ class RoomInstanceGenerationService(
             weekdays = WeekdayMask.decode(recurrenceWeekdaysMask),
             deadline = deadline,
         )
+    }
+
+    private fun TaskDefinitionEntity.toExecutionSpec(): ExecutionSpec = when (executionKind) {
+        "COUNTER" -> ExecutionSpec.Counter(
+            action = if (executionAction == 1) com.ds.localtaskmanager.domain.execution.CounterAction.SLIDER else com.ds.localtaskmanager.domain.execution.CounterAction.CLICK,
+            target = checkNotNull(executionTarget),
+        )
+        "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
+        "INFORMATION" -> ExecutionSpec.Information
+        else -> ExecutionSpec.Normal
+    }
+
+    private fun ExecutionSpec.kindName(): String = when (this) {
+        ExecutionSpec.Normal -> "NORMAL"
+        is ExecutionSpec.Counter -> "COUNTER"
+        is ExecutionSpec.Timer -> "TIMER"
+        ExecutionSpec.Information -> "INFORMATION"
+    }
+
+    private fun ExecutionSpec.actionValue(): Int? = (this as? ExecutionSpec.Counter)?.action?.protocolValue
+
+    private fun ExecutionSpec.targetValue(): Int? = when (this) {
+        is ExecutionSpec.Counter -> target
+        is ExecutionSpec.Timer -> targetSeconds
+        else -> null
+    }
+
+    private fun String?.toReminderList(): List<Int> = this
+        ?.removePrefix("[")?.removeSuffix("]")
+        ?.takeIf { it.isNotBlank() }
+        ?.split(',')?.map(String::toInt)
+        .orEmpty()
+
+    private fun List<Int>.toStorageJson(): String? = takeIf { it.isNotEmpty() }
+        ?.joinToString(prefix = "[", postfix = "]", separator = ",")
+
+    private fun <T> Field<T>?.valueOr(fallback: T): T = when (this) {
+        null, Field.Missing -> fallback
+        is Field.Value -> value
     }
 }

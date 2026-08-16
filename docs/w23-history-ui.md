@@ -2,7 +2,7 @@
 
 > 前置：W10、W11、W12、W20、W22
 > 协议：保持 `DST1` / `v=1`
-> 数据库：Room v4，新增 `3→4` migration
+> 数据库：Room v1.4，新增内部 Schema `3→4` migration
 
 ## 已实现
 

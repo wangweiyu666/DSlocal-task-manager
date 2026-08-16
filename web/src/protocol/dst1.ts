@@ -1,6 +1,6 @@
 import { deflate, Inflate } from "pako";
 import { base64UrlToBytes, bytesToBase64Url } from "./id";
-import { Dst1ProtocolError, type Dst1Batch, type Dst1Execution, type Dst1Group, type Dst1Recurrence, type Dst1Step, type Dst1Task } from "./types";
+import { Dst1ProtocolError, type Dst11Exception, type Dst1Batch, type Dst1Execution, type Dst1Group, type Dst1Recurrence, type Dst1Step, type Dst1Task } from "./types";
 import { validateDst1Batch } from "./validation";
 
 export const DST1_LIMITS = {
@@ -62,13 +62,31 @@ function compactGroup(group: Dst1Group): Dst1Group {
   return result;
 }
 
+export function compactException(value: Dst11Exception): Dst11Exception {
+  const result: Dst11Exception = { i: value.i, y: value.y };
+  if (value.c === 1) result.c = 1;
+  if (value.n !== undefined) result.n = value.n.normalize("NFC");
+  if (value.r !== undefined) result.r = value.r;
+  if (value.d !== undefined) result.d = value.d.normalize("NFC");
+  if (value.l !== undefined) result.l = value.l;
+  if (value.p !== undefined) result.p = value.p;
+  if (value.o !== undefined) result.o = value.o;
+  if (value.s !== undefined) result.s = value.s.map(compactStep);
+  if (value.m !== undefined) result.m = value.m?.normalize("NFC") ?? null;
+  if (value.h !== undefined) result.h = [...value.h].sort((a, b) => b - a);
+  if (value.u !== undefined) result.u = value.u ? compactExecution(value.u) : null;
+  return result;
+}
+
 export function canonicalizeBatch(batch: Dst1Batch): Dst1Batch {
   const result: Dst1Batch = { v: 1, b: batch.b };
+  if (batch.e?.length) result.sv = 1;
   if (batch.d !== undefined) result.d = batch.d.normalize("NFC");
   if (batch.m !== undefined && batch.m !== "") result.m = batch.m.normalize("NFC");
   if (batch.g?.length) result.g = batch.g.map(compactGroup);
   if (batch.t?.length) result.t = batch.t.map(compactTask);
   if (batch.z?.length) result.z = [...batch.z];
+  if (batch.e?.length) result.e = batch.e.map(compactException);
   return result;
 }
 
@@ -89,7 +107,7 @@ export function encodeDst1(batch: Dst1Batch): EncodedDst1 {
   const compressed = deflate(jsonBytes, { level: 6 });
   if (compressed.length > DST1_LIMITS.compressedBytes) throw new Dst1ProtocolError("COMPRESSED_DATA_TOO_LARGE", "$.payload", "压缩数据超过 96 KiB");
   const checksum = crc32(compressed).toString(16).padStart(8, "0").toUpperCase();
-  const envelope = `DST1.${bytesToBase64Url(compressed)}.${checksum}`;
+  const envelope = `${canonical.sv === 1 ? "DST1.1" : "DST1"}.${bytesToBase64Url(compressed)}.${checksum}`;
   if (envelope.length > DST1_LIMITS.inputChars) throw new Dst1ProtocolError("INPUT_TOO_LARGE", "$", "任务字符串超过 128 KiB");
   return { envelope, json, jsonBytes: jsonBytes.length, compressedBytes: compressed.length, checksum };
 }
@@ -119,15 +137,18 @@ function inflateBounded(compressed: Uint8Array): Uint8Array {
 export function decodeDst1(value: string): { batch: Dst1Batch; json: string } {
   if (value.length > DST1_LIMITS.inputChars) throw new Dst1ProtocolError("INPUT_TOO_LARGE", "$", "任务字符串超过 128 KiB");
   const parts = value.split(".");
-  if (parts.length !== 3 || parts[0] !== "DST1") throw new Dst1ProtocolError("INVALID_ENVELOPE", "$", "不是有效的 DST1 字符串");
-  if (!/^[0-9A-F]{8}$/u.test(parts[2])) throw new Dst1ProtocolError("INVALID_CHECKSUM_FORMAT", "$.checksum", "CRC32 格式无效");
-  if (!/^[A-Za-z0-9_-]+$/u.test(parts[1])) throw new Dst1ProtocolError("INVALID_BASE64URL", "$.payload", "payload 不是无填充 Base64URL");
+  const minor = parts.length === 4 && parts[0] === "DST1" && parts[1] === "1" ? 1 : 0;
+  if (!((minor === 0 && parts.length === 3 && parts[0] === "DST1") || minor === 1)) throw new Dst1ProtocolError("INVALID_ENVELOPE", "$", "不是有效的 DST1 或 DST1.1 字符串");
+  const payloadIndex = minor === 1 ? 2 : 1;
+  const checksumIndex = minor === 1 ? 3 : 2;
+  if (!/^[0-9A-F]{8}$/u.test(parts[checksumIndex])) throw new Dst1ProtocolError("INVALID_CHECKSUM_FORMAT", "$.checksum", "CRC32 格式无效");
+  if (!/^[A-Za-z0-9_-]+$/u.test(parts[payloadIndex])) throw new Dst1ProtocolError("INVALID_BASE64URL", "$.payload", "payload 不是无填充 Base64URL");
   let compressed: Uint8Array;
-  try { compressed = base64UrlToBytes(parts[1]); }
+  try { compressed = base64UrlToBytes(parts[payloadIndex]); }
   catch (error) { throw new Dst1ProtocolError("INVALID_BASE64URL", "$.payload", "Base64URL 解码失败", { cause: error }); }
   if (compressed.length > DST1_LIMITS.compressedBytes) throw new Dst1ProtocolError("COMPRESSED_DATA_TOO_LARGE", "$.payload", "压缩数据超过 96 KiB");
   const checksum = crc32(compressed).toString(16).padStart(8, "0").toUpperCase();
-  if (checksum !== parts[2]) throw new Dst1ProtocolError("CHECKSUM_MISMATCH", "$.checksum", "CRC32 校验失败");
+  if (checksum !== parts[checksumIndex]) throw new Dst1ProtocolError("CHECKSUM_MISMATCH", "$.checksum", "CRC32 校验失败");
   const bytes = inflateBounded(compressed);
   let json: string;
   try { json = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
@@ -136,5 +157,6 @@ export function decodeDst1(value: string): { batch: Dst1Batch; json: string } {
   try { parsed = JSON.parse(json); }
   catch (error) { throw new Dst1ProtocolError("INVALID_JSON", "$", "JSON 解析失败", { cause: error }); }
   validateDst1Batch(parsed);
+  if ((minor === 1) !== (parsed.sv === 1)) throw new Dst1ProtocolError("INVALID_VALUE", "sv", "信封版本与 JSON 次版本不一致");
   return { batch: parsed, json };
 }

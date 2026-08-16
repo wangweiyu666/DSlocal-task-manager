@@ -40,6 +40,7 @@ class RoomBackupRepository(
             groups = dao.groups().map { it.toBackup() },
             definitions = dao.definitions().map { it.toBackup() },
             definitionSteps = dao.definitionSteps().map { it.toBackup() },
+            recurrenceExceptions = dao.recurrenceExceptions().map { it.toBackup() },
             instances = dao.instances().map { it.toBackup() },
             instanceSteps = dao.instanceSteps().map { it.toBackup() },
             progress = dao.progress().map { it.toBackup() },
@@ -71,6 +72,7 @@ class RoomBackupRepository(
         dao.clearProgress()
         dao.clearInstanceSteps()
         dao.clearInstances()
+        dao.clearRecurrenceExceptions()
         dao.clearDefinitionSteps()
         dao.clearDefinitions()
         dao.clearGroups()
@@ -82,6 +84,7 @@ class RoomBackupRepository(
         dao.upsertGroups(payload.groups.map { it.toEntity() })
         dao.upsertDefinitions(payload.definitions.map { it.toEntity() })
         dao.upsertDefinitionSteps(payload.definitionSteps.map { it.toEntity() })
+        dao.upsertRecurrenceExceptions(payload.recurrenceExceptions.map { it.toEntity() })
         dao.upsertInstances(payload.instances.map { it.toEntity() })
         dao.upsertInstanceSteps(payload.instanceSteps.map { it.toEntity() })
         dao.upsertProgress(payload.progress.map { it.toEntity() })
@@ -118,6 +121,12 @@ internal object BackupMerger {
             local.definitionSteps, backup.definitionSteps, { "${it.taskId}|${it.position}" },
             "definition-step", "任务步骤", { it.name }, { it.toString() }, state,
         )
+        val recurrenceExceptions = updated(
+            local.recurrenceExceptions, backup.recurrenceExceptions,
+            { "${it.taskId}|${it.occurrenceDate}" }, RecurrenceExceptionBackup::updatedAtEpochMillis,
+            "recurrence-exception", "单日例外", { "${it.taskId} / ${it.occurrenceDate}" },
+            { if (it.cancelled) "已撤销" else it.patchJson }, state,
+        )
         val instances = updated(
             local.instances, backup.instances, { "${it.taskId}|${it.occurrenceKey}" }, InstanceBackup::updatedAtEpochMillis,
             "instance", "任务实例", InstanceBackup::name, { summarizeInstance(it) }, state,
@@ -152,6 +161,7 @@ internal object BackupMerger {
                 groups = groups.sortedBy { it.groupId },
                 definitions = definitions.sortedBy { it.taskId },
                 definitionSteps = definitionSteps.sortedWith(compareBy({ it.taskId }, { it.position })),
+                recurrenceExceptions = recurrenceExceptions.sortedWith(compareBy({ it.taskId }, { it.occurrenceDate })),
                 instances = instances.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 instanceSteps = instanceSteps.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey }, { it.position })),
                 progress = progress.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),

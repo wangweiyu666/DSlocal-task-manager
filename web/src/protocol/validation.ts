@@ -1,6 +1,6 @@
 import Ajv2020, { type ErrorObject } from "ajv/dist/2020";
 import schema from "../../../docs/dst1-schema.json";
-import { Dst1ProtocolError, type Dst1Batch, type Dst1ErrorCode, type Dst1Group, type Dst1Task } from "./types";
+import { Dst1ProtocolError, type Dst11Exception, type Dst1Batch, type Dst1ErrorCode, type Dst1Group, type Dst1Task } from "./types";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
 const validateSchema = ajv.compile<Dst1Batch>(schema);
@@ -60,6 +60,20 @@ function validateTaskRules(task: Dst1Task, path: string): void {
   }
 }
 
+function validateExceptionRules(value: Dst11Exception, path: string): void {
+  if (!validDate(value.y)) fail("INVALID_DATE", `${path}.y`, "例外日期无效");
+  if (typeof value.l === "string" && !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/u.test(value.l)) {
+    fail("INVALID_DATE", `${path}.l`, "单日截止时间必须精确到分钟");
+  }
+  if (typeof value.l === "string" && !validDate(value.l.slice(0, 10))) fail("INVALID_DATE", `${path}.l`, "单日截止日期无效");
+  if (value.h) {
+    if (value.l === null) fail("CONFLICTING_FIELDS", `${path}.h`, "永不截止的单日例外不能设置提醒");
+    if (new Set(value.h).size !== value.h.length || value.h.some((item, index) => index > 0 && value.h![index - 1] <= item)) {
+      fail("DUPLICATE_VALUE", `${path}.h`, "提醒必须唯一并按降序排列");
+    }
+  }
+}
+
 function walkStrings(value: unknown, path = "$", key = ""): void {
   if (typeof value === "string") {
     if (!/^[ibtz]$/u.test(key) && value !== value.normalize("NFC")) fail("NON_CANONICAL_TEXT", path, "文本必须使用 Unicode NFC");
@@ -77,6 +91,7 @@ export function validateDst1Batch(value: unknown): asserts value is Dst1Batch {
   if (Array.isArray(candidate.g) && candidate.g.length === 0) fail("VALUE_OUT_OF_RANGE", "g", "积分组数组不能为空");
   if (Array.isArray(candidate.t) && candidate.t.length === 0) fail("VALUE_OUT_OF_RANGE", "t", "任务数组不能为空");
   if (Array.isArray(candidate.z) && candidate.z.length === 0) fail("VALUE_OUT_OF_RANGE", "z", "撤销数组不能为空");
+  if (Array.isArray(candidate.e) && candidate.e.length === 0) fail("VALUE_OUT_OF_RANGE", "e", "单日例外数组不能为空");
   const rawTaskEntries: Array<[Record<string, unknown>, string]> = [];
   if (Array.isArray(candidate.g)) candidate.g.forEach((group, groupIndex) => {
     if (group && typeof group === "object" && Array.isArray((group as Dst1Group).t)) (group as Dst1Group).t!.forEach((task, taskIndex) => {
@@ -98,7 +113,7 @@ export function validateDst1Batch(value: unknown): asserts value is Dst1Batch {
       if (execution.k === 3 && "v" in execution) fail("CONFLICTING_FIELDS", `${path}.u.v`, "信息告知任务禁止字段 v");
     }
   }
-  if (!candidate.d && !candidate.g?.length && !candidate.t?.length && !candidate.z?.length && candidate.d !== "") {
+  if (!candidate.d && !candidate.g?.length && !candidate.t?.length && !candidate.z?.length && !candidate.e?.length && candidate.d !== "") {
     fail("EMPTY_OPERATION", "$", "批次必须包含至少一种操作");
   }
   candidate.g?.forEach((group, index) => {
@@ -122,5 +137,9 @@ export function validateDst1Batch(value: unknown): asserts value is Dst1Batch {
   const taskIds = taskEntries.map(([task]) => task.i);
   if (new Set(taskIds).size !== taskIds.length) fail("DUPLICATE_VALUE", "t", "任务 ID 重复");
   if (batch.z?.some((id) => taskIds.includes(id))) fail("CONFLICTING_FIELDS", "z", "任务不能同时更新和撤销");
+  const exceptionKeys = batch.e?.map((item) => `${item.i}|${item.y}`) ?? [];
+  if (new Set(exceptionKeys).size !== exceptionKeys.length) fail("DUPLICATE_VALUE", "e", "同一任务日期不能重复出现单日例外");
+  if (batch.e?.some((item) => batch.z?.includes(item.i))) fail("CONFLICTING_FIELDS", "e", "任务不能同时整项撤销和设置单日例外");
+  batch.e?.forEach((item, index) => validateExceptionRules(item, `e[${index}]`));
   taskEntries.forEach(([task, path]) => validateTaskRules(task, path));
 }
