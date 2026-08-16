@@ -6,7 +6,7 @@
 | --- | --- |
 | 产品目标、业务规则、状态语义 | [需求总稿](preview.md) |
 | DST1 字段与校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
-| Room 表、索引、迁移 | [数据库 v4 基础规范](android-database-v4.md)、[W25 Room v5 统计索引](w25-profile-statistics.md#数据库与数据边界) |
+| Room 表、索引、迁移 | [数据库 v1.4 基础规范](android-database-v4.md)、[W25 Room v1.5 统计索引](w25-profile-statistics.md#数据库与数据边界)、[Room v1.6 单日例外](android-database-v1.6.md) |
 | 当前基线与归档状态 | [实施状态与路线图](android-phase-1-summary-and-roadmap.md)、[W00–W32 归档摘要](archive-summary.md) |
 | 联网 Android、联网 Web 与 Cloudflare 任务流程 | [联网版本实施路线图](cloud-connected-roadmap.md) |
 | 架构约束、交付流程 | [工程约束与交付清单](w00-w01-engineering-playbook.md) |
