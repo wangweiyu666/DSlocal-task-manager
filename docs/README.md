@@ -8,6 +8,7 @@
 | DST1 字段与校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
 | Room 表、索引、迁移 | [数据库 v4 基础规范](android-database-v4.md)、[W25 Room v5 统计索引](w25-profile-statistics.md#数据库与数据边界) |
 | 当前基线与归档状态 | [实施状态与路线图](android-phase-1-summary-and-roadmap.md)、[W00–W32 归档摘要](archive-summary.md) |
+| 联网 Android、联网 Web 与 Cloudflare 任务流程 | [联网版本实施路线图](cloud-connected-roadmap.md) |
 | 架构约束、交付流程 | [工程约束与交付清单](w00-w01-engineering-playbook.md) |
 | 当前 Android 能力边界 | [Android 实现边界](android-phase-1.md) |
 | Android UI 层级与返回导航 | [Android UI 与返回导航](android-ui-navigation.md) |
@@ -34,6 +35,8 @@
 ## 当前归档状态
 
 Android W00–W32 已完成并归档，历史基线见 [W00–W32 归档摘要](archive-summary.md)。当前公开基线为 `0.1.0-alpha.3`（versionCode 4），包含 W33 UI 配色选择和分享图片体验优化。
+
+联网版本尚未实施。已确认的产品边界、四阶段依赖顺序、Cloudflare 免费层门禁和 `rochelimit.me` 域名审核前置条件见[联网版本实施路线图](cloud-connected-roadmap.md)。
 
 ## 配套资产
 
