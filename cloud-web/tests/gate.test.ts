@@ -103,6 +103,19 @@ describe("production management gate", () => {
     expect(counts().apiRequests).toBe(0);
   });
 
+  it("accepts a same-origin browser form navigation with an opaque Origin", async () => {
+    const { env, counts } = environment(successfulApi);
+    const request = form("/__gate/challenge", { email: administrator });
+    request.headers.set("Origin", "null");
+    request.headers.set("Sec-Fetch-Site", "same-origin");
+
+    const response = await handleRequest(request, env);
+
+    expect(response.status).toBe(401);
+    expect(await response.text()).toContain("邮箱验证码");
+    expect(counts().apiRequests).toBe(1);
+  });
+
   it("uses the API only for the exact normalized administrator email", async () => {
     let submitted: unknown;
     const { env, counts } = environment(async (request) => {

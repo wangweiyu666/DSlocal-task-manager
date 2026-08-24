@@ -140,7 +140,9 @@ function configurationError(method: string): Response {
 }
 
 function sameOrigin(request: Request, url: URL): boolean {
-  return request.headers.get("Origin") === url.origin;
+  const origin = request.headers.get("Origin");
+  if (origin !== null && origin !== "null") return origin === url.origin;
+  return request.headers.get("Sec-Fetch-Site") === "same-origin";
 }
 
 async function readForm(request: Request): Promise<URLSearchParams | null> {
