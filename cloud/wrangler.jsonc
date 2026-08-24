@@ -75,7 +75,7 @@
       }, {
         "binding": "DELETION_LEDGER",
         "database_name": "dstationery-deletion-ledger-production",
-        "database_id": "33333333-3333-3333-3333-333333333333",
+        "database_id": "ecacc9e4-0c7c-484a-9045-d846b0950c7f",
         "migrations_dir": "deletion-ledger-migrations"
       }]
     }
