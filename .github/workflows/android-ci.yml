@@ -51,10 +51,15 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/check-dco.sh "$BASE_SHA"
 
-      - name: Verify and build offline Android
+      - name: Verify and build Android variants
         id: gradle_verify
         continue-on-error: true
-        run: ./gradlew testOfflineDebugUnitTest lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest --no-daemon
+        run: >-
+          ./gradlew
+          testOfflineDebugUnitTest lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest
+          testConnectedDebugUnitTest lintConnectedDebug assembleConnectedDebug
+          testProductionDebugUnitTest lintProductionDebug assembleProductionDebug
+          --no-daemon
 
       - name: Verify offline Android connectivity boundary
         run: bash scripts/ci/check-connectivity-boundaries.sh

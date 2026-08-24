@@ -1,6 +1,6 @@
 # DStationery
 
-DStationery 包含默认的完全离线 Android/Web 产品，以及独立包名和独立存储的联网 Android + 管理员 Web 预发布版本。离线产品不会因联网版而获得网络权限或上传数据。
+DStationery 包含默认的完全离线 Android/Web 产品，以及独立包名和独立存储的联网执行者 Android + 管理员 Web。离线产品不会因联网版而获得网络权限或上传数据。
 
 ## 下载
 
@@ -16,19 +16,22 @@ DStationery 包含默认的完全离线 Android/Web 产品，以及独立包名�
 - 包名：`com.ds.localtaskmanager`
 - 离线 Android 权限：通知、设备重启、振动；无网络、照片或广泛存储权限
 - 当前联网开发版：Android `0.1.0-alpha.9`（versionCode 10）
-- 联网 Android 包名：`com.ds.localtaskmanager.connected`（debug 另加 `.debug`），只用于 staging 验收和私下分发
+- staging Android 包名：`com.ds.localtaskmanager.connected`（debug 另加 `.debug`）
+- 生产执行者 Android：`0.1.0-alpha.10-executor`（versionCode 11），包名 `com.ds.localtaskmanager.connected.production`
+- 生产执行者 APK 通过公开 GitHub Releases 分发并附 SHA-256；管理员网址不在仓库或 Release 中公布
 
 首个签名 Release 与此前 Debug APK 的签名不同。已有 Debug 用户必须先导出 DSTB1，卸载 Debug 版，安装 Release，再恢复备份。
 
 ## 构建
 
-使用 JDK 17、Android SDK 35 与仓库中的 Gradle Wrapper。联网 Android 只在本机构建：
+使用 JDK 17、Android SDK 35 与仓库中的 Gradle Wrapper。staging 与生产执行者 Android 可分别验证：
 
 ```text
 ./gradlew testConnectedDebugUnitTest lintConnectedDebug assembleConnectedDebug
+./gradlew testProductionDebugUnitTest lintProductionRelease assembleProductionRelease
 ```
 
-离线 Android 由 GitHub `Android CI` 构建、验证并上传 `DStationery-offline-debug` artifact；不要用本机联网产物替代离线 CI 证据。离线/联网 Web 的测试和构建仍由各自 GitHub 工作流负责。
+`Android CI` 构建并验证离线、staging 和 production 变体，但只上传离线 Debug artifact。生产执行者 APK 使用仓库外的独立密钥在本地完成签名审计，再由受确认脚本上传公开 GitHub Release。
 
 Preview 截图基线固定在 Windows、Temurin `17.0.19+10`、`Asia/Hong_Kong` 与简体中文环境验证；具体命令和模拟器配置见[测试环境说明](docs/android-emulator-testing.md)。
 
@@ -39,6 +42,7 @@ Preview 截图基线固定在 Windows、Temurin `17.0.19+10`、`Asia/Hong_Kong` 
 - [文档索引与权威来源](docs/README.md)
 - [离线版开发与交付指南](docs/offline.md)
 - [联网版开发、同步与运维指南](docs/connected.md)
+- [阶段四生产运行手册](docs/stage4-production-runbook.md)
 - [版本变更记录](CHANGELOG.md)
 
 ## 隐私

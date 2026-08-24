@@ -12,6 +12,16 @@ for (const [binding, database] of Object.entries(databases)) {
   }
 }
 if (selected.vars.ENVIRONMENT !== environment) throw new Error("environment marker mismatch");
+if (!selected.triggers?.crons?.length) throw new Error(`${environment} must define its own maintenance cron`);
+if (environment === "production") {
+  if (Object.hasOwn(selected.vars, "ALLOWED_ORIGIN")) throw new Error("production ALLOWED_ORIGIN must not be committed as a public variable");
+  if (!selected.secrets?.required?.includes("ALLOWED_ORIGIN")) throw new Error("production must require the protected ALLOWED_ORIGIN secret");
+  const webConfig = JSON.parse((await readFile(new URL("../../cloud-web/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*$/gm, ""));
+  const webProduction = webConfig.env?.production;
+  if (webProduction?.routes?.length || webProduction?.route || webProduction?.domains?.length) {
+    throw new Error("production administrator hostname must not be committed in public Worker routes");
+  }
+}
 const other = environment === "staging" ? config.env.production : config.env.staging;
 const otherIds = new Set(other.d1_databases.map((database) => database.database_id));
 for (const database of selected.d1_databases) {

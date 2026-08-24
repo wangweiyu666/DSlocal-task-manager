@@ -2,7 +2,7 @@
 
 本文合并联网版路线图、阶段验收、同步协议、状态矩阵和环境恢复规则。完整任务业务语义以[需求总稿](preview.md)为准，机器契约以 `cloud/openapi.yaml`、`cloud/schemas/` 与 `cloud-protocol-test-vectors/` 为准。
 
-> 当前状态：阶段 1、阶段 2 和阶段 3 的仓库实现与本地验收已完成；staging 基础设施、同步服务、管理员 Web、执行者 Android、账号邀请箱以及真实双账号/真机闭环已经验证。阶段 3 远程上线前仍需为 staging/production 创建独立删除账本 D1、替换占位 ID，并执行受保护部署。production 和正式分发属于阶段 4。
+> 当前状态：阶段 1、阶段 2 和阶段 3 已完成。阶段 4 的生产执行者变体、独立签名与发布门禁正在构建；staging/production 删除账本、恢复演练、生产部署、三账号真实试运行和连续七天观察仍必须按[阶段四生产运行手册](stage4-production-runbook.md)留存证据后才能声明完成。
 
 ## 产品与架构边界
 
@@ -135,9 +135,9 @@ Worker 结构日志只允许 `timestamp`、`level`、`event`、`environment`、`
 | --- | --- | --- | --- |
 | local | Wrangler 本地进程 | Wrangler 本地进程 | `dstationery-local` + `dstationery-deletion-ledger-local` |
 | staging | `api-staging.rochelimit.me` | `staging.rochelimit.me` | `dstationery-staging` + `dstationery-deletion-ledger-staging`（APAC） |
-| production | `api.rochelimit.me` | `app.rochelimit.me` | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
+| production | `api.rochelimit.me` | 受保护且不在公开仓库记录的管理员域名 | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
 
-local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。`cloud/scripts/guard-environment.mjs` 在远程部署前验证两个绑定均非占位符、主库/账本库分离且环境间不复用。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。
+local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。生产 `ALLOWED_ORIGIN` 与管理员域名只保存在 Cloudflare/GitHub 受保护配置中；公开仓库不记录实际值。`cloud/scripts/guard-environment.mjs` 在远程部署前验证两个绑定均非占位符、主库/账本库分离、环境间不复用、环境 cron 独立配置且生产管理端路由未被提交。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。
 
 阶段 3 首次远程部署前必须完成：
 
@@ -147,13 +147,14 @@ local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER
 4. 先迁移主库，再迁移删除账本库，最后部署 Worker；
 5. 用非敏感 canary 演练“删除 → 主库 Time Travel 恢复 → 账本重放 → canary 仍不可用”。
 
-联网 Android 只在本机构建，不由 GitHub Android CI 生成或上传：
+联网 Android 分为 staging 和 production。CI 验证两者的 Debug 变体，但不上传联网 Debug APK：
 
 ```powershell
 .\gradlew.bat testConnectedDebugUnitTest lintConnectedDebug assembleConnectedDebug --no-daemon
+.\gradlew.bat testProductionDebugUnitTest lintProductionRelease assembleProductionRelease --no-daemon
 ```
 
-当前联网开发版为 `0.1.0-alpha.9`（versionCode 10），staging API 固定为 `https://api-staging.rochelimit.me`。联网 APK 使用独立签名配置 `local-task-manager-connected-signing.properties`，不得复用离线密钥。
+staging 为 `0.1.0-alpha.9-connected`（versionCode 10）、包名 `com.ds.localtaskmanager.connected`，固定连接 staging API。生产执行者为 `0.1.0-alpha.10-executor`（versionCode 11）、包名 `com.ds.localtaskmanager.connected.production`，固定连接 production API。两者因包名不同拥有独立 Android 沙箱、Room、outbox、会话和 Keystore；生产签名配置为 `local-task-manager-connected-production-signing.properties`，不得复用离线或 staging 密钥。
 
 Cloud GitHub 工作流负责 Worker 与 Web 的测试；staging 和 production 都只允许受保护的手动工作流部署，避免普通代码推送在缺少环境密钥时触发远程变更。
 
@@ -172,12 +173,12 @@ Cloud GitHub 工作流负责 Worker 与 Web 的测试；staging 和 production �
 
 阶段 3 已完成 schema v6、按角色 DSEXPORT v1、30 天删除/立即永久删除、版本化隐私首次门禁、近期邮箱验证、授权与滥用自动化、安全日志白名单、原生用量观测和 70%/90% 客户端保护模式。仓库不声称完成第三方渗透测试；staging/production 删除账本仍需在阶段 4 部署前真实创建和演练。
 
-阶段 4 待完成：production DNS/邮件域、受保护 migration、独立签名分发、真实双人试运行和一周观察。远程推送、完整 DSTB1 云迁移、端到端加密、多管理员、多空间、公开注册、应用商店分发和大陆 SLA 均后置。
+阶段 4 待完成：真实创建两个环境的删除账本、staging 恢复演练、production DNS/邮件域与 Cloudflare Access、受保护 migration、公开 GitHub 执行者 APK、三个账号真实试运行和连续七天观察。远程推送、完整 DSTB1 云迁移、端到端加密、多管理员、多空间、公开注册、应用商店分发和大陆 SLA 均后置。
 
 ## 变更清单
 
 - 协议/API：更新 OpenAPI、Schema、TypeScript/Kotlin 共用向量和稳定错误码。
 - 云 schema：追加 migration，验证授权索引、快照、增量与 Time Travel 恢复。
 - 共享任务/UI：同时回归离线和联网 Android/Web。
-- 联网 Android：本地完成测试、Lint、构建、签名和 SHA-256；GitHub 不上传联网 APK。
+- 联网 Android：CI 验证两个联网 Debug 变体；生产 Release 在本地完成测试、Lint、独立签名、Manifest/证书审计和 SHA-256，再由确认脚本上传公开 GitHub Release。
 - 提交前运行 secrets 检查，禁止提交 `.dev.vars`、密钥、令牌、验证码、完整私人邮箱或任务正文。

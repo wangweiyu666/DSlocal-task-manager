@@ -12,7 +12,9 @@
     "smoke:local": "node scripts/smoke-local.mjs",
     "migrate:local": "wrangler d1 migrations apply dstationery-local --local && wrangler d1 migrations apply dstationery-deletion-ledger-local --local --config wrangler.jsonc",
     "deploy:staging": "node scripts/guard-environment.mjs staging && wrangler deploy --env staging",
-    "deploy:production": "node scripts/guard-environment.mjs production && wrangler deploy --env production"
+    "deploy:production": "node scripts/guard-environment.mjs production && wrangler deploy --env production",
+    "guard:staging": "node scripts/guard-environment.mjs staging",
+    "guard:production": "node scripts/guard-environment.mjs production"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260816.1",

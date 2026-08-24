@@ -20,10 +20,6 @@
     "production": {
       "name": "dstationery-connected-production",
       "workers_dev": false,
-      "routes": [{
-        "pattern": "app.rochelimit.me",
-        "custom_domain": true
-      }],
       "services": [{ "binding": "API", "service": "dstationery-api-production" }]
     }
   }

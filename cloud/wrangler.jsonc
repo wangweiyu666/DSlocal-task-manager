@@ -31,6 +31,7 @@
     "staging": {
       "name": "dstationery-api-staging",
       "workers_dev": false,
+      "triggers": { "crons": ["*/5 * * * *"] },
       "routes": [{
         "pattern": "api-staging.rochelimit.me",
         "custom_domain": true
@@ -49,23 +50,23 @@
       }, {
         "binding": "DELETION_LEDGER",
         "database_name": "dstationery-deletion-ledger-staging",
-        "database_id": "22222222-2222-2222-2222-222222222222",
+        "database_id": "f7fd98cf-4800-47de-8341-e9a72a9d2c68",
         "migrations_dir": "deletion-ledger-migrations"
       }]
     },
     "production": {
       "name": "dstationery-api-production",
       "workers_dev": false,
+      "triggers": { "crons": ["17 * * * *"] },
       "routes": [{
         "pattern": "api.rochelimit.me",
         "custom_domain": true
       }],
       "vars": {
         "ENVIRONMENT": "production",
-        "ALLOWED_ORIGIN": "https://app.rochelimit.me",
         "RESEND_FROM": "DStationery <no-reply@notify.rochelimit.me>"
       },
-      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY"] },
+      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY", "ALLOWED_ORIGIN"] },
       "d1_databases": [{
         "binding": "DB",
         "database_name": "dstationery-production",

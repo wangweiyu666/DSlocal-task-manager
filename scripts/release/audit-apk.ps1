@@ -1,7 +1,11 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Apk,
-    [string]$AndroidHome = $env:ANDROID_HOME
+    [string]$AndroidHome = $env:ANDROID_HOME,
+    [string]$ExpectedPackage = 'com.ds.localtaskmanager',
+    [string]$ExpectedVersionName,
+    [int]$ExpectedVersionCode,
+    [switch]$Networked
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,13 +31,20 @@ $expectedPermissions = @(
     'android.permission.RECEIVE_BOOT_COMPLETED',
     'android.permission.VIBRATE',
     'android.permission.WAKE_LOCK',
-    'com.ds.localtaskmanager.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+    "$ExpectedPackage.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 )
+if ($Networked) { $expectedPermissions += 'android.permission.INTERNET' }
 $actualPermissions = @($manifest.manifest.'uses-permission' | ForEach-Object { $_.GetAttribute('name', $androidNs) } | Sort-Object)
 if (Compare-Object ($expectedPermissions | Sort-Object) $actualPermissions) {
     throw "Unexpected final permission set: $($actualPermissions -join ', ')"
 }
-if ($manifest.manifest.package -ne 'com.ds.localtaskmanager') { throw 'Unexpected release package name.' }
+if ($manifest.manifest.package -ne $ExpectedPackage) { throw 'Unexpected release package name.' }
+if ($ExpectedVersionName -and $manifest.manifest.GetAttribute('versionName', $androidNs) -ne $ExpectedVersionName) {
+    throw 'Unexpected release version name.'
+}
+if ($ExpectedVersionCode -gt 0 -and [int]$manifest.manifest.GetAttribute('versionCode', $androidNs) -ne $ExpectedVersionCode) {
+    throw 'Unexpected release version code.'
+}
 $application = $manifest.manifest.application
 if ($application.GetAttribute('debuggable', $androidNs) -eq 'true') { throw 'Release APK is debuggable.' }
 if ($application.GetAttribute('usesCleartextTraffic', $androidNs) -ne 'false') { throw 'Cleartext traffic is not disabled.' }
