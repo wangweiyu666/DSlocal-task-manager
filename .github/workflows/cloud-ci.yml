@@ -46,7 +46,11 @@ jobs:
         working-directory: cloud
         shell: bash
         run: |
-          npm run dev > "$RUNNER_TEMP/dstationery-cloud.log" 2>&1 &
+          npm run dev -- \
+            --var AUTH_PEPPER:ci-local-smoke-pepper \
+            --var ADMIN_EMAIL:admin@example.com \
+            --var RESEND_API_KEY:unused-in-local-mode \
+            > "$RUNNER_TEMP/dstationery-cloud.log" 2>&1 &
           worker_pid=$!
           trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
           for attempt in {1..30}; do
