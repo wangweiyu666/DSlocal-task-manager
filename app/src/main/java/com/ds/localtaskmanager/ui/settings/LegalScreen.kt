@@ -35,6 +35,24 @@ enum class LegalDocument(val title: String, val body: String) {
         问题反馈：https://github.com/wangweiyu666/DSlocal-task-manager/issues
         """.trimIndent(),
     ),
+    CONNECTED_PRIVACY(
+        "联网版隐私说明",
+        """
+        DStationery 联网预发布版使用邮箱账号和空间成员关系。任务、任务版本、分配、执行结果、通知和安全审计记录会保存到对应 Cloudflare 环境，并按管理员或执行者角色同步。
+
+        联网版不提供端到端加密。运营服务技术上可以读取任务和结果内容；服务使用空间级授权、环境密钥隔离和最小化日志，不接入产品分析、行为遥测或崩溃正文上传。
+
+        管理员可以导出整个空间的 DSEXPORT v1 JSON；执行者只能导出自己的账号、收到的任务版本、执行结果和通知。导出需在最近 10 分钟内验证邮箱，文件不加密，请只保存到可信位置。
+
+        账号删除默认立即冻结并进入 30 天恢复期。邮箱重新验证后可以取消删除，也可以立即永久删除。执行者删除后只留下无身份和业务内容的结构性 tombstone；唯一管理员删除账号会删除整个空间。
+
+        “立即永久删除”表示数据立即从活动系统清除且无法由产品恢复。Cloudflare 灾备副本可能在供应商保留窗口内存在，窗口届满后自然清除；灾备恢复必须先重放独立删除账本。
+
+        离线设备无法被远程瞬时擦除。设备下次联网确认账号待删除、已删除或成员资格撤销时，会清除相关空间缓存、outbox 和会话。
+
+        问题反馈：https://github.com/wangweiyu666/DSlocal-task-manager/issues
+        """.trimIndent(),
+    ),
     LICENSES(
         "开源许可",
         """

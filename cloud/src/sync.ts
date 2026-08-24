@@ -1,4 +1,4 @@
-import { authenticate } from "./auth";
+import { authenticate, requireAccountReady } from "./auth";
 import { decodeCursor, encodeCursor } from "./cursor";
 import { addSeconds, sha256, uuidV7 } from "./crypto";
 import { ApiError, json, requestId } from "./http";
@@ -17,6 +17,7 @@ import {
   type SyncCommand,
 } from "./sync-contract";
 import type { Env, SessionPrincipal } from "./types";
+import { recordUsage, serviceQuotaSnapshot } from "./usage";
 
 interface MembershipRow { id: string; role: "ADMIN" | "EXECUTOR"; space_id: string; status: string; name: string; time_zone: string; time_zone_version: number; current_sequence: number; }
 type AssignmentMode = "ALL" | "SELECTED";
@@ -82,8 +83,9 @@ async function audit(env: Env, principal: SessionPrincipal, memberId: string, sp
 }
 
 async function storeReceipt(env: Env, principal: SessionPrincipal, spaceId: string, hash: string, result: CommandResult): Promise<void> {
+  const createdAt = iso();
   await env.DB.prepare("INSERT INTO command_receipts(command_id,space_id,session_id,payload_hash,status,response_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(result.commandId, spaceId, principal.sessionId, hash, receiptStatus(result), JSON.stringify(result), iso(), result.status === "accepted" ? null : addSeconds(iso(), 90 * DAY)).run();
+    .bind(result.commandId, spaceId, principal.sessionId, hash, receiptStatus(result), JSON.stringify(result), createdAt, addSeconds(createdAt, 90 * DAY)).run();
 }
 
 async function executeGroup(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
@@ -378,15 +380,17 @@ function resultForError(commandId: string, error: unknown): CommandResult {
 
 export async function bootstrap(env: Env, request: Request): Promise<Response> {
   const principal = await authenticate(env, request);
+  requireAccountReady(principal);
   const rows = await env.DB.prepare("SELECT m.id,m.role,m.space_id,m.status,s.name,s.time_zone,s.time_zone_version,s.current_sequence FROM memberships m JOIN spaces s ON s.id=m.space_id WHERE m.account_id=? AND m.status='ACTIVE' AND s.status='ACTIVE' ORDER BY m.joined_at")
     .bind(principal.accountId).all<MembershipRow>();
-  return json(env, request, { account: { id: principal.accountId }, memberships: rows.results.map((row) => ({ id: row.id, role: row.role, status: row.status, space: { id: row.space_id, name: row.name, timeZone: row.time_zone, timeZoneVersion: row.time_zone_version, currentSequence: row.current_sequence } })) });
+  return json(env, request, { account: { id: principal.accountId }, service: await serviceQuotaSnapshot(env), memberships: rows.results.map((row) => ({ id: row.id, role: row.role, status: row.status, space: { id: row.space_id, name: row.name, timeZone: row.time_zone, timeZoneVersion: row.time_zone_version, currentSequence: row.current_sequence } })) });
 }
 
 export async function submitCommands(env: Env, request: Request, spaceId: string): Promise<Response> {
   const principal = await authenticate(env, request, true);
   const member = await membership(env, principal, spaceId);
   const commands = parseCommands(await request.json());
+  await recordUsage(env, "API_WRITE", commands.length);
   const results: CommandResult[] = [];
   for (const command of commands) {
     const hash = await sha256(stable(command));
@@ -439,6 +443,7 @@ export async function snapshot(env: Env, request: Request, spaceId: string): Pro
 
 export async function unreadNotifications(env: Env, request: Request, spaceId: string): Promise<Response> {
   const principal = await authenticate(env, request); const member = await membership(env, principal, spaceId);
+  await recordUsage(env, "AUTO_SYNC_READ");
   const rows = await env.DB.prepare("SELECT n.id,n.type,n.entity_id,n.group_key,n.payload_json,n.created_at,r.read_at FROM notifications n LEFT JOIN notification_reads r ON r.notification_id=n.id AND r.membership_id=? WHERE n.space_id=? AND n.recipient_membership_id=? ORDER BY n.created_at DESC LIMIT 500")
     .bind(member.id, spaceId, member.id).all<Record<string, unknown>>();
   const visible = new Map<string, Record<string, unknown>>();

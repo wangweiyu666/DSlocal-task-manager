@@ -1,4 +1,4 @@
-name: Cloud Phase 2
+name: Cloud Phase 3
 
 on:
   push:
@@ -40,7 +40,7 @@ jobs:
         working-directory: cloud
       - run: npm run check
         working-directory: cloud
-      - run: npx wrangler d1 migrations apply dstationery-local --local
+      - run: npm run migrate:local
         working-directory: cloud
       - name: Exercise the local HTTP sync contract
         working-directory: cloud
@@ -93,6 +93,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply staging deletion-ledger migrations by database name
+        run: npx wrangler d1 migrations apply dstationery-deletion-ledger-staging --remote --env staging
+        working-directory: cloud
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - run: npx wrangler deploy --env staging
         working-directory: cloud
         env:
@@ -125,6 +131,12 @@ jobs:
         working-directory: cloud
       - name: Apply production migrations by database name
         run: npx wrangler d1 migrations apply dstationery-production --remote --env production
+        working-directory: cloud
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply production deletion-ledger migrations by database name
+        run: npx wrangler d1 migrations apply dstationery-deletion-ledger-production --remote --env production
         working-directory: cloud
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -10,15 +10,16 @@ import { groupIssue, newGroup, normalizeGroup } from "../model/groups";
 import type { GroupRecord } from "../model/types";
 import { createTransportId } from "../protocol/id";
 import { cloudApi } from "./api";
-import { connectedDb, purgeSpace } from "./db";
+import { connectedDb, purgeAllConnectedData, purgeSpace } from "./db";
 import { buildCloudTaskContent, editableFromCloudTask, unpackCloudTask } from "./library";
 import { presentExecutionResult } from "./results";
 import { pullChanges, queueCommand, synchronize, uuidV7 } from "./sync";
 import type { Bootstrap, CloudEntity, ConflictRecord, MembershipBootstrap, SpaceMember, SyncCommand, SyncMeta } from "./types";
 
-type AuthState = "restoring" | "email" | "code" | "ready" | "wrong-role";
+type AuthState = "restoring" | "email" | "code" | "privacy" | "deletion-pending" | "ready" | "wrong-role";
 type Tab = "tasks" | "groups" | "results" | "notifications" | "audit" | "settings";
 type AssignmentMode = "ALL" | "SELECTED";
+type SensitiveAction = "export" | "delete-scheduled" | "delete-immediate";
 type TaskEditorState = { taskId: string; baseVersion: number; value: EditableTask; assignmentMode: AssignmentMode; executorMembershipIds: string[]; conflictCommandId?: string };
 
 function newEditable(): EditableTask { return { ...emptyTaskFields(), groupId: null }; }
@@ -62,6 +63,12 @@ export default function ConnectedApp() {
   const [remoteNotifications, setRemoteNotifications] = useState<Array<Record<string, unknown>>>([]);
   const [auditEvents, setAuditEvents] = useState<Array<Record<string, unknown>>>([]);
   const [spaceMembers, setSpaceMembers] = useState<SpaceMember[]>([]);
+  const [privacyVersion, setPrivacyVersion] = useState(1);
+  const [deletionDueAt, setDeletionDueAt] = useState<string | null>(null);
+  const [sensitiveAction, setSensitiveAction] = useState<SensitiveAction | null>(null);
+  const [sensitiveEmail, setSensitiveEmail] = useState("");
+  const [sensitiveCode, setSensitiveCode] = useState("");
+  const [sensitiveChallengeId, setSensitiveChallengeId] = useState("");
 
   const spaceId = membership?.space.id ?? "";
   const entities = useLiveQuery<CloudEntity[], CloudEntity[]>(async () => spaceId ? connectedDb.entities.where("spaceId").equals(spaceId).toArray() : [], [spaceId], []);
@@ -116,13 +123,29 @@ export default function ConnectedApp() {
     try { setSpaceMembers((await cloudApi.members(admin.space.id)).members); } catch { /* member IDs remain available offline */ }
   }, []);
 
+  const enterAccount = useCallback(async () => {
+    const status = await cloudApi.account();
+    if (status.account.status === "DELETION_PENDING") {
+      await purgeAllConnectedData();
+      setDeletionDueAt(status.account.deletionDueAt);
+      setAuthState("deletion-pending");
+      return;
+    }
+    if (status.account.privacyNoticeVersion < status.account.requiredPrivacyNoticeVersion) {
+      setPrivacyVersion(status.account.requiredPrivacyNoticeVersion);
+      setAuthState("privacy");
+      return;
+    }
+    await selectBootstrap(await cloudApi.bootstrap());
+  }, [selectBootstrap]);
+
   useEffect(() => {
-    void cloudApi.refresh().then(() => cloudApi.bootstrap()).then(selectBootstrap).catch(() => setAuthState("email"));
+    void cloudApi.refresh().then(enterAccount).catch(() => setAuthState("email"));
     const onlineHandler = () => { setOnline(true); };
     const offlineHandler = () => setOnline(false);
     window.addEventListener("online", onlineHandler); window.addEventListener("offline", offlineHandler);
     return () => { window.removeEventListener("online", onlineHandler); window.removeEventListener("offline", offlineHandler); };
-  }, [selectBootstrap]);
+  }, [enterAccount]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -156,8 +179,64 @@ export default function ConnectedApp() {
   };
   const verify = async () => {
     setBusy(true); setError("");
-    try { await cloudApi.verify(challengeId, email, code); await selectBootstrap(await cloudApi.bootstrap()); }
+    try { await cloudApi.verify(challengeId, email, code); await enterAccount(); }
     catch (value) { setError(value instanceof Error ? value.message : "验证失败"); }
+    finally { setBusy(false); }
+  };
+
+  const acknowledgePrivacy = async () => {
+    setBusy(true); setError("");
+    try { await cloudApi.acknowledgePrivacy(privacyVersion); await selectBootstrap(await cloudApi.bootstrap()); }
+    catch (value) { setError(value instanceof Error ? value.message : "隐私确认失败"); }
+    finally { setBusy(false); }
+  };
+
+  const cancelAccountDeletion = async () => {
+    setBusy(true); setError("");
+    try { await cloudApi.cancelDeletion(); setDeletionDueAt(null); await selectBootstrap(await cloudApi.bootstrap()); }
+    catch (value) { setError(value instanceof Error ? value.message : "账号恢复失败"); }
+    finally { setBusy(false); }
+  };
+
+  const sendSensitiveCode = async () => {
+    setBusy(true); setError("");
+    try {
+      const value = await cloudApi.requestChallenge(sensitiveEmail, "SENSITIVE_ACTION");
+      setSensitiveChallengeId(value.challengeId);
+    } catch (value) { setError(value instanceof Error ? value.message : "安全验证码发送失败"); }
+    finally { setBusy(false); }
+  };
+
+  const finishSensitiveAction = async () => {
+    if (!sensitiveAction) return;
+    setBusy(true); setError("");
+    try {
+      await cloudApi.verifySensitive(sensitiveChallengeId, sensitiveEmail, sensitiveCode);
+      if (sensitiveAction === "export") {
+        const datasets: Record<string, unknown[]> = {};
+        let manifest: Record<string, unknown> | null = null;
+        let cursor: string | undefined;
+        do {
+          const page = await cloudApi.exportPage(spaceId, cursor);
+          if (page.manifest) manifest = page.manifest;
+          if (page.dataset) (datasets[page.dataset] ??= []).push(...page.records);
+          cursor = page.nextCursor ?? undefined;
+        } while (cursor);
+        const blob = new Blob([JSON.stringify({ manifest, datasets }, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url; anchor.download = `DStationery-${spaceId}-${new Date().toISOString().slice(0, 10)}.dsexport.json`; anchor.click();
+        URL.revokeObjectURL(url);
+        setNotice("DSEXPORT v1 已导出");
+      } else {
+        const result = await cloudApi.requestDeletion(sensitiveAction === "delete-immediate" ? "IMMEDIATE" : "SCHEDULED");
+        if (spaceId) await purgeSpace(spaceId);
+        cloudApi.setSession(null); setBootstrap(null); setMembership(null);
+        setDeletionDueAt(result.executeAfter ?? null);
+        setAuthState(result.status === "PENDING" ? "deletion-pending" : "email");
+      }
+      setSensitiveAction(null); setSensitiveCode(""); setSensitiveChallengeId("");
+    } catch (value) { setError(value instanceof Error ? value.message : "敏感操作失败"); }
     finally { setBusy(false); }
   };
 
@@ -338,6 +417,8 @@ export default function ConnectedApp() {
     cloudApi.setSession(null); setBootstrap(null); setMembership(null); setAuthState("email");
   };
 
+  if (authState === "privacy") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">首次使用</p><h1>联网版隐私说明</h1><p>任务、执行结果、成员邮箱和审计记录会保存到当前 Cloudflare 环境并按空间权限同步。服务不提供端到端加密；运营服务技术上可以读取任务内容。系统不接入产品分析、行为遥测或崩溃正文上传。</p><p>账号可先进入 30 天删除恢复期，也可经邮箱复验后立即从活动系统永久删除；供应商灾备副本会在其保留窗口届满后清除。</p>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy} onClick={() => void acknowledgePrivacy()}>{busy ? "请稍候…" : "我已了解并继续"}</button></section></main>;
+  if (authState === "deletion-pending") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">账号已冻结</p><h1>账号正在删除恢复期内</h1><p>{deletionDueAt ? `计划在 ${new Date(deletionDueAt).toLocaleString("zh-CN")} 永久删除。` : "账号不能读取、同步或产生新的业务数据。"} 本次登录已经重新验证邮箱，可以取消删除并恢复。</p>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy || cloudApi.getSession() === null} onClick={() => void cancelAccountDeletion()}>{busy ? "请稍候…" : "取消删除并恢复"}</button><button className="button text" onClick={() => { cloudApi.setSession(null); setAuthState("email"); }}>返回登录</button></section></main>;
   if (authState !== "ready" && authState !== "wrong-role") return <Login state={authState} email={email} setEmail={setEmail} code={code} setCode={setCode} busy={busy} error={error} onEmail={() => void sendChallenge()} onCode={() => void verify()} />;
   if (authState === "wrong-role") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">平台角色不匹配</p><h1>请在 Android 应用中执行任务</h1><p>此 Web 入口仅提供管理员功能；服务器仍以空间成员角色为权限依据。</p><button className="button tonal" onClick={() => void logout()}>退出账号</button></section></main>;
 
@@ -379,9 +460,10 @@ export default function ConnectedApp() {
 
       {tab === "audit" && <section className="connected-page"><div className="page-header"><div><p className="eyebrow">安全审计</p><h1>空间操作时间线</h1><p>只展示安全元数据，不包含邮箱、令牌或任务正文。</p></div></div><div className="card-list">{auditEvents.length === 0 ? <div className="empty-state"><ShieldAlert /><h2>{online ? "暂无审计事件" : "审计时间线需要联网"}</h2></div> : auditEvents.map((item) => <article className="data-card" key={String(item.id)}><div className="data-card-main"><h2>{String(item.eventType)}</h2><p>{String(item.entityType ?? "系统")} · {String(item.entityId ?? "-")}</p><div className="meta-row"><span>{String(item.occurredAt)}</span></div></div></article>)}</div></section>}
 
-      {tab === "settings" && <section className="connected-page"><div className="page-header"><div><p className="eyebrow">本机与空间</p><h1>设置</h1><p>主题等偏好只保存在此浏览器；空间时区属于共享业务数据。</p></div></div><div className="settings-grid"><article className="settings-card"><h2><Users />执行者成员</h2><p>当前有 {executorMembers.length} 名执行者。可以继续邀请新成员，每名执行者会获得独立的任务与结果记录。</p><div className="member-invite"><label className="field"><span>新执行者邮箱</span><input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="name@example.com" /></label><button className="button primary" disabled={!online || busy || !inviteEmail.includes("@")} onClick={() => void invite()}>发送账号邀请</button></div><div className="member-list">{executorMembers.length === 0 ? <p>还没有执行者</p> : executorMembers.map((item, index) => <div className="member-row" key={item.id}><div><strong>{item.email ?? `执行者 ${index + 1}`}</strong><span>{item.email ? `加入于 ${new Date(item.joinedAt).toLocaleDateString("zh-CN")}` : "邮箱需联网加载"}</span></div><button className="button text danger" disabled={!online} onClick={() => void removeExecutor(item.id)}>移除并撤销会话</button></div>)}</div></article><article className="settings-card"><h2><Cloud />空间时区</h2><p>IANA 时区会版本化并同步到执行者设备；旧实例保持原映射。</p><label className="field"><span>IANA 时区</span><input value={spaceTimeZone} onChange={(event) => setSpaceTimeZone(event.target.value)} placeholder="Asia/Hong_Kong" /></label><button className="button tonal" disabled={!online || !spaceTimeZone.trim() || spaceTimeZone === membership?.space.timeZone} onClick={() => void updateTimeZone()}>更新空间时区</button></article><article className="settings-card"><h2><Settings />本地偏好</h2><p>这些值不会上传，也不会在账号设备间同步。</p><label className="field"><span>主题</span><select defaultValue={localStorage.getItem("dst-theme") ?? "system"} onChange={(event) => { localStorage.setItem("dst-theme", event.target.value); document.documentElement.dataset.theme = event.target.value === "system" ? "" : event.target.value; }}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label><dl><dt>最近同步</dt><dd>{meta?.lastSyncedAt ?? "尚未同步"}</dd><dt>账号</dt><dd className="mono">{bootstrap?.account.id}</dd></dl></article></div></section>}
+      {tab === "settings" && <section className="connected-page"><div className="page-header"><div><p className="eyebrow">本机与空间</p><h1>设置</h1><p>主题等偏好只保存在此浏览器；空间时区属于共享业务数据。</p></div></div><div className="settings-grid"><article className="settings-card"><h2><Users />执行者成员</h2><p>当前有 {executorMembers.length} 名执行者。可以继续邀请新成员，每名执行者会获得独立的任务与结果记录。</p><div className="member-invite"><label className="field"><span>新执行者邮箱</span><input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="name@example.com" /></label><button className="button primary" disabled={!online || busy || !inviteEmail.includes("@")} onClick={() => void invite()}>发送账号邀请</button></div><div className="member-list">{executorMembers.length === 0 ? <p>还没有执行者</p> : executorMembers.map((item, index) => <div className="member-row" key={item.id}><div><strong>{item.email ?? `执行者 ${index + 1}`}</strong><span>{item.email ? `加入于 ${new Date(item.joinedAt).toLocaleDateString("zh-CN")}` : "邮箱需联网加载"}</span></div><button className="button text danger" disabled={!online} onClick={() => void removeExecutor(item.id)}>移除并撤销会话</button></div>)}</div></article><article className="settings-card"><h2><Cloud />空间时区</h2><p>IANA 时区会版本化并同步到执行者设备；旧实例保持原映射。</p><label className="field"><span>IANA 时区</span><input value={spaceTimeZone} onChange={(event) => setSpaceTimeZone(event.target.value)} placeholder="Asia/Hong_Kong" /></label><button className="button tonal" disabled={!online || !spaceTimeZone.trim() || spaceTimeZone === membership?.space.timeZone} onClick={() => void updateTimeZone()}>更新空间时区</button></article><article className="settings-card"><h2><ShieldAlert />数据与账号</h2><p>导出和删除都需要在 10 分钟内重新验证邮箱。导出为版本化 DSEXPORT JSON，不包含令牌或内部安全事件。</p><button className="button tonal" disabled={!online} onClick={() => setSensitiveAction("export")}>导出空间数据</button><button className="button text danger" disabled={!online} onClick={() => confirm("账号和整个空间将立即冻结，并在 30 天后永久删除。确认继续验证？") && setSensitiveAction("delete-scheduled")}>申请 30 天后删除</button><button className="button text danger" disabled={!online} onClick={() => confirm("此操作会立即永久删除账号和整个空间，无法恢复。确认继续验证？") && setSensitiveAction("delete-immediate")}>立即永久删除</button></article><article className="settings-card"><h2><Settings />本地偏好</h2><p>这些值不会上传，也不会在账号设备间同步。</p><label className="field"><span>主题</span><select defaultValue={localStorage.getItem("dst-theme") ?? "system"} onChange={(event) => { localStorage.setItem("dst-theme", event.target.value); document.documentElement.dataset.theme = event.target.value === "system" ? "" : event.target.value; }}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label><dl><dt>最近同步</dt><dd>{meta?.lastSyncedAt ?? "尚未同步"}</dd><dt>服务保护</dt><dd>{bootstrap?.service.mode ?? "NORMAL"}</dd><dt>账号</dt><dd className="mono">{bootstrap?.account.id}</dd></dl></article></div></section>}
     </main>
 
+    {sensitiveAction && <Modal title={sensitiveAction === "export" ? "验证后导出" : sensitiveAction === "delete-scheduled" ? "验证后申请删除" : "验证后立即永久删除"} onClose={() => { setSensitiveAction(null); setSensitiveCode(""); setSensitiveChallengeId(""); }}><p>安全验证码有效 10 分钟，并且只能用于当前登录账号的敏感操作。</p><label className="field"><span>当前账号邮箱</span><input type="email" value={sensitiveEmail} disabled={Boolean(sensitiveChallengeId)} onChange={(event) => setSensitiveEmail(event.target.value)} /></label>{sensitiveChallengeId && <label className="field"><span>6 位验证码</span><input inputMode="numeric" maxLength={6} value={sensitiveCode} onChange={(event) => setSensitiveCode(event.target.value.replace(/\D/gu, ""))} /></label>}<div className="modal-actions"><button className="button text" onClick={() => setSensitiveAction(null)}>取消</button>{sensitiveChallengeId ? <button className="button primary" disabled={busy || sensitiveCode.length !== 6} onClick={() => void finishSensitiveAction()}>{busy ? "处理中…" : "验证并继续"}</button> : <button className="button primary" disabled={busy || !sensitiveEmail.includes("@")} onClick={() => void sendSensitiveCode()}>{busy ? "发送中…" : "发送安全验证码"}</button>}</div></Modal>}
     {editor && <Modal title={editor.baseVersion ? `编辑任务修订 v${editor.baseVersion}` : "新建任务"} onClose={() => setEditor(null)} wide><TaskEditor value={editor.value} groups={groups} onChange={(value) => setEditor({ ...editor, value })} allowKindChange advancedContent={<section className="assignment-targets"><div className="section-heading"><div><h3>执行者</h3><p>选择谁会在 Android 端收到并执行这项任务。</p></div></div><div className="assignment-mode-options"><label><input type="radio" name="assignment-mode" checked={editor.assignmentMode === "ALL"} onChange={() => setEditor({ ...editor, assignmentMode: "ALL" })} /><span><strong>所有当前及未来执行者</strong><small>以后加入空间的成员也会自动获得该任务。</small></span></label><label><input type="radio" name="assignment-mode" checked={editor.assignmentMode === "SELECTED"} onChange={() => setEditor({ ...editor, assignmentMode: "SELECTED", executorMembershipIds: editor.executorMembershipIds.length ? editor.executorMembershipIds : executorMembers.map((member) => member.id) })} /><span><strong>指定执行者</strong><small>只有下面勾选的成员会收到任务。</small></span></label></div>{editor.assignmentMode === "SELECTED" && <div className="executor-choice-list">{executorMembers.length === 0 ? <p className="empty-inline">当前没有可选执行者，请先在“设置”中邀请成员。</p> : executorMembers.map((member, index) => <label key={member.id}><input type="checkbox" checked={editor.executorMembershipIds.includes(member.id)} onChange={(event) => setEditor({ ...editor, executorMembershipIds: event.target.checked ? [...editor.executorMembershipIds, member.id] : editor.executorMembershipIds.filter((id) => id !== member.id) })} /><span><strong>{member.email ?? `执行者 ${index + 1}`}</strong><small>{member.email ? "邮箱账号" : "成员信息已离线缓存"}</small></span></label>)}</div>}{editor.assignmentMode === "SELECTED" && editor.executorMembershipIds.length === 0 && <p className="connected-error">请至少选择一名执行者。</p>}</section>} /><div className="modal-actions connected-modal-actions"><button className="button text" onClick={() => setEditor(null)}>放弃</button><button className="button primary" disabled={taskIssues(editor.value).length > 0 || (editor.assignmentMode === "SELECTED" && editor.executorMembershipIds.length === 0)} onClick={() => void saveTask()}>{online ? "保存并同步" : "离线保存"}</button></div></Modal>}
     {groupEditor && <Modal title={groupEditor.baseVersion ? `编辑积分组 v${groupEditor.baseVersion}` : "新建积分组"} onClose={() => setGroupEditor(null)}><GroupEditor value={groupEditor.value} onChange={(value) => setGroupEditor({ ...groupEditor, value })} /><div className="modal-actions"><button className="button text" onClick={() => setGroupEditor(null)}>取消</button><button className="button primary" disabled={Boolean(groupIssue(groupEditor.value, groups))} onClick={() => void saveGroup()}>{online ? "保存并同步" : "离线保存"}</button></div></Modal>}
   </div>;

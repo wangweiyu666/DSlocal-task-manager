@@ -36,6 +36,7 @@ export function securityHeaders(env: Env, request: Request): Headers {
 export function json(env: Env, request: Request, value: unknown, status = 200, extra?: HeadersInit): Response {
   const headers = securityHeaders(env, request);
   headers.set("Content-Type", "application/json; charset=utf-8");
+  headers.set("X-Request-Id", requestId(request));
   if (extra) new Headers(extra).forEach((value, key) => headers.append(key, value));
   return new Response(JSON.stringify(value), { status, headers });
 }

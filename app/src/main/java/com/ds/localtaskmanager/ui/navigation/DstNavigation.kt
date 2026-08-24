@@ -150,6 +150,7 @@ fun DstNavigation(
     onSynchronize: () -> Unit = {},
     onMarkNotificationsRead: (List<String>) -> Unit = {},
     onLogout: () -> Unit = {},
+    onConnectedAccountAction: (String) -> Unit = {},
 ) {
     val navController = rememberNavController()
     val entry by navController.currentBackStackEntryAsState()
@@ -297,10 +298,11 @@ fun DstNavigation(
                      connectedSyncing = connectedState?.syncing == true,
                      onSynchronize = onSynchronize,
                      onLogout = connectedState?.let { { confirmLogout = true } },
+                     onConnectedAccountAction = connectedState?.let { onConnectedAccountAction },
                 )
             }
             composable(PROFILE_PRIVACY_ROUTE) {
-                LegalScreen(LegalDocument.PRIVACY, navController::popBackStack)
+                LegalScreen(if (connectedMode) LegalDocument.CONNECTED_PRIVACY else LegalDocument.PRIVACY, navController::popBackStack)
             }
             composable(PROFILE_LICENSES_ROUTE) {
                 LegalScreen(LegalDocument.LICENSES, navController::popBackStack)

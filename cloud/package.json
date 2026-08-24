@@ -10,7 +10,7 @@
     "test": "vitest run",
     "check": "npm run typecheck && npm test",
     "smoke:local": "node scripts/smoke-local.mjs",
-    "migrate:local": "wrangler d1 migrations apply dstationery-local --local",
+    "migrate:local": "wrangler d1 migrations apply dstationery-local --local && wrangler d1 migrations apply dstationery-deletion-ledger-local --local --config wrangler.jsonc",
     "deploy:staging": "node scripts/guard-environment.mjs staging && wrangler deploy --env staging",
     "deploy:production": "node scripts/guard-environment.mjs production && wrangler deploy --env production"
   },

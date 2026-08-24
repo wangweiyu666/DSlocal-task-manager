@@ -40,6 +40,7 @@ fun DstApp(
     onSynchronize: () -> Unit = {},
     onMarkNotificationsRead: (List<String>) -> Unit = {},
     onLogout: () -> Unit = {},
+    onConnectedAccountAction: (String) -> Unit = {},
 ) = DstNavigation(
     todayViewModel,
     taskRepository,
@@ -61,4 +62,5 @@ fun DstApp(
     onSynchronize,
     onMarkNotificationsRead,
     onLogout,
+    onConnectedAccountAction,
 )

@@ -54,7 +54,14 @@ sealed interface ConnectedState {
         val notifications: List<ConnectedNotification>,
         val isolatedTaskCount: Int = 0,
         val syncing: Boolean = false,
+        val serviceMode: String = "NORMAL",
     ) : ConnectedState
+    data class PrivacyRequired(val version: Int) : ConnectedState
+    data class DeletionPending(val deletionDueAt: String?) : ConnectedState
+    data class SensitiveActionPrompt(val action: String) : ConnectedState
+    data class SensitiveCodeSent(val email: String, val action: String) : ConnectedState
+    data class ExportReady(val fileName: String, val content: String) : ConnectedState
+    data class DeletionRequested(val executeAfter: String?) : ConnectedState
     data class WrongRole(val role: String) : ConnectedState
     data class Failure(val message: String, val canRetry: Boolean) : ConnectedState
 }
@@ -79,6 +86,11 @@ class ConnectedRuntime(
     private val sessionOperationMutex = Mutex()
     val state: StateFlow<ConnectedState> = mutableState.asStateFlow()
     private var challengeId: String? = null
+    private var sensitiveChallengeId: String? = null
+    private var pendingSensitiveAction: String? = null
+    private var readyBeforeSensitive: ConnectedState.Ready? = null
+    private var autoSyncIntervalMillis: Long? = NOTIFICATION_POLL_INTERVAL_MILLIS
+    private var serviceMode: String = "NORMAL"
 
     init {
         val connectivity = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -96,8 +108,8 @@ class ConnectedRuntime(
         }
         scope.launch {
             while (isActive) {
-                delay(NOTIFICATION_POLL_INTERVAL_MILLIS)
-                refreshNotifications()
+                delay(autoSyncIntervalMillis ?: PROTECTED_POLL_RECHECK_MILLIS)
+                if (autoSyncIntervalMillis != null) refreshNotifications()
             }
         }
     }
@@ -218,6 +230,76 @@ class ConnectedRuntime(
         }
     }
 
+    fun acknowledgePrivacy(version: Int) {
+        scope.launchSessionOperation {
+            val session = dao.session() ?: run { mutableState.value = ConnectedState.SignedOut; return@launchSessionOperation }
+            runCatching {
+                api.acknowledgePrivacy(session.accessToken, version)
+                bootstrap(session)
+            }.onFailure { mutableState.value = ConnectedState.Failure(it.message ?: "隐私确认失败", true) }
+        }
+    }
+
+    fun cancelDeletion() {
+        scope.launchSessionOperation {
+            val session = dao.session() ?: run { mutableState.value = ConnectedState.SignedOut; return@launchSessionOperation }
+            runCatching {
+                api.cancelDeletion(session.accessToken)
+                bootstrap(session)
+            }.onFailure { mutableState.value = ConnectedState.Failure(it.message ?: "账号恢复失败", true) }
+        }
+    }
+
+    fun beginSensitiveAction(action: String) {
+        val current = mutableState.value as? ConnectedState.Ready ?: return
+        readyBeforeSensitive = current
+        pendingSensitiveAction = action
+        sensitiveChallengeId = null
+        mutableState.value = ConnectedState.SensitiveActionPrompt(action)
+    }
+
+    fun requestSensitiveCode(email: String) {
+        val action = pendingSensitiveAction ?: return
+        scope.launchSessionOperation {
+            mutableState.value = ConnectedState.Restoring
+            runCatching { api.requestChallenge(email.trim(), "SENSITIVE_ACTION") }
+                .onSuccess { sensitiveChallengeId = it; mutableState.value = ConnectedState.SensitiveCodeSent(email.trim(), action) }
+                .onFailure { mutableState.value = ConnectedState.Failure(it.message ?: "安全验证码发送失败", true) }
+        }
+    }
+
+    fun verifySensitiveCode(email: String, code: String) {
+        val action = pendingSensitiveAction ?: return
+        val id = sensitiveChallengeId ?: return
+        scope.launchSessionOperation {
+            mutableState.value = ConnectedState.Restoring
+            val session = dao.session() ?: run { mutableState.value = ConnectedState.SignedOut; return@launchSessionOperation }
+            runCatching {
+                api.verifySensitive(session.accessToken, id, email, code)
+                when (action) {
+                    "EXPORT" -> {
+                        val spaceId = requireNotNull(session.spaceId)
+                        val content = api.exportData(session.accessToken, spaceId)
+                        mutableState.value = ConnectedState.ExportReady("DStationery-$spaceId-${LocalDate.now()}.dsexport.json", content)
+                    }
+                    "DELETE_SCHEDULED", "DELETE_IMMEDIATE" -> {
+                        val result = api.requestDeletion(session.accessToken, action == "DELETE_IMMEDIATE")
+                        val due = result["executeAfter"]?.jsonPrimitive?.contentOrNull
+                        purge(session.spaceId)
+                        mutableState.value = if (action == "DELETE_IMMEDIATE") ConnectedState.SignedOut else ConnectedState.DeletionRequested(due)
+                    }
+                    else -> error("未知敏感操作")
+                }
+            }.onFailure { mutableState.value = ConnectedState.Failure(it.message ?: "敏感操作失败", true) }
+        }
+    }
+
+    fun leaveSensitiveAction() {
+        pendingSensitiveAction = null
+        sensitiveChallengeId = null
+        mutableState.value = readyBeforeSensitive ?: ConnectedState.SignedOut
+    }
+
     fun markNotificationsRead(ids: List<String>) {
         if (ids.isEmpty()) return
         val readIds = ids.toSet()
@@ -267,12 +349,31 @@ class ConnectedRuntime(
                         )
                     },
                 )
+            }.onFailure { error ->
+                if (isTerminalSessionFailure(error)) {
+                    purge(session.spaceId)
+                    mutableState.value = ConnectedState.SignedOut
+                }
             }
         }
     }
 
     private suspend fun bootstrap(session: CloudSessionEntity, showInvitations: Boolean = true) {
-        val (accountId, memberships) = api.bootstrap(session.accessToken)
+        val account = api.accountStatus(session.accessToken)
+        if (account.status == "DELETION_PENDING") {
+            purgeBusinessDataPreservingSession(session)
+            mutableState.value = ConnectedState.DeletionPending(account.deletionDueAt)
+            return
+        }
+        if (account.privacyNoticeVersion < account.requiredPrivacyNoticeVersion) {
+            mutableState.value = ConnectedState.PrivacyRequired(account.requiredPrivacyNoticeVersion)
+            return
+        }
+        val bootstrap = api.bootstrap(session.accessToken)
+        val accountId = bootstrap.accountId
+        val memberships = bootstrap.memberships
+        serviceMode = bootstrap.serviceMode
+        autoSyncIntervalMillis = bootstrap.autoSyncIntervalSeconds?.times(1_000L)
         if (showInvitations) {
             val invitations = api.invitations(session.accessToken)
             if (invitations.isNotEmpty()) {
@@ -299,7 +400,11 @@ class ConnectedRuntime(
     }
 
     private suspend fun synchronize(session: CloudSessionEntity, knownMembership: CloudMembership? = null) {
-        val membership = knownMembership ?: api.bootstrap(session.accessToken).second.firstOrNull { it.id == session.membershipId }
+        val membership = knownMembership ?: api.bootstrap(session.accessToken).let { bootstrap ->
+            serviceMode = bootstrap.serviceMode
+            autoSyncIntervalMillis = bootstrap.autoSyncIntervalSeconds?.times(1_000L)
+            bootstrap.memberships.firstOrNull { it.id == session.membershipId }
+        }
         if (membership == null || membership.role != "EXECUTOR") {
             purge(session.spaceId)
             mutableState.value = ConnectedState.Failure("空间成员资格已失效，本地空间缓存已清除", false)
@@ -400,6 +505,7 @@ class ConnectedRuntime(
             notifications,
             isolatedTaskCount,
             syncing,
+            serviceMode,
         )
     }
 
@@ -576,6 +682,12 @@ class ConnectedRuntime(
         application.database.clearAllTables()
     }
 
+    private suspend fun purgeBusinessDataPreservingSession(session: CloudSessionEntity) {
+        syncDatabase.clearAllTables()
+        dao.saveSession(session.copy(accountId = null, membershipId = null, spaceId = null, spaceName = null, role = null))
+        application.database.clearAllTables()
+    }
+
     private fun buildCommand(type: String, entityId: String, payload: JsonObject): JsonObject = buildJsonObject {
         put("commandId", uuidV7()); put("entityId", entityId); put("baseVersion", 0); put("createdAt", Instant.now().toString()); put("type", type); put("payload", payload)
     }
@@ -629,6 +741,7 @@ internal fun buildExecutionResultData(
 }
 
 private const val NOTIFICATION_POLL_INTERVAL_MILLIS = 15_000L
+private const val PROTECTED_POLL_RECHECK_MILLIS = 60_000L
 
 private fun deterministicDstId(value: String): String = Base64.getUrlEncoder().withoutPadding()
     .encodeToString(MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).copyOf(12))

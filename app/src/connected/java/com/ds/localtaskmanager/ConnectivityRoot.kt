@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -37,6 +38,11 @@ import com.ds.localtaskmanager.ui.ConnectedUiState
 import com.ds.localtaskmanager.ui.DstApp
 import com.ds.localtaskmanager.ui.today.TodayViewModel
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 
 @Composable
 internal fun ConnectivityContent(
@@ -48,6 +54,15 @@ internal fun ConnectivityContent(
 ) {
     val runtime = remember(application) { ConnectedRuntime(application) }
     val state by runtime.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val export = state as? ConnectedState.ExportReady
+        if (uri != null && export != null) scope.launch(Dispatchers.IO) {
+            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(export.content.toByteArray()) }
+        }
+        if (export != null) runtime.leaveSensitiveAction()
+    }
     LaunchedEffect(Unit) { runtime.restore() }
     when (val current = state) {
         ConnectedState.Restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -75,6 +90,50 @@ internal fun ConnectivityContent(
             title = "请使用 Web 管理端",
             message = "当前空间角色为 ${current.role}。Android 联网版仅提供执行者功能，服务器仍会独立校验成员角色。",
             action = "退出账号",
+            onAction = runtime::logout,
+        )
+        is ConnectedState.PrivacyRequired -> ConnectedMessage(
+            title = "联网版隐私说明",
+            message = "任务、结果、成员邮箱和审计记录会按空间权限保存与同步。服务不提供端到端加密，运营服务技术上可以读取任务内容；不接入产品分析、行为遥测或崩溃正文上传。账号删除默认立即冻结并保留 30 天恢复期；立即永久删除会清除活动系统数据，供应商灾备副本在保留窗口届满后清除。",
+            action = "我已了解并继续",
+            onAction = { runtime.acknowledgePrivacy(current.version) },
+            secondaryAction = "退出账号",
+            onSecondaryAction = runtime::logout,
+        )
+        is ConnectedState.DeletionPending -> ConnectedMessage(
+            title = "账号正在删除恢复期内",
+            message = current.deletionDueAt?.let { "计划在 ${it.replace('T', ' ').take(16)} 永久删除。当前账号已冻结；本次登录已重新验证邮箱，可以取消删除并恢复。" }
+                ?: "当前账号已冻结，不能同步或产生新数据。",
+            action = "取消删除并恢复",
+            onAction = runtime::cancelDeletion,
+            secondaryAction = "退出账号",
+            onSecondaryAction = runtime::logout,
+        )
+        is ConnectedState.SensitiveActionPrompt -> SensitiveActionScreen(
+            action = current.action,
+            onSend = runtime::requestSensitiveCode,
+            onCancel = runtime::leaveSensitiveAction,
+        )
+        is ConnectedState.SensitiveCodeSent -> SensitiveActionScreen(
+            action = current.action,
+            initialEmail = current.email,
+            codeRequested = true,
+            onVerify = runtime::verifySensitiveCode,
+            onCancel = runtime::leaveSensitiveAction,
+        )
+        is ConnectedState.ExportReady -> ConnectedMessage(
+            title = "联网数据已准备",
+            message = "文件为 DSEXPORT v1 JSON，可能包含任务正文、执行结果和账号信息，请保存到可信位置。",
+            action = "选择保存位置",
+            onAction = { exportLauncher.launch(current.fileName) },
+            secondaryAction = "取消",
+            onSecondaryAction = runtime::leaveSensitiveAction,
+        )
+        is ConnectedState.DeletionRequested -> ConnectedMessage(
+            title = "账号已冻结",
+            message = current.executeAfter?.let { "计划在 ${it.replace('T', ' ').take(16)} 永久删除；30 天内可重新验证邮箱并取消。此设备的缓存、outbox 和会话已清除。" }
+                ?: "删除请求已经受理，此设备的数据已清除。",
+            action = "返回登录",
             onAction = runtime::logout,
         )
         is ConnectedState.Failure -> ConnectedMessage(
@@ -107,11 +166,52 @@ internal fun ConnectivityContent(
                 syncStatus = current.syncStatus(),
                 syncing = current.syncing,
                 notifications = current.notifications.map(ConnectedNotification::toUi),
+                serviceMode = current.serviceMode,
             ),
             onSynchronize = runtime::synchronize,
             onMarkNotificationsRead = runtime::markNotificationsRead,
             onLogout = runtime::logout,
+            onConnectedAccountAction = runtime::beginSensitiveAction,
         )
+    }
+}
+
+@Composable
+private fun SensitiveActionScreen(
+    action: String,
+    initialEmail: String = "",
+    codeRequested: Boolean = false,
+    onSend: (String) -> Unit = {},
+    onVerify: (String, String) -> Unit = { _, _ -> },
+    onCancel: () -> Unit,
+) {
+    var email by remember(initialEmail) { mutableStateOf(initialEmail) }
+    var code by remember { mutableStateOf("") }
+    val title = when (action) {
+        "EXPORT" -> "验证后导出联网数据"
+        "DELETE_SCHEDULED" -> "验证后申请删除账号"
+        else -> "验证后立即永久删除"
+    }
+    Column(
+        Modifier.fillMaxSize().padding(28.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Text(
+            if (action == "DELETE_IMMEDIATE") "此操作不可恢复。验证码只授权当前账号在 10 分钟内执行敏感操作。" else "验证码只授权当前账号在 10 分钟内执行敏感操作。",
+            Modifier.padding(vertical = 16.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        OutlinedTextField(email, { email = it }, label = { Text("当前账号邮箱") }, enabled = !codeRequested, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (codeRequested) OutlinedTextField(code, { code = it.filter(Char::isDigit).take(6) }, label = { Text("6 位安全验证码") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+        Button(
+            onClick = { if (codeRequested) onVerify(email, code) else onSend(email) },
+            enabled = if (codeRequested) code.length == 6 else '@' in email,
+            modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+        ) { Text(if (codeRequested) "验证并继续" else "发送安全验证码") }
+        TextButton(onClick = onCancel) { Text("取消") }
     }
 }
 

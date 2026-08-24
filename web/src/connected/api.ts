@@ -1,4 +1,5 @@
-import type { Bootstrap, SessionTokens, SpaceMember, SyncCommand } from "./types";
+import type { AccountStatus, Bootstrap, ExportPage, SessionTokens, SpaceMember, SyncCommand } from "./types";
+import { purgeAllConnectedData } from "./db";
 
 export class CloudApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string, public readonly retryable = false) {
@@ -38,13 +39,18 @@ export class CloudApi {
     }
     if (!response.ok) {
       const value = body.error as Record<string, unknown> | undefined;
-      throw new CloudApiError(response.status, String(value?.code ?? "HTTP_ERROR"), String(value?.message ?? "请求失败"), Boolean(value?.retryable));
+      const code = String(value?.code ?? "HTTP_ERROR");
+      if (code === "ACCOUNT_DELETION_PENDING" || code === "SPACE_DELETION_PENDING") {
+        this.session = null;
+        await purgeAllConnectedData();
+      }
+      throw new CloudApiError(response.status, code, String(value?.message ?? "请求失败"), Boolean(value?.retryable));
     }
     return body as T;
   }
 
-  requestChallenge(email: string): Promise<{ challengeId: string }> {
-    return this.request("/v1/auth/challenges", { method: "POST", body: JSON.stringify({ email }) });
+  requestChallenge(email: string, purpose: "SIGN_IN" | "SENSITIVE_ACTION" = "SIGN_IN"): Promise<{ challengeId: string }> {
+    return this.request("/v1/auth/challenges", { method: "POST", body: JSON.stringify({ email, purpose }) });
   }
 
   async verify(challengeId: string, email: string, code: string): Promise<SessionTokens> {
@@ -68,6 +74,22 @@ export class CloudApi {
     }
   }
 
+  account(): Promise<AccountStatus> { return this.request("/v1/account", { authenticated: true }); }
+  acknowledgePrivacy(version: number): Promise<Record<string, unknown>> {
+    return this.request("/v1/account/privacy-acknowledgements", { method: "POST", authenticated: true, mutation: true, body: JSON.stringify({ version }) });
+  }
+  verifySensitive(challengeId: string, email: string, code: string): Promise<{ sensitiveVerifiedAt: string }> {
+    return this.request("/v1/auth/verify", { method: "POST", authenticated: true, mutation: true, body: JSON.stringify({ challengeId, email, code }) });
+  }
+  requestDeletion(mode: "SCHEDULED" | "IMMEDIATE"): Promise<{ status: string; executeAfter?: string; completedAt?: string }> {
+    return this.request("/v1/account/deletion-requests", { method: "POST", authenticated: true, mutation: true, body: JSON.stringify({ mode }) });
+  }
+  cancelDeletion(): Promise<Record<string, unknown>> {
+    return this.request("/v1/account/deletion-cancellations", { method: "POST", authenticated: true, mutation: true, body: "{}" });
+  }
+  exportPage(spaceId: string, cursor?: string): Promise<ExportPage> {
+    return this.request(`/v1/spaces/${spaceId}/export${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { authenticated: true });
+  }
   bootstrap(): Promise<Bootstrap> { return this.request("/v1/bootstrap", { authenticated: true }); }
   snapshot(spaceId: string, cursor?: string): Promise<Record<string, unknown>> { return this.request(`/v1/spaces/${spaceId}/snapshot${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { authenticated: true }); }
   changes(spaceId: string, cursor: string): Promise<Record<string, unknown>> { return this.request(`/v1/spaces/${spaceId}/changes?cursor=${encodeURIComponent(cursor)}`, { authenticated: true }); }

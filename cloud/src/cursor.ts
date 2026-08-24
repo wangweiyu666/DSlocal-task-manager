@@ -4,7 +4,8 @@ import type { Env } from "./types";
 
 interface ChangeCursor { kind: "changes"; v: 1; spaceId: string; sequence: number; }
 interface SnapshotCursor { kind: "snapshot"; v: 1; spaceId: string; baseSequence: number; entityType: string; entityId: string; }
-export type Cursor = ChangeCursor | SnapshotCursor;
+interface ExportCursor { kind: "export"; v: 1; spaceId: string; role: "ADMIN" | "EXECUTOR"; exportedAt: string; dataset: number; key: string; }
+export type Cursor = ChangeCursor | SnapshotCursor | ExportCursor;
 
 export async function encodeCursor(env: Env, cursor: Cursor): Promise<string> {
   const payload = encodeBase64Url(JSON.stringify(cursor));

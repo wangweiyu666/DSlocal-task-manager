@@ -2,7 +2,7 @@
 
 本文合并联网版路线图、阶段验收、同步协议、状态矩阵和环境恢复规则。完整任务业务语义以[需求总稿](preview.md)为准，机器契约以 `cloud/openapi.yaml`、`cloud/schemas/` 与 `cloud-protocol-test-vectors/` 为准。
 
-> 当前状态：阶段 1 和阶段 2 已完成；staging 基础设施、同步服务、管理员 Web、执行者 Android、账号邀请箱以及真实双账号/真机闭环已经验证。production、导出/删除、安全专项和正式分发仍属后续阶段。
+> 当前状态：阶段 1、阶段 2 和阶段 3 的仓库实现与本地验收已完成；staging 基础设施、同步服务、管理员 Web、执行者 Android、账号邀请箱以及真实双账号/真机闭环已经验证。阶段 3 远程上线前仍需为 staging/production 创建独立删除账本 D1、替换占位 ID，并执行受保护部署。production 和正式分发属于阶段 4。
 
 ## 产品与架构边界
 
@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 联网 Android | 邮箱登录、邀请领取、空间任务、离线执行、同步和应用内通知 | 独立包名、签名、SQLCipher Room 与 Keystore 会话 |
 | 管理员 Web | 成员、任务库、积分组、发布、结果、冲突和审计 | 独立 PWA identity、IndexedDB 缓存与 outbox |
-| API Worker + D1 | 鉴权、授权、版本、同步、结果、通知和审计 | local/staging/production 分 Worker、分库、分密钥 |
+| API Worker + D1 | 鉴权、授权、版本、同步、结果、通知、审计和生命周期 | local/staging/production 分 Worker、主库、删除账本库与密钥 |
 
 联网和离线构建共享协议、领域规则、任务编辑器和基础 UI。Android 共享 `DstNavigation`、`ProfileScreen`、`SettingsScreen` 和执行状态机；联网状态通过参数和回调显示，离线构建隐藏对应入口。账号、成员、同步和云数据库实现保留在 connected 源集。编译期隔离规则见[离线版指南](offline.md#共享实现规则)。
 
@@ -37,6 +37,17 @@
 - 服务端只保存带密钥摘要。超出并发宽限后的 refresh token 重放会撤销设备会话。
 - Web refresh token 使用 `HttpOnly; Secure; SameSite=Strict` cookie；Android 使用 Keystore 保护。
 - 临时网络或服务器故障保留账号、缓存和 outbox，允许继续离线使用；只有确认成员资格被撤销后才清除该空间业务数据。
+
+## 隐私、导出与删除
+
+- 服务端按账号保存隐私说明版本和确认时间。新账号或说明版本提升后，客户端必须先显示隐私说明；确认前 `/bootstrap` 和所有空间业务接口返回 `PRIVACY_ACK_REQUIRED`。
+- `DSEXPORT v1` 是 UTF-8 JSON，只承诺导出、不承诺导回。管理员可导出整个空间；执行者只能导出自己的账号/成员关系、实际收到的任务修订、分配、实例、执行记录和通知。密钥、令牌、验证码及安全内部记录始终排除。
+- 管理员导出只包含当前活动成员和有效邀请的邮箱；已移除、已删除或已过期对象匿名化。每次导出和删除都要求最近 10 分钟内完成邮箱验证，并写入不含正文的审计事件。
+- 默认删除会立即把账号和管理员空间置为 `DELETION_PENDING`、撤销所有会话并冻结业务访问，30 天后永久执行。恢复必须重新验证邮箱；立即删除没有恢复窗口。
+- 执行者永久删除会匿名化其成员关系与执行事件，仅保留随空间存在的随机 tombstone 和结构关系。唯一管理员永久删除会删除整个空间及其业务数据。
+- 客户端确认删除后立即清除会话、缓存和 outbox；其他离线设备在下一次联网确认状态后清除。服务商灾备历史到期前可能仍含旧块，因此每个环境使用独立 D1 删除账本，恢复主库后必须先重放账本。
+
+生命周期保留期：邮箱挑战 24 小时；已结束设备会话 30 天；命令回执和同步 change 90 天；终态邀请邮箱 30 天后脱敏；删除账本 35 天。删除账本只保存随机目标 ID、范围、创建/到期时间，不保存邮箱或业务正文。
 
 ## 同步协议
 
@@ -104,7 +115,7 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 
 ## 稳定错误与安全
 
-非 2xx 响应统一返回 `error.code`、安全的用户消息、`requestId`、`retryable` 和可选重试时间。稳定码至少包括：`INVALID_REQUEST`、`UNAUTHENTICATED`、`SESSION_EXPIRED`、`MEMBERSHIP_REVOKED`、`FORBIDDEN`、`NOT_FOUND`、`RATE_LIMITED`、`INVITATION_INVALID`、`IDEMPOTENCY_KEY_REUSED`、`TASK_VERSION_CONFLICT`、`SYNC_CURSOR_EXPIRED`、`CONFLICT`、`INTERNAL_ERROR`。
+非 2xx 响应统一返回 `error.code`、安全的用户消息、`requestId`、`retryable` 和可选重试时间。稳定码至少包括：`INVALID_REQUEST`、`REQUEST_TOO_LARGE`、`UNAUTHENTICATED`、`SESSION_EXPIRED`、`PRIVACY_ACK_REQUIRED`、`ACCOUNT_DELETION_PENDING`、`SPACE_DELETION_PENDING`、`REAUTHENTICATION_REQUIRED`、`MEMBERSHIP_REVOKED`、`FORBIDDEN`、`NOT_FOUND`、`RATE_LIMITED`、`EMAIL_CAPACITY_PROTECTED`、`INVITATION_INVALID`、`IDEMPOTENCY_KEY_REUSED`、`TASK_VERSION_CONFLICT`、`SYNC_CURSOR_EXPIRED`、`CONFLICT`、`INTERNAL_ERROR`。
 
 - 每次空间查询必须同时约束 `space_id` 和对象 ID。
 - Web façade 校验精确 Origin 与 CSRF token；响应启用 CSP、HSTS、nosniff、严格 referrer policy 和 frame deny。
@@ -112,15 +123,29 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 - 不提供端到端加密；运营服务技术上可读取任务内容，因此必须最小化日志和权限。
 - 不接入产品分析、行为遥测或崩溃正文上传。
 
+安全专项采用仓库内可重复测试，不声明第三方渗透测试。测试覆盖隐私门禁、跨空间拒绝、游标签名篡改、幂等键复用、成员移除、敏感操作近期邮箱验证、请求体大小限制、日志字段白名单以及删除流程。
+
+Worker 结构日志只允许 `timestamp`、`level`、`event`、`environment`、`requestId`、`method`、`route`、`status`、`durationMs`、`errorCode`、`retryable` 等字段；不打印原始 URL 查询、header、body、异常 message/stack。运维使用 Cloudflare Workers Logs/D1 仪表盘和 Resend 原生用量页，不接第三方监控。
+
+资源保护按每天的 EMAIL、AUTO_SYNC_READ、API_WRITE 计数：达到软额度 70% 进入 `WARNING`，客户端自动轮询从 15 秒降为 60 秒；达到 90% 进入 `PROTECT`，停止自动轮询并保留手动同步、关键写入和删除/恢复邮件。邮件最后 10% 仅供敏感验证与账号恢复。阈值是应用保护线，不替代供应商硬限额。
+
 ## 环境与部署
 
 | 环境 | API | Web | D1 |
 | --- | --- | --- | --- |
-| local | Wrangler 本地进程 | Wrangler 本地进程 | `dstationery-local` |
-| staging | `api-staging.rochelimit.me` | `staging.rochelimit.me` | `dstationery-staging`（APAC） |
-| production | `api.rochelimit.me` | `app.rochelimit.me` | `dstationery-production`（APAC） |
+| local | Wrangler 本地进程 | Wrangler 本地进程 | `dstationery-local` + `dstationery-deletion-ledger-local` |
+| staging | `api-staging.rochelimit.me` | `staging.rochelimit.me` | `dstationery-staging` + `dstationery-deletion-ledger-staging`（APAC） |
+| production | `api.rochelimit.me` | `app.rochelimit.me` | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
 
-local、staging、production 使用不同 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。`cloud/scripts/guard-environment.mjs` 在远程部署前验证环境和数据库隔离。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。
+local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。`cloud/scripts/guard-environment.mjs` 在远程部署前验证两个绑定均非占位符、主库/账本库分离且环境间不复用。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。
+
+阶段 3 首次远程部署前必须完成：
+
+1. 分别创建 `dstationery-deletion-ledger-staging` 和 `dstationery-deletion-ledger-production` D1 数据库；
+2. 将 `cloud/wrangler.jsonc` 中 `2222…` / `3333…` 占位 ID 替换为真实 ID；
+3. 运行环境 guard；
+4. 先迁移主库，再迁移删除账本库，最后部署 Worker；
+5. 用非敏感 canary 演练“删除 → 主库 Time Travel 恢复 → 账本重放 → canary 仍不可用”。
 
 联网 Android 只在本机构建，不由 GitHub Android CI 生成或上传：
 
@@ -139,13 +164,13 @@ Cloud GitHub 工作流负责 Worker 与 Web 的测试；staging 和 production �
 - 恢复演练只使用非敏感 canary，不导出验证码、令牌或任务正文。
 - Worker 故障优先回滚固定代码版本；兼容 migration 故障先回滚 Worker，再按 bookmark 使用 D1 Time Travel。
 - 邮件故障保留限流事实并返回可重试错误；密钥疑似泄露时立即轮换对应环境密钥并撤销设备会话。
-- 达到资源预警阈值时延长自动刷新间隔，接近硬限制时停用定时刷新但保留手动同步和关键写入；上线前重新核对 Cloudflare 官方限额。
+- 每日查看 Worker 错误率/结构日志、D1 读写与存储、Resend 投递和用量；周度复核日志字段样本与额度趋势。达到 70% 时确认轮询降频，达到 90% 时确认保护模式和邮件保留通道；上线前重新核对 Cloudflare 与 Resend 官方限额。
 
 ## 已完成证据与后续阶段
 
 阶段 1 已完成四构建入口、D1 schema/migration、认证邀请、环境隔离、自定义 staging 域、Resend 投递和 Time Travel 演练。阶段 2 已完成 schema v5、同步 API、管理员 Web、联网 Android、账号邀请箱、指定执行者、断网执行/恢复同步、成员撤销以及 API 26/33/35 验证。
 
-阶段 3 待完成：按角色导出、30 天删除/永久删除、隐私首次提示、授权与滥用安全专项、日志复核和额度观测。
+阶段 3 已完成 schema v6、按角色 DSEXPORT v1、30 天删除/立即永久删除、版本化隐私首次门禁、近期邮箱验证、授权与滥用自动化、安全日志白名单、原生用量观测和 70%/90% 客户端保护模式。仓库不声称完成第三方渗透测试；staging/production 删除账本仍需在阶段 4 部署前真实创建和演练。
 
 阶段 4 待完成：production DNS/邮件域、受保护 migration、独立签名分发、真实双人试运行和一周观察。远程推送、完整 DSTB1 云迁移、端到端加密、多管理员、多空间、公开注册、应用商店分发和大陆 SLA 均后置。
 

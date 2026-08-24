@@ -4,6 +4,10 @@
 
 ### Added
 
+- 联网阶段 3：版本化隐私首次门禁、最近邮箱验证保护的 DSEXPORT v1 角色限定导出，以及 30 天恢复期/立即永久删除。
+- 独立 35 天删除账本与灾备恢复重放、结构化日志白名单、Cloudflare/Resend 用量预警与保护模式。
+- 管理员 Web 和执行者 Android 的导出、删除、恢复与服务保护状态交互。
+- Windows 开发调用统一优先使用 PowerShell 7 和用户 PATH。
 - DST1.1 重复任务单日修改、撤销和恢复，Dom Web 与 Sub Android 同步支持。
 - Dom 使用 DSDOM v1.2 保存单日例外；Sub 使用 Room v1.6（内部 Schema 6）和 DSTB1 业务 schema v2 持久化。
 

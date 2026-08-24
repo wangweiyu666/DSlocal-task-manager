@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: DStationery Cloud API
-  version: 2.0.0
-  description: Stage 2 identity, role-bound space, offline command and incremental sync contract. Task revisions carry canonical DST1/DST1.1 payloads.
+  version: 3.0.0
+  description: Stage 3 identity, privacy acknowledgement, role-bound export, recoverable deletion, offline command and incremental sync contract.
 servers:
   - url: /v1
 paths:
@@ -27,7 +27,7 @@ paths:
               required: [email]
               properties:
                 email: { type: string, format: email, maxLength: 254 }
-                purpose: { type: string, enum: [SIGN_IN, DELETE_ACCOUNT], default: SIGN_IN }
+                purpose: { type: string, enum: [SIGN_IN, SENSITIVE_ACTION, DELETE_ACCOUNT], default: SIGN_IN }
       responses:
         "202": { description: Challenge accepted without disclosing account existence }
         "429": { $ref: "#/components/responses/Error" }
@@ -62,6 +62,57 @@ paths:
       responses:
         "200": { description: Session revoked }
         "401": { $ref: "#/components/responses/Error" }
+  /account:
+    get:
+      operationId: getAccountLifecycleStatus
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Account status, required privacy notice version and deletion due time }
+        "401": { $ref: "#/components/responses/Error" }
+  /account/privacy-acknowledgements:
+    post:
+      operationId: acknowledgePrivacyNotice
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version]
+              properties: { version: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Current privacy notice acknowledged for this account }
+        "409": { $ref: "#/components/responses/Error" }
+  /account/deletion-requests:
+    post:
+      operationId: requestAccountDeletion
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mode]
+              properties: { mode: { type: string, enum: [SCHEDULED, IMMEDIATE] } }
+      responses:
+        "200": { description: Account frozen for 30 days or permanently deleted after fresh email verification }
+        "403": { $ref: "#/components/responses/Error" }
+  /account/deletion-cancellations:
+    post:
+      operationId: cancelAccountDeletion
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200": { description: Pending deletion cancelled after a fresh sign-in }
+        "409": { $ref: "#/components/responses/Error" }
   /spaces:
     post:
       operationId: createSpace
@@ -215,6 +266,17 @@ paths:
       responses:
         "200": { description: Administrator-only sanitized security and business audit timeline }
         "403": { $ref: "#/components/responses/Error" }
+  /spaces/{spaceId}/export:
+    get:
+      operationId: exportRoleScopedData
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SpaceId" }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        "200": { description: Paged DSEXPORT v1 records filtered to the authenticated member role }
+        "403": { description: Fresh email verification or role authorization required }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }

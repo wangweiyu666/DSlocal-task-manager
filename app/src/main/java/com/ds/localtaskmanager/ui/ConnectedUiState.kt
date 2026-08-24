@@ -5,6 +5,7 @@ data class ConnectedUiState(
     val syncStatus: String,
     val syncing: Boolean,
     val notifications: List<AppNotificationUi>,
+    val serviceMode: String = "NORMAL",
 )
 
 data class AppNotificationUi(

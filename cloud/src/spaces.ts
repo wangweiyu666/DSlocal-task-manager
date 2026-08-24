@@ -1,5 +1,5 @@
 import { addSeconds, hmac, uuidV7 } from "./crypto";
-import { authenticate, normalizeEmail } from "./auth";
+import { authenticate, normalizeEmail, requireAccountReady } from "./auth";
 import { ApiError, json, readObject, requestId, requiredString } from "./http";
 import { sendInvitation } from "./mail";
 import type { Env, SessionPrincipal } from "./types";
@@ -22,6 +22,7 @@ function entityChangeStatements(env: Env, spaceId: string, entityType: string, e
 }
 
 export async function membership(env: Env, principal: SessionPrincipal, spaceId: string, role?: "ADMIN" | "EXECUTOR"): Promise<{ id: string; role: string }> {
+  requireAccountReady(principal);
   const row = await env.DB.prepare("SELECT id,role FROM memberships WHERE space_id=? AND account_id=? AND status='ACTIVE'").bind(spaceId, principal.accountId).first<{ id: string; role: string }>();
   if (!row) throw new ApiError(403, "MEMBERSHIP_REVOKED", "你已不是该空间成员");
   if (role && row.role !== role) throw new ApiError(403, "FORBIDDEN", "当前角色无权执行此操作");
@@ -33,6 +34,7 @@ export async function membership(env: Env, principal: SessionPrincipal, spaceId:
 
 export async function createSpace(env: Env, request: Request): Promise<Response> {
   const principal = await authenticate(env, request, true);
+  requireAccountReady(principal);
   if (normalizeEmail(env.ADMIN_EMAIL) !== principal.email) throw new ApiError(403, "FORBIDDEN", "当前账号不能创建空间");
   const existing = await env.DB.prepare("SELECT 1 AS present FROM memberships WHERE account_id=? AND role='ADMIN' AND status='ACTIVE'").bind(principal.accountId).first();
   if (existing) throw new ApiError(409, "CONFLICT", "管理员已拥有空间");
@@ -80,6 +82,7 @@ export async function createInvitation(env: Env, request: Request, spaceId: stri
 
 export async function listInvitations(env: Env, request: Request): Promise<Response> {
   const principal = await authenticate(env, request);
+  requireAccountReady(principal);
   const now = nowIso();
   const rows = await env.DB.prepare("SELECT i.id,i.space_id,s.name AS space_name,i.created_at,i.expires_at FROM invitations i JOIN spaces s ON s.id=i.space_id WHERE i.email_normalized=? AND i.status='ACTIVE' AND i.expires_at>? AND s.status='ACTIVE' ORDER BY i.created_at,i.id")
     .bind(principal.email, now).all<{ id: string; space_id: string; space_name: string; created_at: string; expires_at: string }>();
@@ -136,6 +139,7 @@ async function acceptInvitationRecord(env: Env, request: Request, principal: Ses
 
 export async function acceptInvitationById(env: Env, request: Request, invitationId: string): Promise<Response> {
   const principal = await authenticate(env, request, true);
+  requireAccountReady(principal);
   await readObject(request, []);
   const invitation = await env.DB.prepare("SELECT * FROM invitations WHERE id=? AND email_normalized=?").bind(invitationId, principal.email).first<Record<string, unknown>>();
   return acceptInvitationRecord(env, request, principal, invitation);

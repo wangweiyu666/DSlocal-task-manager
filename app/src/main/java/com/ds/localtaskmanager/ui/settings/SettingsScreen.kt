@@ -78,6 +78,7 @@ fun SettingsRoute(
     connectedSyncing: Boolean = false,
     onSynchronize: () -> Unit = {},
     onLogout: (() -> Unit)? = null,
+    onConnectedAccountAction: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -147,6 +148,7 @@ fun SettingsRoute(
         connectedSyncing = connectedSyncing,
         onSynchronize = onSynchronize,
         onLogout = onLogout,
+        onConnectedAccountAction = onConnectedAccountAction,
     )
     if (confirmDiagnosticExport) {
         AlertDialog(
@@ -190,6 +192,7 @@ fun SettingsScreen(
     connectedSyncing: Boolean = false,
     onSynchronize: () -> Unit = {},
     onLogout: (() -> Unit)? = null,
+    onConnectedAccountAction: ((String) -> Unit)? = null,
 ) {
     Scaffold(
         modifier = Modifier.fillMaxSize().testTag("settings-screen"),
@@ -348,6 +351,29 @@ fun SettingsScreen(
                         tag = "settings-diagnostics",
                         onClick = onExportDiagnostics,
                     )
+                    if (connectedSpaceName != null && onConnectedAccountAction != null) {
+                        HorizontalDivider()
+                        SettingsLinkRow(
+                            title = "导出联网数据",
+                            description = "邮箱复验后保存 DSEXPORT v1 JSON",
+                            tag = "settings-cloud-export",
+                            onClick = { onConnectedAccountAction("EXPORT") },
+                        )
+                        HorizontalDivider()
+                        SettingsLinkRow(
+                            title = "申请删除账号",
+                            description = "立即冻结，30 天内可通过邮箱验证恢复",
+                            tag = "settings-cloud-delete",
+                            onClick = { onConnectedAccountAction("DELETE_SCHEDULED") },
+                        )
+                        HorizontalDivider()
+                        SettingsLinkRow(
+                            title = "立即永久删除",
+                            description = "邮箱复验后清除活动系统数据，无法恢复",
+                            tag = "settings-cloud-delete-now",
+                            onClick = { onConnectedAccountAction("DELETE_IMMEDIATE") },
+                        )
+                    }
                     HorizontalDivider()
                     SettingsLinkRow(
                         title = "清空诊断记录",

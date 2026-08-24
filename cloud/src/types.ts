@@ -1,5 +1,6 @@
 export interface Env {
   DB: D1Database;
+  DELETION_LEDGER: D1Database;
   ENVIRONMENT: "local" | "staging" | "production";
   ALLOWED_ORIGIN: string;
   AUTH_PEPPER: string;
@@ -12,6 +13,9 @@ export interface SessionPrincipal {
   accountId: string;
   sessionId: string;
   email: string;
+  accountStatus: "ACTIVE" | "DELETION_PENDING" | "DELETED";
+  privacyNoticeVersion: number;
+  sensitiveVerifiedAt: string | null;
 }
 
 export interface ApiErrorBody {

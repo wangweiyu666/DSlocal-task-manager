@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
 const base = process.env.CLOUD_SMOKE_BASE ?? "http://127.0.0.1:8787";
+const smokeAdminEmail = process.env.CLOUD_SMOKE_ADMIN_EMAIL ?? "admin@example.com";
 
 async function response(path, init) {
   const value = await fetch(`${base}${path}`, init);
@@ -21,8 +22,28 @@ async function expectError(path, status, code, init) {
   }
 }
 
+async function collectExport(accessToken, spaceId) {
+  const datasets = {};
+  let manifest = null;
+  let cursor;
+  let pages = 0;
+  do {
+    const page = await request(`/v1/spaces/${spaceId}/export?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { headers: headers(accessToken) });
+    manifest ??= page.manifest;
+    if (page.dataset) (datasets[page.dataset] ??= []).push(...page.records);
+    cursor = page.nextCursor ?? undefined;
+    pages += 1;
+    if (pages > 100) throw new Error("DSEXPORT pagination did not terminate");
+  } while (cursor);
+  return { manifest, datasets };
+}
+
 const headers = (token) => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" });
 const dstId = () => randomBytes(12).toString("base64url");
+const smokeClientIp = () => {
+  const value = randomBytes(8).toString("hex").match(/.{1,4}/g).join(":");
+  return `2001:db8:${value}`;
+};
 const command = (type, entityId, payload, baseVersion = 0, commandId = randomUUID()) => ({
   commandId,
   entityId,
@@ -32,22 +53,37 @@ const command = (type, entityId, payload, baseVersion = 0, commandId = randomUUI
   payload,
 });
 
-async function authenticate(email) {
+async function authenticate(email, acknowledgePrivacy = true) {
   const challenge = await request("/v1/auth/challenges", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email })
+    method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": smokeClientIp() }, body: JSON.stringify({ email })
   });
   const mailbox = await request(`/__dev/mailbox?recipient=${encodeURIComponent(email)}`);
   const code = mailbox.messages.find((message) => message.id === `challenge-${challenge.challengeId}`)?.secret;
   if (!code) throw new Error(`missing local challenge mail for ${email}`);
-  return request("/v1/auth/verify", {
+  const session = await request("/v1/auth/verify", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challengeId: challenge.challengeId, email, code })
   });
+  const status = await request("/v1/account", { headers: headers(session.accessToken) });
+  if (acknowledgePrivacy && status.account.status === "ACTIVE" && status.account.privacyNoticeVersion < status.account.requiredPrivacyNoticeVersion) {
+    await request("/v1/account/privacy-acknowledgements", {
+      method: "POST", headers: headers(session.accessToken), body: JSON.stringify({ version: status.account.requiredPrivacyNoticeVersion })
+    });
+  }
+  return session;
 }
 
 const health = await request("/health");
-if (health.environment !== "local" || health.schemaVersion !== "5") throw new Error(`unexpected health response: ${JSON.stringify(health)}`);
+if (health.environment !== "local" || health.schemaVersion !== "6") throw new Error(`unexpected health response: ${JSON.stringify(health)}`);
 
-const admin = await authenticate("admin@example.com");
+const privacyEmail = `privacy-${randomUUID()}@example.com`;
+const privacySession = await authenticate(privacyEmail, false);
+await expectError("/v1/bootstrap", 428, "PRIVACY_ACK_REQUIRED", { headers: headers(privacySession.accessToken) });
+const privacyStatus = await request("/v1/account", { headers: headers(privacySession.accessToken) });
+await request("/v1/account/privacy-acknowledgements", {
+  method: "POST", headers: headers(privacySession.accessToken), body: JSON.stringify({ version: privacyStatus.account.requiredPrivacyNoticeVersion })
+});
+
+const admin = await authenticate(smokeAdminEmail);
 let adminBootstrap = await request("/v1/bootstrap", { headers: headers(admin.accessToken) });
 if (adminBootstrap.memberships.length === 0) {
   await request("/v1/spaces", {
@@ -57,6 +93,9 @@ if (adminBootstrap.memberships.length === 0) {
 }
 const spaceId = adminBootstrap.memberships[0]?.space?.id;
 if (adminBootstrap.memberships[0]?.role !== "ADMIN") throw new Error("admin bootstrap role missing");
+await expectError(`/v1/spaces/${randomUUID()}/snapshot`, 403, "MEMBERSHIP_REVOKED", { headers: headers(admin.accessToken) });
+const adminExport = await request(`/v1/spaces/${spaceId}/export?limit=5`, { headers: headers(admin.accessToken) });
+if (adminExport.manifest?.format !== "DSEXPORT" || adminExport.manifest?.role !== "ADMIN") throw new Error("admin DSEXPORT manifest missing");
 
 const executorEmail = `executor-${randomUUID()}@example.com`;
 const invitation = await request(`/v1/spaces/${spaceId}/invitations`, {
@@ -139,7 +178,9 @@ const snapshot = await request(`/v1/spaces/${spaceId}/snapshot?limit=2`, { heade
 if (!snapshot.entities.length || !snapshot.nextCursor || !snapshot.changesCursor) throw new Error("snapshot contract incomplete");
 const changePage = await request(`/v1/spaces/${spaceId}/changes?cursor=${encodeURIComponent(snapshot.changesCursor)}`, { headers: headers(executor.accessToken) });
 if (!Array.isArray(changePage.changes)) throw new Error("change feed contract incomplete");
-await expectError(`/v1/spaces/${spaceId}/changes?cursor=${encodeURIComponent(`${snapshot.changesCursor.slice(0, -1)}0`)}`, 400, "INVALID_REQUEST", { headers: headers(executor.accessToken) });
+const cursorLastCharacter = snapshot.changesCursor.at(-1);
+const tamperedCursor = `${snapshot.changesCursor.slice(0, -1)}${cursorLastCharacter === "0" ? "1" : "0"}`;
+await expectError(`/v1/spaces/${spaceId}/changes?cursor=${encodeURIComponent(tamperedCursor)}`, 400, "INVALID_REQUEST", { headers: headers(executor.accessToken) });
 
 const occurrenceKey = `${taskId}:2:1:2026-08-17T09:30`;
 const occurrence = command("OCCURRENCE_UPSERT", occurrenceKey, {
@@ -206,6 +247,13 @@ if (!adminResultSnapshot.entities.some((item) => item.entityType === "execution_
 const notifications = await request(`/v1/spaces/${spaceId}/notifications`, { headers: headers(admin.accessToken) });
 if (notifications.unreadCount < 1) throw new Error("admin result notification missing");
 
+const executorExport = await collectExport(executor.accessToken, spaceId);
+if (executorExport.manifest?.role !== "EXECUTOR") throw new Error("executor DSEXPORT manifest missing");
+if (executorExport.datasets.invitation?.length || executorExport.datasets.auditEvent?.length) throw new Error("executor export leaked admin-only datasets");
+if (!executorExport.datasets.task?.some((item) => item.id === taskId)) throw new Error("executor export omitted an assigned task");
+if (executorExport.datasets.membership?.some((item) => item.id !== accepted.membership.id)
+  || executorExport.datasets.assignment?.some((item) => item.executorMembershipId !== accepted.membership.id)) throw new Error("executor export crossed member scope");
+
 const secondNotificationCount = (await request(`/v1/spaces/${spaceId}/notifications`, { headers: headers(secondExecutor.accessToken) })).notifications
   .reduce((total, item) => total + Number(item.eventCount ?? 1), 0);
 const deselect = command("TASK_UPDATE", taskId, {
@@ -248,9 +296,31 @@ await request(`/v1/spaces/${spaceId}/members/${rejoined.membership.id}`, {
 await expectError(`/v1/spaces/${spaceId}/snapshot`, 401, "SESSION_EXPIRED", { headers: headers(rejoinSession.accessToken) });
 
 await request(`/v1/spaces/${spaceId}/snapshot`, { headers: headers(secondExecutor.accessToken) });
-await request(`/v1/spaces/${spaceId}/members/${secondAccepted.membership.id}`, {
-  method: "DELETE", headers: { Authorization: `Bearer ${admin.accessToken}` }
-});
-await expectError(`/v1/spaces/${spaceId}/snapshot`, 401, "SESSION_EXPIRED", { headers: headers(secondExecutor.accessToken) });
 
-console.log("phase 2 local sync smoke passed: account invitation inbox/relogin/rejoin, member emails, selected assignment add/remove, isolated tasks/results, snapshot, cursor, idempotency, notification and revocation");
+const scheduledDelete = await request("/v1/account/deletion-requests", {
+  method: "POST", headers: headers(admin.accessToken), body: JSON.stringify({ mode: "SCHEDULED" })
+});
+if (scheduledDelete.status !== "PENDING" || !scheduledDelete.executeAfter) throw new Error("scheduled deletion did not freeze the account");
+await expectError("/v1/account", 401, "ACCOUNT_DELETION_PENDING", { headers: headers(admin.accessToken) });
+await expectError(`/v1/spaces/${spaceId}/snapshot`, 401, "SPACE_DELETION_PENDING", { headers: headers(secondExecutor.accessToken) });
+const recoverySession = await authenticate(smokeAdminEmail);
+await request("/v1/account/deletion-cancellations", {
+  method: "POST", headers: headers(recoverySession.accessToken), body: JSON.stringify({})
+});
+const restoredBootstrap = await request("/v1/bootstrap", { headers: headers(recoverySession.accessToken) });
+if (!restoredBootstrap.memberships.some((item) => item.space.id === spaceId)) throw new Error("scheduled deletion cancellation did not restore the space");
+const secondRecoverySession = await authenticate(secondExecutorEmail);
+await request(`/v1/spaces/${spaceId}/snapshot`, { headers: headers(secondRecoverySession.accessToken) });
+await request(`/v1/spaces/${spaceId}/members/${secondAccepted.membership.id}`, {
+  method: "DELETE", headers: { Authorization: `Bearer ${recoverySession.accessToken}` }
+});
+
+const immediateDeleteEmail = `delete-now-${randomUUID()}@example.com`;
+const immediateDeleteSession = await authenticate(immediateDeleteEmail);
+const immediateDelete = await request("/v1/account/deletion-requests", {
+  method: "POST", headers: headers(immediateDeleteSession.accessToken), body: JSON.stringify({ mode: "IMMEDIATE" })
+});
+if (immediateDelete.status !== "COMPLETED") throw new Error("immediate deletion did not complete");
+await expectError("/v1/account", 401, "SESSION_EXPIRED", { headers: headers(immediateDeleteSession.accessToken) });
+
+console.log("phase 3 local smoke passed: privacy gate, scoped exports, invitation/rejoin, targeted sync/results, revocation, scheduled deletion cancellation and immediate deletion");

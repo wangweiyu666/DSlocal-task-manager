@@ -10,13 +10,14 @@
 | DST1/DST1.1 字段和严格校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
 | DSTB1 文件格式和测试向量 | [DSTB1 格式](dstb1-format.md) |
 | Android API 26/33/35 与截图测试 | [模拟器测试环境](android-emulator-testing.md) |
+| Windows PowerShell、Node 与用户 PATH 解析 | [Windows 命令行工具](windows-tooling.md) |
 
 ## 构建职责
 
 - 联网 Android：只在开发者本机测试、Lint、构建和签名，不由 GitHub Android CI 上传。
 - 离线 Android：推送 `main` 后由 GitHub `Android CI` 构建并上传 APK 与 SHA-256 artifact。
 - 离线 Web：由 `Dom Web Pages` 验证并部署 `web/dist-offline`。
-- 联网 Web 与 API：由 `Cloud Phase 2` 验证；staging 和 production 均通过受保护的手动工作流部署。
+- 联网 Web 与 API：由 `Cloud Phase 3` 验证；staging 和 production 均通过受保护的手动工作流部署。
 
 ## 配套机器资产
 

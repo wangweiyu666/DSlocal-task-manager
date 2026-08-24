@@ -32,3 +32,14 @@ export async function purgeSpace(spaceId: string): Promise<void> {
     await connectedDb.syncMeta.delete(spaceId);
   });
 }
+
+export async function purgeAllConnectedData(): Promise<void> {
+  await connectedDb.transaction("rw", connectedDb.entities, connectedDb.outbox, connectedDb.conflicts, connectedDb.syncMeta, async () => {
+    await Promise.all([
+      connectedDb.entities.clear(),
+      connectedDb.outbox.clear(),
+      connectedDb.conflicts.clear(),
+      connectedDb.syncMeta.clear(),
+    ]);
+  });
+}

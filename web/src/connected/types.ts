@@ -21,7 +21,26 @@ export interface MembershipBootstrap {
 
 export interface Bootstrap {
   account: { id: string };
+  service: { mode: "NORMAL" | "WARNING" | "PROTECT"; autoSyncIntervalSeconds: number | null };
   memberships: MembershipBootstrap[];
+}
+
+export interface AccountStatus {
+  account: {
+    id: string;
+    status: "ACTIVE" | "DELETION_PENDING" | "DELETED";
+    privacyNoticeVersion: number;
+    requiredPrivacyNoticeVersion: number;
+    deletionDueAt: string | null;
+  };
+}
+
+export interface ExportPage {
+  manifest: Record<string, unknown> | null;
+  dataset: string | null;
+  records: unknown[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 export interface CloudEntity {

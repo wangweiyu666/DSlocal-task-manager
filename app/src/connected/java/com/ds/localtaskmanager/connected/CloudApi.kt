@@ -42,6 +42,20 @@ data class CloudMembership(
     val timeZoneVersion: Int,
 )
 
+data class CloudBootstrap(
+    val accountId: String,
+    val memberships: List<CloudMembership>,
+    val serviceMode: String,
+    val autoSyncIntervalSeconds: Int?,
+)
+
+data class CloudAccountStatus(
+    val status: String,
+    val privacyNoticeVersion: Int,
+    val requiredPrivacyNoticeVersion: Int,
+    val deletionDueAt: String?,
+)
+
 data class CloudInvitation(
     val id: String,
     val spaceId: String,
@@ -61,8 +75,8 @@ data class CloudNotificationSummary(
 class CloudApi(private val baseUrl: String = BuildConfig.CLOUD_API_BASE_URL) {
     private val json = Json { ignoreUnknownKeys = false }
 
-    suspend fun requestChallenge(email: String): String =
-        request("POST", "/v1/auth/challenges", body = buildJsonObject { put("email", email) })
+    suspend fun requestChallenge(email: String, purpose: String = "SIGN_IN"): String =
+        request("POST", "/v1/auth/challenges", body = buildJsonObject { put("email", email); put("purpose", purpose) })
             .requiredString("challengeId")
 
     suspend fun verify(challengeId: String, email: String, code: String): CloudTokens =
@@ -73,7 +87,52 @@ class CloudApi(private val baseUrl: String = BuildConfig.CLOUD_API_BASE_URL) {
     suspend fun refresh(refreshToken: String): CloudTokens =
         request("POST", "/v1/auth/refresh", body = buildJsonObject { put("refreshToken", refreshToken) }).tokens()
 
-    suspend fun bootstrap(accessToken: String): Pair<String, List<CloudMembership>> {
+    suspend fun accountStatus(accessToken: String): CloudAccountStatus {
+        val account = request("GET", "/v1/account", accessToken)["account"]!!.jsonObject
+        return CloudAccountStatus(
+            status = account.requiredString("status"),
+            privacyNoticeVersion = account["privacyNoticeVersion"]?.jsonPrimitive?.intOrNull ?: 0,
+            requiredPrivacyNoticeVersion = account["requiredPrivacyNoticeVersion"]?.jsonPrimitive?.intOrNull ?: 1,
+            deletionDueAt = account["deletionDueAt"]?.jsonPrimitive?.contentOrNull,
+        )
+    }
+
+    suspend fun acknowledgePrivacy(accessToken: String, version: Int) {
+        request("POST", "/v1/account/privacy-acknowledgements", accessToken, buildJsonObject { put("version", version) })
+    }
+
+    suspend fun verifySensitive(accessToken: String, challengeId: String, email: String, code: String) {
+        request("POST", "/v1/auth/verify", accessToken, buildJsonObject {
+            put("challengeId", challengeId); put("email", email); put("code", code)
+        })
+    }
+
+    suspend fun requestDeletion(accessToken: String, immediate: Boolean): JsonObject =
+        request("POST", "/v1/account/deletion-requests", accessToken, buildJsonObject { put("mode", if (immediate) "IMMEDIATE" else "SCHEDULED") })
+
+    suspend fun cancelDeletion(accessToken: String) {
+        request("POST", "/v1/account/deletion-cancellations", accessToken, buildJsonObject { })
+    }
+
+    suspend fun exportData(accessToken: String, spaceId: String): String {
+        var cursor: String? = null
+        var manifest: JsonObject? = null
+        val datasets = linkedMapOf<String, MutableList<kotlinx.serialization.json.JsonElement>>()
+        do {
+            val suffix = cursor?.let { "?cursor=${java.net.URLEncoder.encode(it, StandardCharsets.UTF_8.name())}" }.orEmpty()
+            val page = request("GET", "/v1/spaces/$spaceId/export$suffix", accessToken)
+            page["manifest"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }?.jsonObject?.let { manifest = it }
+            val dataset = page["dataset"]?.jsonPrimitive?.contentOrNull
+            if (dataset != null) datasets.getOrPut(dataset) { mutableListOf() }.addAll(page["records"]!!.jsonArray)
+            cursor = page["nextCursor"]?.jsonPrimitive?.contentOrNull
+        } while (cursor != null)
+        return buildJsonObject {
+            put("manifest", manifest ?: JsonObject(emptyMap()))
+            put("datasets", buildJsonObject { datasets.forEach { (key, value) -> put(key, JsonArray(value)) } })
+        }.toString()
+    }
+
+    suspend fun bootstrap(accessToken: String): CloudBootstrap {
         val root = request("GET", "/v1/bootstrap", accessToken = accessToken)
         val accountId = root["account"]!!.jsonObject.requiredString("id")
         val memberships = root["memberships"]!!.jsonArray.map { value ->
@@ -88,7 +147,13 @@ class CloudApi(private val baseUrl: String = BuildConfig.CLOUD_API_BASE_URL) {
                 timeZoneVersion = space["timeZoneVersion"]?.jsonPrimitive?.intOrNull ?: 1,
             )
         }
-        return accountId to memberships
+        val service = root["service"]?.jsonObject
+        return CloudBootstrap(
+            accountId,
+            memberships,
+            service?.get("mode")?.jsonPrimitive?.contentOrNull ?: "NORMAL",
+            service?.get("autoSyncIntervalSeconds")?.jsonPrimitive?.intOrNull,
+        )
     }
 
     suspend fun invitations(accessToken: String): List<CloudInvitation> =

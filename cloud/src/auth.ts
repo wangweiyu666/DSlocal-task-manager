@@ -4,6 +4,7 @@ import { sendCode } from "./mail";
 import type { Env, SessionPrincipal } from "./types";
 
 interface SessionBundle { accessToken: string; refreshToken: string; csrfToken: string; accessExpiresAt: string; }
+export const CURRENT_PRIVACY_NOTICE_VERSION = 1;
 
 export function normalizeEmail(value: string): string {
   const normalized = value.trim().normalize("NFC").toLowerCase();
@@ -41,7 +42,7 @@ export async function requestChallenge(env: Env, request: Request): Promise<Resp
   const delivery = requiredString(body, "email");
   const email = normalizeEmail(delivery);
   const purpose = body.purpose === undefined ? "SIGN_IN" : requiredString(body, "purpose", 32);
-  if (!new Set(["SIGN_IN", "DELETE_ACCOUNT"]).has(purpose)) throw new ApiError(400, "INVALID_REQUEST", "验证码用途无效");
+  if (!new Set(["SIGN_IN", "SENSITIVE_ACTION", "DELETE_ACCOUNT"]).has(purpose)) throw new ApiError(400, "INVALID_REQUEST", "验证码用途无效");
   const now = nowIso();
   const hourAgo = addSeconds(now, -3600);
   const dayAgo = addSeconds(now, -86400);
@@ -62,7 +63,11 @@ export async function requestChallenge(env: Env, request: Request): Promise<Resp
     env.DB.prepare("INSERT INTO email_challenges(id,email_normalized,email_delivery,purpose,code_digest,attempts_remaining,expires_at,request_ip_digest,created_at) VALUES (?,?,?,?,?,5,?,?,?)")
       .bind(id, email, delivery, purpose, await digest(env, `code:${id}`, code), addSeconds(now, 600), ipDigest, now),
   ]);
-  try { await sendCode(env, delivery, code, `challenge-${id}`); }
+  const account = await env.DB.prepare("SELECT status FROM accounts WHERE email_normalized=?").bind(email).first<{ status: string }>();
+  const mailPurpose = purpose === "SENSITIVE_ACTION" || purpose === "DELETE_ACCOUNT"
+    ? "SENSITIVE_ACTION"
+    : account?.status === "DELETION_PENDING" ? "RECOVERY" : "SIGN_IN";
+  try { await sendCode(env, delivery, code, `challenge-${id}`, mailPurpose); }
   catch (error) { await env.DB.prepare("DELETE FROM email_challenges WHERE id = ?").bind(id).run(); throw error; }
   return json(env, request, { challengeId: id, accepted: true }, 202);
 }
@@ -73,8 +78,8 @@ async function createSession(env: Env, accountId: string, now: string): Promise<
   const refreshToken = randomToken();
   const csrfToken = randomToken(24);
   const accessExpiresAt = addSeconds(now, 900);
-  await env.DB.prepare("INSERT INTO device_sessions(id,account_id,access_digest,refresh_digest,csrf_digest,created_at,last_seen_at,access_expires_at,idle_expires_at,absolute_expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-    .bind(sessionId, accountId, await digest(env, "access", accessToken), await digest(env, "refresh", refreshToken), await digest(env, "csrf", csrfToken), now, now, accessExpiresAt, addSeconds(now, 2_592_000), addSeconds(now, 7_776_000)).run();
+  await env.DB.prepare("INSERT INTO device_sessions(id,account_id,access_digest,refresh_digest,csrf_digest,created_at,last_seen_at,access_expires_at,idle_expires_at,absolute_expires_at,sensitive_verified_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(sessionId, accountId, await digest(env, "access", accessToken), await digest(env, "refresh", refreshToken), await digest(env, "csrf", csrfToken), now, now, accessExpiresAt, addSeconds(now, 2_592_000), addSeconds(now, 7_776_000), now).run();
   return { sessionId, accessToken, refreshToken, csrfToken, accessExpiresAt };
 }
 
@@ -87,6 +92,10 @@ export async function verifyChallenge(env: Env, request: Request): Promise<Respo
   const challenge = await env.DB.prepare("SELECT * FROM email_challenges WHERE id = ? AND email_normalized = ?").bind(challengeId, email).first<Record<string, unknown>>();
   const now = nowIso();
   if (!challenge || challenge.consumed_at || String(challenge.expires_at) <= now || Number(challenge.attempts_remaining) <= 0) throw new ApiError(400, "CHALLENGE_INVALID", "验证码无效或已过期");
+  const sensitivePrincipal = challenge.purpose === "SIGN_IN" ? null : await authenticate(env, request, true);
+  if (sensitivePrincipal && (sensitivePrincipal.email !== email || sensitivePrincipal.accountStatus === "DELETED")) {
+    throw new ApiError(403, "FORBIDDEN", "验证码与当前账号不匹配");
+  }
   const expected = await digest(env, `code:${challengeId}`, code);
   if (expected !== challenge.code_digest) {
     await env.DB.prepare("UPDATE email_challenges SET attempts_remaining = attempts_remaining - 1 WHERE id = ?").bind(challengeId).run();
@@ -94,6 +103,10 @@ export async function verifyChallenge(env: Env, request: Request): Promise<Respo
   }
   const consumed = await env.DB.prepare("UPDATE email_challenges SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL").bind(now, challengeId).run();
   if ((consumed.meta.changes ?? 0) !== 1) throw new ApiError(400, "CHALLENGE_INVALID", "验证码无效或已过期");
+  if (sensitivePrincipal) {
+    await env.DB.prepare("UPDATE device_sessions SET sensitive_verified_at=?,last_seen_at=? WHERE id=?").bind(now, now, sensitivePrincipal.sessionId).run();
+    return json(env, request, { sensitiveVerifiedAt: now });
+  }
   let account = await env.DB.prepare("SELECT id FROM accounts WHERE email_normalized = ?").bind(email).first<{ id: string }>();
   if (!account) {
     const id = uuidV7();
@@ -114,6 +127,8 @@ export async function refreshSession(env: Env, request: Request): Promise<Respon
   const tokenDigest = await digest(env, "refresh", token);
   const session = await env.DB.prepare("SELECT * FROM device_sessions WHERE refresh_digest = ? OR previous_refresh_digest = ?").bind(tokenDigest, tokenDigest).first<Record<string, unknown>>();
   const now = nowIso();
+  if (session?.revoked_at && session.revoke_reason === "ACCOUNT_DELETION_PENDING") throw new ApiError(401, "ACCOUNT_DELETION_PENDING", "账号正在删除恢复期内");
+  if (session?.revoked_at && session.revoke_reason === "SPACE_DELETION_PENDING") throw new ApiError(401, "SPACE_DELETION_PENDING", "空间正在删除恢复期内");
   if (!session || session.revoked_at || String(session.idle_expires_at) <= now || String(session.absolute_expires_at) <= now) throw new ApiError(401, "SESSION_EXPIRED", "会话已过期，请重新验证邮箱");
   if (session.previous_refresh_digest === tokenDigest) {
     if (String(session.previous_refresh_valid_until) >= now && session.replay_bundle_ciphertext) {
@@ -133,15 +148,37 @@ export async function authenticate(env: Env, request: Request, requireCsrf = fal
   if (!header?.startsWith("Bearer ")) throw new ApiError(401, "UNAUTHENTICATED", "需要登录");
   const accessDigest = await digest(env, "access", header.slice(7));
   const now = nowIso();
-  const row = await env.DB.prepare("SELECT s.id AS session_id,s.account_id,s.access_expires_at,s.revoked_at,a.email_normalized FROM device_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.access_digest=?")
+  const row = await env.DB.prepare("SELECT s.id AS session_id,s.account_id,s.access_expires_at,s.revoked_at,s.revoke_reason,s.sensitive_verified_at,a.email_normalized,a.status AS account_status,a.privacy_notice_version FROM device_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.access_digest=?")
     .bind(accessDigest).first<Record<string, unknown>>();
+  if (row?.revoked_at && row.revoke_reason === "ACCOUNT_DELETION_PENDING") throw new ApiError(401, "ACCOUNT_DELETION_PENDING", "账号正在删除恢复期内");
+  if (row?.revoked_at && row.revoke_reason === "SPACE_DELETION_PENDING") throw new ApiError(401, "SPACE_DELETION_PENDING", "空间正在删除恢复期内");
   if (!row || row.revoked_at || String(row.access_expires_at) <= now) throw new ApiError(401, "SESSION_EXPIRED", "访问令牌已过期");
   if (requireCsrf && webClient(request)) {
     const csrf = request.headers.get("X-CSRF-Token");
     const session = await env.DB.prepare("SELECT csrf_digest FROM device_sessions WHERE id=?").bind(row.session_id).first<{ csrf_digest: string }>();
     if (!csrf || !session || await digest(env, "csrf", csrf) !== session.csrf_digest) throw new ApiError(403, "FORBIDDEN", "CSRF 校验失败");
   }
-  return { accountId: String(row.account_id), sessionId: String(row.session_id), email: String(row.email_normalized) };
+  return {
+    accountId: String(row.account_id),
+    sessionId: String(row.session_id),
+    email: String(row.email_normalized),
+    accountStatus: String(row.account_status) as SessionPrincipal["accountStatus"],
+    privacyNoticeVersion: Number(row.privacy_notice_version),
+    sensitiveVerifiedAt: row.sensitive_verified_at ? String(row.sensitive_verified_at) : null,
+  };
+}
+
+export function requireAccountReady(principal: SessionPrincipal): void {
+  if (principal.accountStatus === "DELETION_PENDING") throw new ApiError(409, "ACCOUNT_DELETION_PENDING", "账号正在删除恢复期内");
+  if (principal.accountStatus !== "ACTIVE") throw new ApiError(401, "ACCOUNT_DELETED", "账号已删除");
+  if (principal.privacyNoticeVersion < CURRENT_PRIVACY_NOTICE_VERSION) throw new ApiError(428, "PRIVACY_ACK_REQUIRED", "请先阅读并确认联网版隐私说明");
+}
+
+export function requireFreshSensitiveVerification(principal: SessionPrincipal, now = Date.now()): void {
+  const verifiedAt = principal.sensitiveVerifiedAt ? Date.parse(principal.sensitiveVerifiedAt) : Number.NaN;
+  if (!Number.isFinite(verifiedAt) || now - verifiedAt > 600_000) {
+    throw new ApiError(403, "REAUTHENTICATION_REQUIRED", "请先完成邮箱安全验证");
+  }
 }
 
 export async function logout(env: Env, request: Request): Promise<Response> {

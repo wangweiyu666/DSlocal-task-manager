@@ -1,7 +1,9 @@
 import { ApiError } from "./http";
 import type { Env } from "./types";
+import { reserveEmail, type EmailPurpose } from "./usage";
 
-export async function sendCode(env: Env, to: string, code: string, idempotencyKey: string): Promise<void> {
+export async function sendCode(env: Env, to: string, code: string, idempotencyKey: string, purpose: EmailPurpose = "SIGN_IN"): Promise<void> {
+  await reserveEmail(env, purpose);
   if (env.ENVIRONMENT === "local") {
     await env.DB.prepare("INSERT INTO dev_mailbox(id, recipient, kind, secret, created_at) VALUES (?, ?, 'CODE', ?, ?)")
       .bind(idempotencyKey, to, code, new Date().toISOString()).run();
@@ -25,6 +27,7 @@ export async function sendCode(env: Env, to: string, code: string, idempotencyKe
 }
 
 export async function sendInvitation(env: Env, to: string, idempotencyKey: string): Promise<void> {
+  await reserveEmail(env, "INVITATION");
   if (env.ENVIRONMENT === "local") {
     await env.DB.prepare("INSERT INTO dev_mailbox(id, recipient, kind, secret, created_at) VALUES (?, ?, 'INVITATION', ?, ?)")
       .bind(idempotencyKey, to, "", new Date().toISOString()).run();

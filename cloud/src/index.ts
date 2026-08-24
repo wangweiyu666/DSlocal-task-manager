@@ -1,8 +1,36 @@
 import { logout, refreshSession, requestChallenge, verifyChallenge } from "./auth";
+import { accountStatus, acknowledgePrivacy, cancelDeletion, enforceDeletionLedger, exportData, requestDeletion, runMaintenance } from "./account";
 import { ApiError, assertOrigin, errorResponse, json, securityHeaders } from "./http";
 import { acceptInvitationById, createInvitation, createSpace, listInvitations, listMembers, removeMember } from "./spaces";
 import { auditTimeline, bootstrap, changes, snapshot, submitCommands, unreadNotifications } from "./sync";
 import type { Env } from "./types";
+
+const exactRouteLabels = new Map<string, string>([
+  ["/health", "/health"],
+  ["/__dev/mailbox", "/__dev/mailbox"],
+  ["/v1/auth/challenges", "/v1/auth/challenges"],
+  ["/v1/auth/verify", "/v1/auth/verify"],
+  ["/v1/auth/refresh", "/v1/auth/refresh"],
+  ["/v1/auth/logout", "/v1/auth/logout"],
+  ["/v1/account", "/v1/account"],
+  ["/v1/account/privacy-acknowledgements", "/v1/account/privacy-acknowledgements"],
+  ["/v1/account/deletion-requests", "/v1/account/deletion-requests"],
+  ["/v1/account/deletion-cancellations", "/v1/account/deletion-cancellations"],
+  ["/v1/bootstrap", "/v1/bootstrap"],
+  ["/v1/invitations", "/v1/invitations"],
+  ["/v1/spaces", "/v1/spaces"],
+]);
+
+function routeLabel(pathname: string): string {
+  const exact = exactRouteLabels.get(pathname);
+  if (exact) return exact;
+  if (/^\/v1\/invitations\/[^/]+\/accept$/.test(pathname)) return "/v1/invitations/:id/accept";
+  if (/^\/v1\/spaces\/[^/]+\/(invitations|snapshot|changes|commands|notifications|audit|export|members)$/.test(pathname)) {
+    return pathname.replace(/^\/v1\/spaces\/[^/]+\//, "/v1/spaces/:id/");
+  }
+  if (/^\/v1\/spaces\/[^/]+\/members\/[^/]+$/.test(pathname)) return "/v1/spaces/:id/members/:id";
+  return "unmatched";
+}
 
 async function route(request: Request, env: Env): Promise<Response> {
   assertOrigin(env, request);
@@ -27,6 +55,10 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/v1/auth/verify") return verifyChallenge(env, request);
   if (request.method === "POST" && url.pathname === "/v1/auth/refresh") return refreshSession(env, request);
   if (request.method === "POST" && url.pathname === "/v1/auth/logout") return logout(env, request);
+  if (request.method === "GET" && url.pathname === "/v1/account") return accountStatus(env, request);
+  if (request.method === "POST" && url.pathname === "/v1/account/privacy-acknowledgements") return acknowledgePrivacy(env, request);
+  if (request.method === "POST" && url.pathname === "/v1/account/deletion-requests") return requestDeletion(env, request);
+  if (request.method === "POST" && url.pathname === "/v1/account/deletion-cancellations") return cancelDeletion(env, request);
   if (request.method === "GET" && url.pathname === "/v1/bootstrap") return bootstrap(env, request);
   if (request.method === "GET" && url.pathname === "/v1/invitations") return listInvitations(env, request);
   if (request.method === "POST" && url.pathname === "/v1/spaces") return createSpace(env, request);
@@ -44,6 +76,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET" && notificationsPath) return unreadNotifications(env, request, notificationsPath[1]);
   const auditPath = url.pathname.match(/^\/v1\/spaces\/([^/]+)\/audit$/);
   if (request.method === "GET" && auditPath) return auditTimeline(env, request, auditPath[1]);
+  const exportPath = url.pathname.match(/^\/v1\/spaces\/([^/]+)\/export$/);
+  if (request.method === "GET" && exportPath) return exportData(env, request, exportPath[1]);
   const members = url.pathname.match(/^\/v1\/spaces\/([^/]+)\/members$/);
   if (request.method === "GET" && members) return listMembers(env, request, members[1]);
   const member = url.pathname.match(/^\/v1\/spaces\/([^/]+)\/members\/([^/]+)$/);
@@ -54,16 +88,22 @@ async function route(request: Request, env: Env): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const started = Date.now();
-    const path = new URL(request.url).pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ":id");
+    const requestRoute = routeLabel(new URL(request.url).pathname);
     try {
+      const contentLength = Number(request.headers.get("Content-Length") ?? 0);
+      if (contentLength > 2_000_000) throw new ApiError(413, "REQUEST_TOO_LARGE", "请求体过大");
+      await enforceDeletionLedger(env);
       const response = await route(request, env);
-      console.log(JSON.stringify({ event: "http_request", environment: env.ENVIRONMENT, method: request.method, path, status: response.status, durationMs: Date.now() - started }));
+      console.log(JSON.stringify({ timestamp: new Date().toISOString(), level: "info", event: "http_request", environment: env.ENVIRONMENT, requestId: response.headers.get("X-Request-Id"), method: request.method, route: requestRoute, status: response.status, durationMs: Date.now() - started }));
       return response;
     } catch (error) {
       const response = errorResponse(env, request, error);
-      if (!(error instanceof ApiError)) console.error(JSON.stringify({ event: "unexpected_error", environment: env.ENVIRONMENT, method: request.method, path, errorName: error instanceof Error ? error.name : "Unknown", errorMessage: error instanceof Error ? error.message.slice(0, 500) : "non-error thrown" }));
-      console.log(JSON.stringify({ event: "http_request", environment: env.ENVIRONMENT, method: request.method, path, status: response.status, code: error instanceof ApiError ? error.code : "INTERNAL_ERROR", durationMs: Date.now() - started }));
+      if (!(error instanceof ApiError)) console.error(JSON.stringify({ timestamp: new Date().toISOString(), level: "error", event: "unexpected_error", environment: env.ENVIRONMENT, requestId: response.headers.get("X-Request-Id"), method: request.method, route: requestRoute, errorName: error instanceof Error ? error.name : "Unknown" }));
+      console.log(JSON.stringify({ timestamp: new Date().toISOString(), level: "info", event: "http_request", environment: env.ENVIRONMENT, requestId: response.headers.get("X-Request-Id"), method: request.method, route: requestRoute, status: response.status, errorCode: error instanceof ApiError ? error.code : "INTERNAL_ERROR", retryable: error instanceof ApiError ? error.retryable : true, durationMs: Date.now() - started }));
       return response;
     }
+  },
+  async scheduled(_controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
+    context.waitUntil(runMaintenance(env));
   },
 } satisfies ExportedHandler<Env>;
