@@ -91,6 +91,9 @@ export class CloudApi {
     return this.request(`/v1/spaces/${spaceId}/export${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { authenticated: true });
   }
   bootstrap(): Promise<Bootstrap> { return this.request("/v1/bootstrap", { authenticated: true }); }
+  createSpace(name: string): Promise<{ space: { id: string; name: string; role: "ADMIN" } }> {
+    return this.request("/v1/spaces", { method: "POST", authenticated: true, mutation: true, body: JSON.stringify({ name }) });
+  }
   snapshot(spaceId: string, cursor?: string): Promise<Record<string, unknown>> { return this.request(`/v1/spaces/${spaceId}/snapshot${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { authenticated: true }); }
   changes(spaceId: string, cursor: string): Promise<Record<string, unknown>> { return this.request(`/v1/spaces/${spaceId}/changes?cursor=${encodeURIComponent(cursor)}`, { authenticated: true }); }
   commands(spaceId: string, commands: SyncCommand[]): Promise<{ results: Array<Record<string, unknown>> }> {

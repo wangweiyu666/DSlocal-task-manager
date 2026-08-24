@@ -16,7 +16,7 @@ import { presentExecutionResult } from "./results";
 import { pullChanges, queueCommand, synchronize, uuidV7 } from "./sync";
 import type { Bootstrap, CloudEntity, ConflictRecord, MembershipBootstrap, SpaceMember, SyncCommand, SyncMeta } from "./types";
 
-type AuthState = "restoring" | "email" | "code" | "privacy" | "deletion-pending" | "ready" | "wrong-role";
+type AuthState = "restoring" | "email" | "code" | "privacy" | "deletion-pending" | "create-space" | "ready" | "wrong-role";
 type Tab = "tasks" | "groups" | "results" | "notifications" | "audit" | "settings";
 type AssignmentMode = "ALL" | "SELECTED";
 type SensitiveAction = "export" | "delete-scheduled" | "delete-immediate";
@@ -58,6 +58,7 @@ export default function ConnectedApp() {
   const [taskGroupFilter, setTaskGroupFilter] = useState("all");
   const taskSearchRef = useRef<HTMLInputElement>(null);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [newSpaceName, setNewSpaceName] = useState("DStationery");
   const [spaceTimeZone, setSpaceTimeZone] = useState("Asia/Hong_Kong");
   const [notice, setNotice] = useState("");
   const [remoteNotifications, setRemoteNotifications] = useState<Array<Record<string, unknown>>>([]);
@@ -115,7 +116,11 @@ export default function ConnectedApp() {
   const selectBootstrap = useCallback(async (value: Bootstrap) => {
     setBootstrap(value);
     const admin = value.memberships.find((item) => item.role === "ADMIN") ?? null;
-    if (!admin) { setMembership(value.memberships[0] ?? null); setAuthState("wrong-role"); return; }
+    if (!admin) {
+      setMembership(value.memberships[0] ?? null);
+      setAuthState(value.memberships.length === 0 ? "create-space" : "wrong-role");
+      return;
+    }
     setMembership(admin);
     setSpaceTimeZone(admin.space.timeZone);
     setAuthState("ready");
@@ -195,6 +200,15 @@ export default function ConnectedApp() {
     setBusy(true); setError("");
     try { await cloudApi.cancelDeletion(); setDeletionDueAt(null); await selectBootstrap(await cloudApi.bootstrap()); }
     catch (value) { setError(value instanceof Error ? value.message : "账号恢复失败"); }
+    finally { setBusy(false); }
+  };
+
+  const createFirstSpace = async () => {
+    const name = newSpaceName.trim();
+    if (!name) return;
+    setBusy(true); setError("");
+    try { await cloudApi.createSpace(name); await selectBootstrap(await cloudApi.bootstrap()); }
+    catch (value) { setError(value instanceof Error ? value.message : "空间创建失败"); }
     finally { setBusy(false); }
   };
 
@@ -419,6 +433,7 @@ export default function ConnectedApp() {
 
   if (authState === "privacy") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">首次使用</p><h1>联网版隐私说明</h1><p>任务、执行结果、成员邮箱和审计记录会保存到当前 Cloudflare 环境并按空间权限同步。服务不提供端到端加密；运营服务技术上可以读取任务内容。系统不接入产品分析、行为遥测或崩溃正文上传。</p><p>账号可先进入 30 天删除恢复期，也可经邮箱复验后立即从活动系统永久删除；供应商灾备副本会在其保留窗口届满后清除。</p>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy} onClick={() => void acknowledgePrivacy()}>{busy ? "请稍候…" : "我已了解并继续"}</button></section></main>;
   if (authState === "deletion-pending") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">账号已冻结</p><h1>账号正在删除恢复期内</h1><p>{deletionDueAt ? `计划在 ${new Date(deletionDueAt).toLocaleString("zh-CN")} 永久删除。` : "账号不能读取、同步或产生新的业务数据。"} 本次登录已经重新验证邮箱，可以取消删除并恢复。</p>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy || cloudApi.getSession() === null} onClick={() => void cancelAccountDeletion()}>{busy ? "请稍候…" : "取消删除并恢复"}</button><button className="button text" onClick={() => { cloudApi.setSession(null); setAuthState("email"); }}>返回登录</button></section></main>;
+  if (authState === "create-space") return <main className="connected-auth"><section className="connected-auth-card"><Cloud size={42} /><p className="eyebrow">管理员初始化</p><h1>创建首个空间</h1><p>空间创建后才能邀请两个执行者账号。服务器会再次核对当前邮箱是否等于受保护的管理员白名单。</p><label className="field"><span>空间名称</span><input value={newSpaceName} maxLength={80} disabled={busy} onChange={(event) => setNewSpaceName(event.target.value)} autoFocus /></label>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy || !newSpaceName.trim()} onClick={() => void createFirstSpace()}>{busy ? "正在创建…" : "创建并进入"}</button></section></main>;
   if (authState !== "ready" && authState !== "wrong-role") return <Login state={authState} email={email} setEmail={setEmail} code={code} setCode={setCode} busy={busy} error={error} onEmail={() => void sendChallenge()} onCode={() => void verify()} />;
   if (authState === "wrong-role") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">平台角色不匹配</p><h1>请在 Android 应用中执行任务</h1><p>此 Web 入口仅提供管理员功能；服务器仍以空间成员角色为权限依据。</p><button className="button tonal" onClick={() => void logout()}>退出账号</button></section></main>;
 
