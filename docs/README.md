@@ -16,7 +16,7 @@
 - 联网 Android：只在开发者本机测试、Lint、构建和签名，不由 GitHub Android CI 上传。
 - 离线 Android：推送 `main` 后由 GitHub `Android CI` 构建并上传 APK 与 SHA-256 artifact。
 - 离线 Web：由 `Dom Web Pages` 验证并部署 `web/dist-offline`。
-- 联网 Web 与 API：由 `Cloud Phase 2` 验证，`main` 自动部署 staging，production 需要人工批准。
+- 联网 Web 与 API：由 `Cloud Phase 2` 验证；staging 和 production 均通过受保护的手动工作流部署。
 
 ## 配套机器资产
 

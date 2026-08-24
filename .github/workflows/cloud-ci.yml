@@ -74,7 +74,7 @@ jobs:
         working-directory: web
 
   deploy-staging:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.target == 'staging')
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'staging'
     needs: verify
     runs-on: ubuntu-24.04
     environment: cloud-staging

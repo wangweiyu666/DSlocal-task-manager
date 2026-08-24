@@ -130,12 +130,12 @@ local、staging、production 使用不同 D1、`AUTH_PEPPER`、管理员白名�
 
 当前联网开发版为 `0.1.0-alpha.9`（versionCode 10），staging API 固定为 `https://api-staging.rochelimit.me`。联网 APK 使用独立签名配置 `local-task-manager-connected-signing.properties`，不得复用离线密钥。
 
-Cloud GitHub 工作流仍负责 Worker 与 Web 的测试；`main` 自动部署 staging，production 仅允许受保护的手动工作流。
+Cloud GitHub 工作流负责 Worker 与 Web 的测试；staging 和 production 都只允许受保护的手动工作流部署，避免普通代码推送在缺少环境密钥时触发远程变更。
 
 ## Migration、恢复与故障处理
 
 - migration 只追加，已经远程应用的文件不能修改；PR 必须从空本地 D1 执行全部 migrations。
-- staging 自动 migration；production 必须人工批准，并在变更前记录固定 Worker 版本和 D1 Time Travel bookmark。
+- staging 和 production migration 均通过受保护的手动工作流执行；production 必须人工批准，并在变更前记录固定 Worker 版本和 D1 Time Travel bookmark。
 - 恢复演练只使用非敏感 canary，不导出验证码、令牌或任务正文。
 - Worker 故障优先回滚固定代码版本；兼容 migration 故障先回滚 Worker，再按 bookmark 使用 D1 Time Travel。
 - 邮件故障保留限流事实并返回可重试错误；密钥疑似泄露时立即轮换对应环境密钥并撤销设备会话。
