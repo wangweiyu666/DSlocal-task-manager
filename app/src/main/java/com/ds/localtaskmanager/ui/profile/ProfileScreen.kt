@@ -23,6 +23,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,6 +76,9 @@ fun ProfileRoute(
     onLedger: (StatisticsPeriod, String?, Boolean) -> Unit,
     onArchivedGroups: (StatisticsPeriod) -> Unit,
     onSettings: () -> Unit,
+    notificationUnreadCount: Int = 0,
+    onNotifications: (() -> Unit)? = null,
+    connectedSpaceName: String? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -92,6 +97,9 @@ fun ProfileRoute(
         onLedger = onLedger,
         onArchivedGroups = onArchivedGroups,
         onSettings = onSettings,
+        notificationUnreadCount = notificationUnreadCount,
+        onNotifications = onNotifications,
+        connectedSpaceName = connectedSpaceName,
     )
 }
 
@@ -104,6 +112,9 @@ fun ProfileScreen(
     onLedger: (StatisticsPeriod, String?, Boolean) -> Unit,
     onArchivedGroups: (StatisticsPeriod) -> Unit,
     onSettings: () -> Unit,
+    notificationUnreadCount: Int = 0,
+    onNotifications: (() -> Unit)? = null,
+    connectedSpaceName: String? = null,
 ) {
     var archiveTarget by remember { mutableStateOf<GroupStatistics?>(null) }
     val dashboard = state.dashboard
@@ -113,7 +124,13 @@ fun ProfileScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            ProfileHeader(dashboard?.domName, onSettings)
+            ProfileHeader(
+                domName = dashboard?.domName,
+                onSettings = onSettings,
+                notificationUnreadCount = notificationUnreadCount,
+                onNotifications = onNotifications,
+                connectedSpaceName = connectedSpaceName,
+            )
         }
         if (state.loading && dashboard == null) {
             item { Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
@@ -203,8 +220,30 @@ fun ProfileScreen(
 }
 
 @Composable
-internal fun ProfileHeader(domName: String?, onSettings: () -> Unit) {
+internal fun ProfileHeader(
+    domName: String?,
+    onSettings: () -> Unit,
+    notificationUnreadCount: Int = 0,
+    onNotifications: (() -> Unit)? = null,
+    connectedSpaceName: String? = null,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
+        if (onNotifications != null) {
+            IconButton(onClick = onNotifications, modifier = Modifier.testTag("profile-notifications")) {
+                BadgedBox(
+                    badge = {
+                        if (notificationUnreadCount > 0) {
+                            Badge { Text(if (notificationUnreadCount > 99) "99+" else notificationUnreadCount.toString()) }
+                        }
+                    },
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_notifications),
+                        contentDescription = "通知",
+                    )
+                }
+            }
+        }
         Text("我的", modifier = Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge)
         IconButton(onClick = onSettings, modifier = Modifier.testTag("profile-settings")) {
             Icon(
@@ -216,6 +255,9 @@ internal fun ProfileHeader(domName: String?, onSettings: () -> Unit) {
     domName?.let {
         Text("来自「$it」的任务", style = MaterialTheme.typography.bodyLarge)
     } ?: Text("积分与统计", style = MaterialTheme.typography.bodyLarge)
+    connectedSpaceName?.let {
+        Text("联网空间「$it」", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable

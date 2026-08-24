@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -50,10 +51,27 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/check-dco.sh "$BASE_SHA"
 
-      - name: JVM lint and debug artifacts
+      - name: Verify and build offline Android
         id: gradle_verify
         continue-on-error: true
-        run: ./gradlew testDebugUnitTest lintRelease assembleDebug assembleDebugAndroidTest --no-daemon
+        run: ./gradlew testOfflineDebugUnitTest lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest --no-daemon
+
+      - name: Verify offline Android connectivity boundary
+        run: bash scripts/ci/check-connectivity-boundaries.sh
+
+      - name: Create offline APK checksum
+        working-directory: app/build/outputs/apk/offline/debug
+        run: sha256sum app-offline-debug.apk > app-offline-debug.apk.sha256
+
+      - name: Upload offline Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DStationery-offline-debug
+          path: |
+            app/build/outputs/apk/offline/debug/app-offline-debug.apk
+            app/build/outputs/apk/offline/debug/app-offline-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Print dependency verification report
         if: steps.gradle_verify.outcome == 'failure'
@@ -99,4 +117,4 @@ jobs:
           "GRADLE_USER_HOME=G:\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Validate Windows screenshot baselines
-        run: W:\gradlew.bat -p W:\ validateDebugScreenshotTest --no-daemon
+        run: W:\gradlew.bat -p W:\ validateOfflineDebugScreenshotTest --no-daemon

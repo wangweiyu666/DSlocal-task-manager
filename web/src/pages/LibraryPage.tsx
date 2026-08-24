@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { Modal } from "../components/Modal";
 import { ExceptionEditor } from "../components/ExceptionEditor";
 import { TaskEditor, taskIssues, type EditableTask } from "../components/TaskEditor";
+import { TaskLibraryFilters } from "../components/TaskLibraryFilters";
 import { useToast } from "../components/Toast";
 import { db } from "../db/database";
 import { getOrCreateActiveDraft, updateDraft } from "../db/operations";
@@ -129,7 +130,7 @@ export function LibraryPage() {
   const restoredTasks = restorePreview ? [...(restorePreview.batch.t ?? []), ...(restorePreview.batch.g?.flatMap((group) => group.t ?? []) ?? [])] : [];
   return <div className="page">
     <header className="page-header"><div><p className="eyebrow">临时任务与重复任务分别管理</p><h1>任务库</h1><p>重复任务保存生成规则；临时任务只对应一个独立实例。这里不显示 Sub 的执行状态。</p></div><button className="button tonal" onClick={() => setRestoreText("")}><FileInput size={18} />粘贴旧字符串</button></header>
-    <div className="filter-bar"><label className="search-field"><Search size={18} /><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、描述或 taskId（Ctrl+K）" /></label><select aria-label="任务类型筛选" value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}><option value="all">全部任务类型</option><option value="temporary">临时任务</option><option value="recurring">重复任务</option></select><select value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}><option value="all">全部积分组</option><option value="ungrouped">未分组</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></div>
+    <TaskLibraryFilters groups={groups} search={search} onSearchChange={setSearch} kindFilter={kindFilter} onKindFilterChange={setKindFilter} groupFilter={groupFilter} onGroupFilterChange={setGroupFilter} searchInputRef={searchRef} />
     {filtered.length === 0 ? <div className="empty-state"><Search size={44} /><h2>{tasks.length ? "没有匹配的任务" : "任务库还是空的"}</h2><p>在创建页生成第一个临时或重复任务，或从旧 DST1 字符串恢复。</p></div> : <div className="card-list">{filtered.map((task) => {
       const recurring = task.recurrence !== null;
       return <article className="data-card" key={task.id}>

@@ -99,6 +99,7 @@ class DuplicateBatchException(batchId: String) :
 
 interface ImportService {
     suspend fun preview(encoded: String): ImportPreview
+    suspend fun previewCanonicalJson(json: String, minorVersion: Int): ImportPreview
     suspend fun import(preview: ImportPreview): ImportPreview
 }
 
@@ -121,9 +122,11 @@ class RoomImportService(
 
     override suspend fun preview(encoded: String): ImportPreview {
         val decoded = Dst1Decoder.decodeEnvelope(encoded.trim())
-        val batch = parser.parse(decoded.json, nowDateTime(), decoded.minorVersion)
-        return preview(batch)
+        return previewCanonicalJson(decoded.json, decoded.minorVersion)
     }
+
+    override suspend fun previewCanonicalJson(json: String, minorVersion: Int): ImportPreview =
+        preview(parser.parse(json, nowDateTime(), minorVersion))
 
     override suspend fun import(preview: ImportPreview): ImportPreview = database.withTransaction {
         if (profileDao.hasBatch(preview.batch.batchId)) throw DuplicateBatchException(preview.batch.batchId)

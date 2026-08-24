@@ -1,0 +1,22 @@
+{
+  "commands": [
+    {
+      "commandId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331010",
+      "entityId": "CloudTask0000010",
+      "baseVersion": 0,
+      "createdAt": "2026-08-17T00:00:00Z",
+      "type": "TASK_PUBLISH",
+      "payload": {
+        "content": {
+          "v": 1,
+          "sv": 1,
+          "b": "CloudBatch000010",
+          "t": [
+            { "i": "CloudTask0000010", "n": "Empty exceptions", "r": 1, "y": "2026-08-17" }
+          ],
+          "e": []
+        }
+      }
+    }
+  ]
+}

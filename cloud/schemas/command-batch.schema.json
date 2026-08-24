@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.rochelimit.me/cloud/v1/command-batch.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["commands"],
+  "properties": {
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["commandId", "entityId", "baseVersion", "createdAt", "type", "payload"],
+        "properties": {
+          "commandId": { "type": "string", "format": "uuid" },
+          "entityId": { "type": "string", "format": "uuid" },
+          "baseVersion": { "type": "integer", "minimum": 0 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "type": {
+            "type": "string",
+            "enum": [
+              "GROUP_UPSERT",
+              "GROUP_ARCHIVE",
+              "SPACE_TIMEZONE_UPDATE",
+              "TASK_PUBLISH",
+              "TASK_UPDATE",
+              "TASK_CANCEL",
+              "TASK_ARCHIVE",
+              "TASK_RESTORE",
+              "OCCURRENCE_UPSERT",
+              "EXECUTION_EVENT",
+              "RESULT_SELECT",
+              "NOTIFICATION_READ"
+            ]
+          },
+          "payload": { "type": "object" }
+        }
+      }
+    }
+  }
+}

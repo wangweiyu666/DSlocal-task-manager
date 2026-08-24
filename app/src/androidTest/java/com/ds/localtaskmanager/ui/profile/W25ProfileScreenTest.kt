@@ -1,7 +1,9 @@
 package com.ds.localtaskmanager.ui.profile
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToIndex
@@ -55,6 +57,27 @@ class W25ProfileScreenTest {
         composeRule.onNodeWithText("暂无统计数据").assertIsDisplayed()
         composeRule.onNodeWithText("重试").assertIsDisplayed()
         composeRule.onNodeWithTag("profile-settings").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("profile-notifications").assertCountEquals(0)
+    }
+
+    @Test
+    fun connectedProfileShowsSharedNotificationEntryOnlyWhenEnabled() {
+        composeRule.setContent {
+            DstTheme {
+                ProfileScreen(
+                    state = ProfileUiState(loading = false, dashboard = dashboard()),
+                    onPeriod = {}, onRetry = {}, onArchive = {}, onLedger = { _, _, _ -> },
+                    onArchivedGroups = {}, onSettings = {},
+                    notificationUnreadCount = 3,
+                    onNotifications = {},
+                    connectedSpaceName = "示例空间",
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("profile-notifications").assertIsDisplayed()
+        composeRule.onNodeWithText("3").assertIsDisplayed()
+        composeRule.onNodeWithText("联网空间「示例空间」").assertIsDisplayed()
     }
 }
 

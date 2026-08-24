@@ -8,9 +8,13 @@ Thumbs.db
 
 # Node.js
 node_modules/
+.pnpm-store/
 dist/
+dist-*/
 .env
 .env.*
+.dev.vars*
+.wrangler/
 npm-debug.log*
 *.tsbuildinfo
 test-results/

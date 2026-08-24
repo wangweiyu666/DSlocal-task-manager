@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "vectors": [
+    { "file": "valid/command-batch.json", "valid": true },
+    { "file": "valid/change-page.json", "valid": true },
+    { "file": "valid/dst11-task-publish.json", "valid": true },
+    { "file": "valid/snapshot-page.json", "valid": true },
+    { "file": "valid/occurrence-key.json", "valid": true },
+    { "file": "invalid/unknown-command-field.json", "valid": false, "error": "INVALID_REQUEST" },
+    { "file": "invalid/dst11-empty-exceptions.json", "valid": false, "error": "INVALID_REQUEST" },
+    { "file": "invalid/idempotency-reuse.json", "valid": false, "error": "IDEMPOTENCY_KEY_REUSED" }
+  ]
+}

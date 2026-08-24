@@ -1,12 +1,4 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/react" />
 
-declare module "virtual:pwa-register/react" {
-  export function useRegisterSW(options?: {
-    onRegistered?: (registration: ServiceWorkerRegistration | undefined) => void;
-    onRegisterError?: (error: Error) => void;
-  }): {
-    needRefresh: [boolean, (value: boolean) => void];
-    offlineReady: [boolean, (value: boolean) => void];
-    updateServiceWorker: (reloadPage?: boolean) => Promise<void>;
-  };
-}
+declare const __BUILD_CHANNEL__: "offline" | "connected";

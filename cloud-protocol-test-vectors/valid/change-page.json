@@ -1,0 +1,13 @@
+{
+  "changes": [
+    {
+      "sequence": "42",
+      "entityType": "task",
+      "entityId": "0198f7b4-5b80-7a01-8ad2-7fe0c4332001",
+      "operation": "upsert",
+      "version": 4
+    }
+  ],
+  "nextCursor": "v1.eyJzcGFjZSI6IjAxOThmN2I0Iiwic2VxIjoiNDIifQ",
+  "hasMore": false
+}

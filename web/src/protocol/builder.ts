@@ -1,6 +1,6 @@
 import type { DraftRecord, DraftTask, GroupRecord, TaskRecord } from "../model/types";
 import { createTransportId } from "./id";
-import { compactTask } from "./dst1";
+import { compactTask } from "./compact";
 import type { Dst1Batch, Dst1Task } from "./types";
 
 export function draftTaskToDst1(task: DraftTask): Dst1Task {

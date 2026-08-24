@@ -14,17 +14,17 @@ try {
     $commit = (git rev-parse HEAD).Trim()
     $env:JAVA_HOME = $JavaHome
     $env:ANDROID_HOME = $AndroidHome
-    & .\gradlew.bat testDebugUnitTest validateDebugScreenshotTest lintRelease assembleRelease --no-daemon
+    & .\gradlew.bat testOfflineDebugUnitTest validateOfflineDebugScreenshotTest lintOfflineRelease assembleOfflineRelease --no-daemon
     if ($LASTEXITCODE -ne 0) { throw 'Release verification build failed.' }
 
-    $sourceApk = Join-Path $repo 'app\build\outputs\apk\release\app-release.apk'
+    $sourceApk = Join-Path $repo 'app\build\outputs\apk\offline\release\app-offline-release.apk'
     & (Join-Path $PSScriptRoot 'audit-apk.ps1') -Apk $sourceApk -AndroidHome $AndroidHome
     $archive = Join-Path $ArchiveRoot $Version
     New-Item -ItemType Directory -Force -Path $archive | Out-Null
     $apk = Join-Path $archive "DStationery-$Version.apk"
     Copy-Item -LiteralPath $sourceApk -Destination $apk -Force
     Copy-Item -LiteralPath (Join-Path $repo 'THIRD_PARTY_NOTICES.txt') -Destination $archive -Force
-    $mapping = Join-Path $repo 'app\build\outputs\mapping\release\mapping.txt'
+    $mapping = Join-Path $repo 'app\build\outputs\mapping\offlineRelease\mapping.txt'
     if (Test-Path -LiteralPath $mapping) { Copy-Item -LiteralPath $mapping -Destination $archive -Force }
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $apk).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText("$apk.sha256", "$hash  $(Split-Path -Leaf $apk)`n", [Text.UTF8Encoding]::new($false))

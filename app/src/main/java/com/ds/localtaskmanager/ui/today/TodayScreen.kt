@@ -57,6 +57,7 @@ import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
 fun TodayScreen(
     viewModel: TodayViewModel,
     shareImageService: ShareImageService,
+    connectedMode: Boolean = false,
     onTaskClick: (TaskInstanceKey) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -73,7 +74,7 @@ fun TodayScreen(
         if (showingResult) {
             TodayResultScreen(resultState, shareImageService, viewModel::retryResult, viewModel::closeResult)
         } else {
-            TodayContent(state, viewModel::synchronizeInstances, onTaskClick, viewModel::openResult)
+            TodayContent(state, viewModel::synchronizeInstances, onTaskClick, viewModel::openResult, connectedMode)
         }
     }
 }
@@ -84,17 +85,18 @@ fun TodayContent(
     onRetry: () -> Unit,
     onTaskClick: (TaskInstanceKey) -> Unit,
     onOpenResult: () -> Unit = {},
+    connectedMode: Boolean = false,
 ) {
     when {
         state.loading && state.sections.isEmpty() -> LoadingState()
         state.error != null && state.sections.isEmpty() -> ErrorState(state.error, onRetry)
-        state.sections.isEmpty() -> ResultPullContainer({ true }, onOpenResult) { TodayEmptyState(state.taskDate, it) }
+        state.sections.isEmpty() -> ResultPullContainer({ true }, onOpenResult) { TodayEmptyState(state.taskDate, connectedMode, it) }
         else -> TodayList(state, onTaskClick, onOpenResult)
     }
 }
 
 @Composable
-private fun TodayEmptyState(taskDate: String, modifier: Modifier = Modifier) {
+private fun TodayEmptyState(taskDate: String, connectedMode: Boolean, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
@@ -108,7 +110,7 @@ private fun TodayEmptyState(taskDate: String, modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
-            "还没有任务，点击右下角导入。",
+            if (connectedMode) "还没有已分配任务；联网同步后会自动出现。" else "还没有任务，点击右下角导入。",
             modifier = Modifier.padding(top = 32.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,

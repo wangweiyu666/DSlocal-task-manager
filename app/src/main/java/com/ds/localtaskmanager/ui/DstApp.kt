@@ -36,6 +36,10 @@ fun DstApp(
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
     onNotificationPermissionChanged: () -> Unit,
+    connectedState: ConnectedUiState? = null,
+    onSynchronize: () -> Unit = {},
+    onMarkNotificationsRead: (List<String>) -> Unit = {},
+    onLogout: () -> Unit = {},
 ) = DstNavigation(
     todayViewModel,
     taskRepository,
@@ -53,4 +57,8 @@ fun DstApp(
     notificationTask,
     onNotificationTaskConsumed,
     onNotificationPermissionChanged,
+    connectedState,
+    onSynchronize,
+    onMarkNotificationsRead,
+    onLogout,
 )

@@ -99,6 +99,11 @@ class TodayViewModel(
                 generationService.reconcileAll(LocalDate.parse(current))
                 reminderReconciler?.reconcileAll()
                 mutableTaskDate.value = current
+                // Reconciliation can be a no-op (for example, a newly joined empty
+                // cloud space). In that case Room does not emit again and the date
+                // StateFlow also suppresses the unchanged value, so finish loading
+                // explicitly instead of relying solely on todayTasks.onEach.
+                mutableLoading.value = false
             }.onFailure { error ->
                 mutableError.value = error.message ?: "今日任务同步失败"
                 mutableLoading.value = false

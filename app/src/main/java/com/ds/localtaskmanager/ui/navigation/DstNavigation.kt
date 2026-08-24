@@ -8,21 +8,35 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.contentDescription
@@ -87,6 +101,11 @@ import com.ds.localtaskmanager.ui.settings.LegalDocument
 import com.ds.localtaskmanager.ui.settings.LegalScreen
 import com.ds.localtaskmanager.diagnostics.DiagnosticService
 import com.ds.localtaskmanager.ui.theme.LocalReduceMotion
+import com.ds.localtaskmanager.ui.AppNotificationUi
+import com.ds.localtaskmanager.ui.ConnectedUiState
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 private enum class Destination(
     val route: String,
@@ -127,6 +146,10 @@ fun DstNavigation(
     notificationTask: StateFlow<TaskInstanceKey?>,
     onNotificationTaskConsumed: () -> Unit,
     onNotificationPermissionChanged: () -> Unit,
+    connectedState: ConnectedUiState? = null,
+    onSynchronize: () -> Unit = {},
+    onMarkNotificationsRead: (List<String>) -> Unit = {},
+    onLogout: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val entry by navController.currentBackStackEntryAsState()
@@ -138,6 +161,11 @@ fun DstNavigation(
     val backupOperationActive by backupManager.operationActive.collectAsStateWithLifecycle(initialValue = false)
     val backupRestoreActive by backupManager.restoreActive.collectAsStateWithLifecycle(initialValue = false)
     val reduceMotion = LocalReduceMotion.current
+    val connectedMode = connectedState != null
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showNotifications by remember { mutableStateOf(false) }
+    var confirmLogout by remember { mutableStateOf(false) }
+    var knownNotificationIds by remember { mutableStateOf<Set<String>?>(null) }
 
     LaunchedEffect(notificationKey) {
         notificationKey?.let { key ->
@@ -146,7 +174,28 @@ fun DstNavigation(
         }
     }
 
+    LaunchedEffect(connectedState?.notifications) {
+        val currentNotifications = connectedState?.notifications ?: return@LaunchedEffect
+        val currentIds = currentNotifications.flatMap(AppNotificationUi::notificationIds).toSet()
+        val knownIds = knownNotificationIds
+        if (knownIds == null) {
+            knownNotificationIds = currentIds
+            return@LaunchedEffect
+        }
+        val fresh = currentNotifications.filter { item ->
+            item.unread && item.notificationIds.any { it !in knownIds }
+        }
+        knownNotificationIds = knownIds + currentIds
+        if (fresh.isNotEmpty()) {
+            val message = if (fresh.size == 1) fresh.first().title else "${fresh.first().title}，另有 ${fresh.size - 1} 条更新"
+            if (snackbarHostState.showSnackbar(message, actionLabel = "查看", withDismissAction = true) == SnackbarResult.ActionPerformed) {
+                showNotifications = true
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (!backupRestoreActive && onPrimaryDestination && !(currentRoute == Destination.Today.route && todayResultState.visible)) {
                 DstBottomBar(currentRoute) { destination ->
@@ -161,10 +210,26 @@ fun DstNavigation(
         floatingActionButton = {
             if (!backupOperationActive && currentRoute == Destination.Today.route && !todayResultState.visible) {
                 FloatingActionButton(
-                    onClick = todayViewModel::openImport,
-                    modifier = Modifier.semantics { contentDescription = "导入任务" },
+                    onClick = {
+                        if (connectedMode) {
+                            if (connectedState?.syncing == false) onSynchronize()
+                        } else {
+                            todayViewModel.openImport()
+                        }
+                    },
+                    modifier = Modifier.semantics {
+                        contentDescription = if (connectedMode) "同步任务" else "导入任务"
+                    },
                 ) {
-                    Text("+", fontSize = 26.sp)
+                    when {
+                        connectedState?.syncing == true -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        connectedMode -> Icon(
+                            painter = painterResource(R.drawable.ic_sync),
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        else -> Text("+", fontSize = 26.sp)
+                    }
                 }
             }
         },
@@ -191,7 +256,7 @@ fun DstNavigation(
                 )
             }
             composable(Destination.Today.route) {
-                TodayScreen(todayViewModel, shareImageService) { key ->
+                 TodayScreen(todayViewModel, shareImageService, connectedMode = connectedMode) { key ->
                     navController.navigate("task/${key.taskId}/${key.occurrenceKey}")
                 }
             }
@@ -212,6 +277,9 @@ fun DstNavigation(
                     },
                     onArchivedGroups = { period -> navController.navigate("profile/archived/${period.name}") },
                     onSettings = { navController.navigate(PROFILE_SETTINGS_ROUTE) },
+                    notificationUnreadCount = connectedState?.notifications?.count(AppNotificationUi::unread) ?: 0,
+                    onNotifications = connectedState?.let { { showNotifications = true } },
+                    connectedSpaceName = connectedState?.spaceName,
                 )
             }
             composable(PROFILE_SETTINGS_ROUTE) {
@@ -222,7 +290,13 @@ fun DstNavigation(
                     onBackup = { navController.navigate(PROFILE_BACKUP_ROUTE) },
                     onPrivacy = { navController.navigate(PROFILE_PRIVACY_ROUTE) },
                     onLicenses = { navController.navigate(PROFILE_LICENSES_ROUTE) },
-                    onNotificationPermissionChanged = onNotificationPermissionChanged,
+                     onNotificationPermissionChanged = onNotificationPermissionChanged,
+                     backupEnabled = !connectedMode,
+                     connectedSpaceName = connectedState?.spaceName,
+                     connectedSyncStatus = connectedState?.syncStatus,
+                     connectedSyncing = connectedState?.syncing == true,
+                     onSynchronize = onSynchronize,
+                     onLogout = connectedState?.let { { confirmLogout = true } },
                 )
             }
             composable(PROFILE_PRIVACY_ROUTE) {
@@ -335,7 +409,7 @@ fun DstNavigation(
         }
     }
 
-    if (importState.visible && !backupOperationActive) {
+    if (!connectedMode && importState.visible && !backupOperationActive) {
         ImportDialog(
             state = importState,
             onInputChange = todayViewModel::updateImportInput,
@@ -344,7 +418,74 @@ fun DstNavigation(
             onDismiss = todayViewModel::closeImport,
         )
     }
+    if (showNotifications && connectedState != null) {
+        NotificationCenterDialog(
+            notifications = connectedState.notifications,
+            onMarkAllRead = onMarkNotificationsRead,
+            onDismiss = { showNotifications = false },
+        )
+    }
+    if (confirmLogout && connectedState != null) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("退出并清除本地数据？") },
+            text = { Text("退出会清除此设备中的加密会话、空间缓存和未同步命令。未同步内容将无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = { confirmLogout = false; onLogout() }) { Text("确认退出") }
+            },
+            dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("取消") } },
+        )
+    }
 }
+
+@Composable
+private fun NotificationCenterDialog(
+    notifications: List<AppNotificationUi>,
+    onMarkAllRead: (List<String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val unreadIds = notifications.filter(AppNotificationUi::unread).flatMap(AppNotificationUi::notificationIds)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("应用内通知") },
+        text = {
+            if (notifications.isEmpty()) {
+                Text("暂无通知")
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(notifications.take(50), key = AppNotificationUi::groupKey) { item ->
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                if (item.unread) "● ${item.title}" else item.title,
+                                style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                            )
+                            if (item.notificationIds.size > 1) {
+                                Text("包含 ${item.notificationIds.size} 次更新", style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                            }
+                            Text(formatNotificationTime(item.createdAt), style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = unreadIds.isNotEmpty(),
+                onClick = { onMarkAllRead(unreadIds) },
+            ) { Text("全部标为已读") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
+
+private fun formatNotificationTime(value: String): String = runCatching {
+    NOTIFICATION_TIME_FORMAT.format(Instant.parse(value).atZone(ZoneId.systemDefault()))
+}.getOrDefault(value.replace('T', ' ').take(16))
+
+private val NOTIFICATION_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("M月d日 HH:mm")
 
 @Composable
 private fun DstBottomBar(

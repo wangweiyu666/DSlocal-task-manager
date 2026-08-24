@@ -72,6 +72,12 @@ fun SettingsRoute(
     onPrivacy: () -> Unit,
     onLicenses: () -> Unit,
     onNotificationPermissionChanged: () -> Unit,
+    backupEnabled: Boolean = true,
+    connectedSpaceName: String? = null,
+    connectedSyncStatus: String? = null,
+    connectedSyncing: Boolean = false,
+    onSynchronize: () -> Unit = {},
+    onLogout: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -112,6 +118,7 @@ fun SettingsRoute(
         snackbarHostState = snackbarHostState,
         onBack = onBack,
         onBackup = onBackup,
+        backupEnabled = backupEnabled,
         onExportDiagnostics = { confirmDiagnosticExport = true },
         onClearDiagnostics = {
             diagnosticService.clearEvents()
@@ -135,6 +142,11 @@ fun SettingsRoute(
             repository.resetInformationPrivacy()
             scope.launch { snackbarHostState.showSnackbar("下次分享信息告知图片时将再次提醒") }
         },
+        connectedSpaceName = connectedSpaceName,
+        connectedSyncStatus = connectedSyncStatus,
+        connectedSyncing = connectedSyncing,
+        onSynchronize = onSynchronize,
+        onLogout = onLogout,
     )
     if (confirmDiagnosticExport) {
         AlertDialog(
@@ -172,6 +184,12 @@ fun SettingsScreen(
     onClearDiagnostics: () -> Unit = {},
     onPrivacy: () -> Unit = {},
     onLicenses: () -> Unit = {},
+    backupEnabled: Boolean = true,
+    connectedSpaceName: String? = null,
+    connectedSyncStatus: String? = null,
+    connectedSyncing: Boolean = false,
+    onSynchronize: () -> Unit = {},
+    onLogout: (() -> Unit)? = null,
 ) {
     Scaffold(
         modifier = Modifier.fillMaxSize().testTag("settings-screen"),
@@ -191,6 +209,25 @@ fun SettingsScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (connectedSpaceName != null) {
+                SettingsSection("联网空间") {
+                    SettingsCardContent {
+                        Text(connectedSpaceName, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            connectedSyncStatus ?: "离线可执行",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onSynchronize, enabled = !connectedSyncing) {
+                                Text(if (connectedSyncing) "同步中" else "立即同步")
+                            }
+                            if (onLogout != null) {
+                                TextButton(onClick = onLogout) { Text("退出账号") }
+                            }
+                        }
+                    }
+                }
+            }
             SettingsSection("外观") {
                     AppThemeMode.entries.forEachIndexed { index, mode ->
                         if (index > 0) HorizontalDivider()
@@ -284,6 +321,7 @@ fun SettingsScreen(
                     }
             }
             SettingsSection("数据") {
+                    if (backupEnabled) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -303,6 +341,7 @@ fun SettingsScreen(
                         Text("›", style = MaterialTheme.typography.headlineSmall)
                     }
                     HorizontalDivider()
+                    }
                     SettingsLinkRow(
                         title = "导出诊断信息",
                         description = "保存不含任务内容和设备标识的本地诊断摘要",
@@ -339,7 +378,11 @@ fun SettingsScreen(
                         AboutRow("本地数据库", "Room v1.6")
                         HorizontalDivider()
                         Text(
-                            "任务和设置数据仅保存在本机，应用不申请网络权限。",
+                            if (connectedSpaceName == null) {
+                                "任务和设置数据仅保存在本机，应用不申请网络权限。"
+                            } else {
+                                "任务与结果会同步到当前空间；主题等设备偏好仍只保存在本机。"
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

@@ -12,3 +12,5 @@
     *** Companion;
 }
 -keep,includedescriptorclasses class com.ds.localtaskmanager.backup.**$$serializer { *; }
+-keep,includedescriptorclasses class net.zetetic.database.sqlcipher.** { *; }
+-keep,includedescriptorclasses interface net.zetetic.database.sqlcipher.** { *; }

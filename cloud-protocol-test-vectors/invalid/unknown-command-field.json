@@ -1,0 +1,13 @@
+{
+  "commands": [
+    {
+      "commandId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331002",
+      "entityId": "0198f7b4-5b80-7a01-8ad2-7fe0c4332002",
+      "baseVersion": 1,
+      "createdAt": "2026-08-17T00:00:00Z",
+      "type": "TASK_CANCEL",
+      "payload": {},
+      "surprise": true
+    }
+  ]
+}

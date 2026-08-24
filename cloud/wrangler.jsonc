@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "dstationery-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ENVIRONMENT": "local",
+    "ALLOWED_ORIGIN": "http://localhost:5173",
+    "RESEND_FROM": "DStationery Local <onboarding@resend.dev>"
+  },
+  "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY"] },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "dstationery-local",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "migrations"
+  }],
+  "env": {
+    "staging": {
+      "name": "dstationery-api-staging",
+      "workers_dev": false,
+      "routes": [{
+        "pattern": "api-staging.rochelimit.me",
+        "custom_domain": true
+      }],
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "ALLOWED_ORIGIN": "https://staging.rochelimit.me",
+        "RESEND_FROM": "DStationery Staging <no-reply@staging.notify.rochelimit.me>"
+      },
+      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY"] },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "dstationery-staging",
+        "database_id": "a06ff962-17e8-4873-b48a-a66040920b60",
+        "migrations_dir": "migrations"
+      }]
+    },
+    "production": {
+      "name": "dstationery-api-production",
+      "workers_dev": false,
+      "routes": [{
+        "pattern": "api.rochelimit.me",
+        "custom_domain": true
+      }],
+      "vars": {
+        "ENVIRONMENT": "production",
+        "ALLOWED_ORIGIN": "https://app.rochelimit.me",
+        "RESEND_FROM": "DStationery <no-reply@notify.rochelimit.me>"
+      },
+      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY"] },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "dstationery-production",
+        "database_id": "e3c77149-a800-4843-9209-5226264109bd",
+        "migrations_dir": "migrations"
+      }]
+    }
+  }
+}

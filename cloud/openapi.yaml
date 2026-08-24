@@ -1,0 +1,285 @@
+openapi: 3.1.0
+info:
+  title: DStationery Cloud API
+  version: 2.0.0
+  description: Stage 2 identity, role-bound space, offline command and incremental sync contract. Task revisions carry canonical DST1/DST1.1 payloads.
+servers:
+  - url: /v1
+paths:
+  /bootstrap:
+    get:
+      operationId: bootstrapSession
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Account and active memberships with space sequence and timezone metadata
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/challenges:
+    post:
+      operationId: requestEmailChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                purpose: { type: string, enum: [SIGN_IN, DELETE_ACCOUNT], default: SIGN_IN }
+      responses:
+        "202": { description: Challenge accepted without disclosing account existence }
+        "429": { $ref: "#/components/responses/Error" }
+  /auth/verify:
+    post:
+      operationId: verifyEmailChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, email, code]
+              properties:
+                challengeId: { type: string, format: uuid }
+                email: { type: string, format: email }
+                code: { type: string, pattern: "^[0-9]{6}$" }
+      responses:
+        "200": { description: New device session }
+        "400": { $ref: "#/components/responses/Error" }
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      responses:
+        "200": { description: Rotated access and refresh credentials }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      operationId: logout
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Session revoked }
+        "401": { $ref: "#/components/responses/Error" }
+  /spaces:
+    post:
+      operationId: createSpace
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties: { name: { type: string, minLength: 1, maxLength: 80 } }
+      responses:
+        "201": { description: Space created by allowlisted administrator }
+        "403": { $ref: "#/components/responses/Error" }
+  /spaces/{spaceId}/invitations:
+    post:
+      operationId: createExecutorInvitation
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/SpaceId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        "201": { description: Account-bound invitation created and notification email sent }
+        "409": { $ref: "#/components/responses/Error" }
+  /invitations:
+    get:
+      operationId: listPendingInvitations
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: All active, unexpired invitations bound to the authenticated email account
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [invitations]
+                properties:
+                  invitations:
+                    type: array
+                    items: { $ref: "#/components/schemas/AccountInvitation" }
+        "401": { $ref: "#/components/responses/Error" }
+  /invitations/{invitationId}/accept:
+    post:
+      operationId: acceptAccountInvitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "201": { description: Executor membership created or a removed membership reactivated }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /spaces/{spaceId}/members:
+    get:
+      operationId: listSpaceMembers
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/SpaceId" }]
+      responses:
+        "200":
+          description: Administrator-only active member list with account email addresses
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/SpaceMember" }
+        "403": { $ref: "#/components/responses/Error" }
+  /spaces/{spaceId}/members/{memberId}:
+    delete:
+      operationId: removeExecutor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SpaceId" }
+        - { name: memberId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Membership and its device sessions revoked }
+  /spaces/{spaceId}/snapshot:
+    get:
+      operationId: getSpaceSnapshot
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SpaceId" }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Stable paged logical snapshot and a signed cursor for changes after its base sequence
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /spaces/{spaceId}/changes:
+    get:
+      operationId: getSpaceChanges
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SpaceId" }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200": { description: Ordered change page and next signed cursor }
+        "409": { description: Cursor expired; client must replace its cache from snapshot }
+  /spaces/{spaceId}/commands:
+    post:
+      operationId: submitOfflineCommands
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/SpaceId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommandBatch" }
+      responses:
+        "207":
+          description: One durable idempotent receipt per non-retryable command
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /spaces/{spaceId}/notifications:
+    get:
+      operationId: getGroupedNotifications
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/SpaceId" }]
+      responses:
+        "200": { description: Recipient-only events grouped for display with grouped unread count }
+  /spaces/{spaceId}/audit:
+    get:
+      operationId: getSafeAdminAudit
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SpaceId" }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: Administrator-only sanitized security and business audit timeline }
+        "403": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    SpaceId: { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+  schemas:
+    AccountInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, spaceId, spaceName, createdAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        spaceId: { type: string, format: uuid }
+        spaceName: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    CommandBatch:
+      type: object
+      additionalProperties: false
+      required: [commands]
+      properties:
+        commands:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/Command" }
+    Command:
+      type: object
+      additionalProperties: false
+      required: [commandId, entityId, baseVersion, createdAt, type, payload]
+      properties:
+        commandId: { type: string, format: uuid }
+        entityId: { type: string, minLength: 1, maxLength: 160 }
+        baseVersion: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        type:
+          type: string
+          enum: [GROUP_UPSERT, GROUP_ARCHIVE, SPACE_TIMEZONE_UPDATE, TASK_PUBLISH, TASK_UPDATE, TASK_CANCEL, TASK_ARCHIVE, TASK_RESTORE, OCCURRENCE_UPSERT, EXECUTION_EVENT, INFORMATION_SUBMISSION, RESULT_SELECT, NOTIFICATION_READ]
+        payload: { type: object }
+    SpaceMember:
+      type: object
+      additionalProperties: false
+      required: [id, role, status, joinedAt, email]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [ADMIN, EXECUTOR] }
+        status: { type: string, enum: [ACTIVE] }
+        joinedAt: { type: string, format: date-time }
+        email: { type: [string, "null"], format: email }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId, retryable]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string }
+            retryable: { type: boolean }
+            retryAfterSeconds: { type: integer, minimum: 1 }
+  responses:
+    Error:
+      description: Stable error envelope
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }

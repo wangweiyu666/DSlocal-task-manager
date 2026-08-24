@@ -1,0 +1,10 @@
+{
+  "first": {
+    "commandId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331003",
+    "payload": { "reason": "A" }
+  },
+  "replay": {
+    "commandId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331003",
+    "payload": { "reason": "B" }
+  }
+}

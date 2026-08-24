@@ -57,6 +57,12 @@ interface InstanceDao {
     @Query("SELECT * FROM task_instance WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getInstance(taskId: String, occurrenceKey: String = "once"): TaskInstanceEntity?
 
+    @Query("SELECT MAX(updatedAtEpochMillis) FROM task_instance")
+    fun observeLatestUpdateEpochMillis(): Flow<Long?>
+
+    @Query("SELECT COUNT(*) FROM task_instance WHERE updatedAtEpochMillis > :epochMillis")
+    suspend fun countUpdatedAfter(epochMillis: Long): Int
+
     @Query(
         """
         SELECT * FROM task_instance AS instance

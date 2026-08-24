@@ -37,7 +37,8 @@
 
 ## 窗口验收策略
 
-- 日常提交：API 35 上运行 JVM 测试和 `connectedDebugAndroidTest`；
+- 联网 Android 本地交付：API 35 上运行 JVM、Lint、构建和 `connectedDebugAndroidTest`；
+- 离线 Android 提交：GitHub Actions 运行 JVM、Release Lint、Debug APK/测试 APK、边界和截图验证；
 - W21 通知：API 33、35 均验证授权、拒绝、重启和时区变化；
 - W22～W31：API 35 运行完整仪器测试，API 26 做关键流程兼容回归；
 - W32：三档 AVD 全量回归，并至少增加一台 Android 13+ 真机。
@@ -55,7 +56,7 @@ $env:JAVA_TOOL_OPTIONS='-Duser.timezone=Asia/Hong_Kong -Duser.language=zh -Duser
 
 报告位置：
 
-- JVM：`app/build/reports/tests/testDebugUnitTest/index.html`
+- JVM：`app/build/reports/tests/testConnectedDebugUnitTest/index.html` 或 `testOfflineDebugUnitTest/index.html`
 - 仪器测试：`app/build/reports/androidTests/connected/debug/index.html`
 
 模拟器无法启动时先运行：

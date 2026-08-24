@@ -1,0 +1,33 @@
+{
+  "commands": [
+    {
+      "commandId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331002",
+      "entityId": "CloudTask0000002",
+      "baseVersion": 0,
+      "createdAt": "2026-08-17T00:00:00Z",
+      "type": "TASK_PUBLISH",
+      "payload": {
+        "content": {
+          "v": 1,
+          "sv": 1,
+          "b": "CloudBatch000001",
+          "t": [
+            {
+              "i": "CloudTask0000002",
+              "n": "每日巡检",
+              "r": 1,
+              "x": { "f": 1, "s": "2026-08-17" }
+            }
+          ],
+          "e": [
+            {
+              "i": "CloudTask0000002",
+              "y": "2026-08-18",
+              "c": 1
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

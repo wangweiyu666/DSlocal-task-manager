@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "entityType": "task",
+      "entityId": "CloudTask0000002",
+      "entityVersion": 1,
+      "payloadVersion": 1,
+      "payload": {
+        "id": "CloudTask0000002",
+        "version": 1,
+        "status": "ACTIVE"
+      },
+      "updatedAt": "2026-08-17T00:00:00Z"
+    }
+  ],
+  "nextCursor": "opaque-signed-snapshot-cursor",
+  "hasMore": false,
+  "changesCursor": "opaque-signed-change-cursor"
+}

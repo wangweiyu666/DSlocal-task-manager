@@ -19,27 +19,40 @@ android {
         applicationId = "com.ds.localtaskmanager"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.1.0-alpha.4"
+        versionCode = 7
+        versionName = "0.1.0-alpha.6"
         manifestPlaceholders["appLabel"] = "@string/app_name"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    val signingPropertiesFile = File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties")
-    val signingProperties = Properties().apply {
-        if (signingPropertiesFile.isFile) signingPropertiesFile.inputStream().use(::load)
-    }
-    val releaseSigningReady = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
-        .all { !signingProperties.getProperty(it).isNullOrBlank() }
+    val offlineSigningPropertiesFile = File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties")
+    val connectedSigningPropertiesFile = File(gradle.gradleUserHomeDir, "local-task-manager-connected-signing.properties")
+    fun loadSigning(file: File) = Properties().apply { if (file.isFile) file.inputStream().use(::load) }
+    fun Properties.isReady() = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+        .all { !getProperty(it).isNullOrBlank() }
+    val offlineSigning = loadSigning(offlineSigningPropertiesFile)
+    val connectedSigning = loadSigning(connectedSigningPropertiesFile)
 
     signingConfigs {
-        if (releaseSigningReady) {
-            create("release") {
-                storeFile = file(requireNotNull(signingProperties.getProperty("storeFile")))
-                storePassword = signingProperties.getProperty("storePassword")
-                keyAlias = signingProperties.getProperty("keyAlias")
-                keyPassword = signingProperties.getProperty("keyPassword")
+        if (offlineSigning.isReady()) {
+            create("offlineRelease") {
+                storeFile = file(requireNotNull(offlineSigning.getProperty("storeFile")))
+                storePassword = offlineSigning.getProperty("storePassword")
+                keyAlias = offlineSigning.getProperty("keyAlias")
+                keyPassword = offlineSigning.getProperty("keyPassword")
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+        if (connectedSigning.isReady()) {
+            create("connectedRelease") {
+                storeFile = file(requireNotNull(connectedSigning.getProperty("storeFile")))
+                storePassword = connectedSigning.getProperty("storePassword")
+                keyAlias = connectedSigning.getProperty("keyAlias")
+                keyPassword = connectedSigning.getProperty("keyPassword")
                 enableV1Signing = false
                 enableV2Signing = true
                 enableV3Signing = true
@@ -48,16 +61,38 @@ android {
         }
     }
 
+    flavorDimensions += "connectivity"
+    productFlavors {
+        create("offline") {
+            dimension = "connectivity"
+            manifestPlaceholders["appLabel"] = "@string/app_name"
+            buildConfigField("boolean", "CONNECTED_BUILD", "false")
+            buildConfigField("String", "CLOUD_ENVIRONMENT", "\"none\"")
+            buildConfigField("String", "CLOUD_API_BASE_URL", "\"\"")
+            if (offlineSigning.isReady()) signingConfig = signingConfigs.getByName("offlineRelease")
+        }
+        create("connected") {
+            dimension = "connectivity"
+            applicationIdSuffix = ".connected"
+            versionCode = 10
+            versionName = "0.1.0-alpha.9"
+            versionNameSuffix = "-connected"
+            manifestPlaceholders["appLabel"] = "@string/app_name"
+            buildConfigField("boolean", "CONNECTED_BUILD", "true")
+            buildConfigField("String", "CLOUD_ENVIRONMENT", "\"foundation\"")
+            buildConfigField("String", "CLOUD_API_BASE_URL", "\"https://api-staging.rochelimit.me\"")
+            if (connectedSigning.isReady()) signingConfig = signingConfigs.getByName("connectedRelease")
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            manifestPlaceholders["appLabel"] = "DStationery（调试）"
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            if (releaseSigningReady) signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -99,19 +134,22 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all { it.systemProperty("dstationery.unitTest", "true") }
     }
 
     sourceSets["test"].resources.srcDir(rootProject.file("protocol-test-vectors"))
+    sourceSets["test"].resources.srcDir(rootProject.file("cloud-protocol-test-vectors"))
 }
 
-val verifyReleaseSigningConfig = tasks.register("verifyReleaseSigningConfig") {
+fun registerSigningVerification(taskName: String, fileName: String) = tasks.register(taskName) {
     group = "verification"
     doLast {
-        check(File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties").isFile) {
-            "Missing signing properties: ${File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties")}"
+        val propertiesFile = File(gradle.gradleUserHomeDir, fileName)
+        check(propertiesFile.isFile) {
+            "Missing signing properties: $propertiesFile"
         }
         val properties = Properties().apply {
-            File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties").inputStream().use(::load)
+            propertiesFile.inputStream().use(::load)
         }
         listOf("storeFile", "storePassword", "keyAlias", "keyPassword").forEach { key ->
             check(!properties.getProperty(key).isNullOrBlank()) { "Missing release signing property: $key" }
@@ -120,9 +158,10 @@ val verifyReleaseSigningConfig = tasks.register("verifyReleaseSigningConfig") {
     }
 }
 
-tasks.matching { it.name in setOf("assembleRelease", "bundleRelease") }.configureEach {
-    dependsOn(verifyReleaseSigningConfig)
-}
+val verifyOfflineReleaseSigning = registerSigningVerification("verifyOfflineReleaseSigning", "local-task-manager-signing.properties")
+val verifyConnectedReleaseSigning = registerSigningVerification("verifyConnectedReleaseSigning", "local-task-manager-connected-signing.properties")
+tasks.matching { it.name in setOf("assembleOfflineRelease", "bundleOfflineRelease") }.configureEach { dependsOn(verifyOfflineReleaseSigning) }
+tasks.matching { it.name in setOf("assembleConnectedRelease", "bundleConnectedRelease") }.configureEach { dependsOn(verifyConnectedReleaseSigning) }
 
 kapt {
     correctErrorTypes = true
@@ -145,6 +184,8 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    "connectedImplementation"(libs.sqlcipher.android)
+    "connectedImplementation"(libs.androidx.sqlite)
 
     kapt(libs.androidx.room.compiler)
 

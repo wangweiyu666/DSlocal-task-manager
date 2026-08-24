@@ -9,7 +9,6 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.ds.localtaskmanager.ui.DstApp
 import com.ds.localtaskmanager.ui.today.TodayViewModel
 import com.ds.localtaskmanager.ui.today.TodayViewModelFactory
 import com.ds.localtaskmanager.ui.theme.DstTheme
@@ -57,20 +56,9 @@ class MainActivity : ComponentActivity() {
             uiPalette = settings.uiPalette,
             reduceMotion = settings.reduceMotion,
         ) {
-            DstApp(
+            ConnectivityContent(
+                application = application,
                 todayViewModel = todayViewModel,
-                taskRepository = application.taskRepository,
-                taskExecutionService = application.taskExecutionService,
-                taskNoteService = application.taskNoteService,
-                historyRepository = application.historyRepository,
-                resultRepository = application.resultRepository,
-                statisticsRepository = application.statisticsRepository,
-                shareImageService = application.shareImageService,
-                settingsRepository = application.settingsRepository,
-                diagnosticService = application.diagnosticService,
-                backupManager = application.backupManager,
-                backupRepository = application.backupRepository,
-                reminderReconciler = application.reminderCoordinator,
                 notificationTask = notificationTask,
                 onNotificationTaskConsumed = { notificationTask.value = null },
                 onNotificationPermissionChanged = { todayViewModel.synchronizeInstances() },
@@ -83,4 +71,5 @@ class MainActivity : ComponentActivity() {
         val occurrenceKey = intent.getStringExtra(AndroidReminderNotifier.EXTRA_OCCURRENCE_KEY) ?: return
         notificationTask.value = TaskInstanceKey(taskId, occurrenceKey)
     }
+
 }

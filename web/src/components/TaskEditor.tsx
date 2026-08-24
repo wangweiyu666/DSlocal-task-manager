@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { GroupRecord, TaskFields } from "../model/types";
 
 export type EditableTask = TaskFields & { groupId: string | null };
@@ -25,9 +25,10 @@ interface TaskEditorProps {
   groups: GroupRecord[];
   onChange: (value: EditableTask) => void;
   allowKindChange?: boolean;
+  advancedContent?: ReactNode;
 }
 
-export function TaskEditor({ value, groups, onChange, allowKindChange = false }: TaskEditorProps) {
+export function TaskEditor({ value, groups, onChange, allowKindChange = false, advancedContent }: TaskEditorProps) {
   const [customReminder, setCustomReminder] = useState("10");
   const [advancedOpen, setAdvancedOpen] = useState(
     value.steps.length > 0 || value.order !== null || value.reminders.length > 0 || value.completionMessage !== "",
@@ -81,8 +82,9 @@ export function TaskEditor({ value, groups, onChange, allowKindChange = false }:
     </div></section>
 
     <details className="form-section collapsible-section" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
-      <summary><span><strong>高级设置</strong><small>{recurring ? "步骤、排序与完成提示" : "步骤、排序、提醒与完成提示"}</small></span><ChevronDown size={19} /></summary>
+      <summary><span><strong>高级设置</strong><small>{recurring ? `步骤、排序、完成提示${advancedContent ? "与执行者" : ""}` : `步骤、排序、提醒、完成提示${advancedContent ? "与执行者" : ""}`}</small></span><ChevronDown size={19} /></summary>
       <div className="advanced-content">
+        {advancedContent}
         <div className="section-heading"><h3>步骤</h3><button className="button tonal" type="button" onClick={() => patch({ steps: [...value.steps, { n: "", r: 1 }] })} disabled={value.steps.length >= 50}><Plus size={17} />添加步骤</button></div>
         {value.steps.length === 0 ? <p className="empty-inline">无步骤；任务可直接按上方完成方式执行。</p> : <div className="step-list">{value.steps.map((step, index) => <div className="step-row" key={index}>
           <input value={step.n} maxLength={100} aria-label={`步骤 ${index + 1}`} onChange={(event) => patch({ steps: value.steps.map((item, itemIndex) => itemIndex === index ? { ...item, n: event.target.value } : item) })} />
