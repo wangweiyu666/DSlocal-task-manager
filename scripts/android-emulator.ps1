@@ -19,7 +19,16 @@ $sdkRoot = if ($env:ANDROID_HOME) {
 $javaRoot = if ($env:JAVA_HOME) {
     $env:JAVA_HOME
 } else {
-    "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot"
+    if (-not (Get-Command java -CommandType Application -ErrorAction SilentlyContinue)) {
+        throw "java was not found on the user PATH and JAVA_HOME is not set."
+    }
+    $javaHomeLine = & java -XshowSettings:properties -version 2>&1 |
+        Select-String -Pattern "^\s*java\.home\s*=" |
+        Select-Object -First 1
+    if (-not $javaHomeLine) {
+        throw "Unable to discover JAVA_HOME from java on the user PATH."
+    }
+    ($javaHomeLine.ToString() -replace "^\s*java\.home\s*=\s*", "").Trim()
 }
 $avdName = "local-task-manager-api$ApiLevel"
 $image = "system-images;android-$ApiLevel;google_apis;x86_64"
