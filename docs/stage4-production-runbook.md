@@ -7,21 +7,22 @@
 - 生产环境共三个账号：管理者、管理者控制的执行者测试账号、真实执行者账号。
 - 先用非敏感测试数据完成登录、邀请、权限隔离、断网同步、导出、计划删除、立即删除和恢复演练；通过后才录入真实任务。
 - 执行者 APK 公开发布到 GitHub Releases；管理员网址不在仓库、README、Release、Issue、工作流日志或证据文件中记录。
-- 管理端不是依靠隐藏 URL 保证安全。它必须置于 Cloudflare Access 自托管应用之后，只允许管理者邮箱，App Launcher 不显示，不允许 bypass policy；应用内仍保留 `ADMIN_EMAIL` 白名单和近期邮箱验证。
+- 管理端不是依靠隐藏 URL 保证安全。Production Web Worker 在返回 HTML、JS、CSS 或代理 API 前执行应用层单邮箱白名单和邮箱验证码门禁；应用内仍保留 `ADMIN_EMAIL` 白名单、空间角色授权和近期邮箱验证。
 - 不包含公开注册、应用商店、远程推送、端到端加密、多管理员或大陆 SLA。
 
 ## 受保护配置
 
 GitHub Environment `cloud-staging` 保存 staging Cloudflare 凭据。`cloud-production` 必须启用 required reviewer，并保存：
 
-- `CLOUDFLARE_API_TOKEN`：最小权限包含 Workers、D1、DNS，以及 Access Apps and Policies Read；
+- `CLOUDFLARE_API_TOKEN`：最小权限只包含本工作流所需的 Workers、D1 和 DNS，不需要 Zero Trust/Access 或付费订阅权限；
 - `CLOUDFLARE_ACCOUNT_ID`；
-- `PRODUCTION_ADMIN_HOST`：只保存主机名，不含协议和路径；
-- `PRODUCTION_ACCESS_APP_ID`：保护该主机名的 Cloudflare Access self-hosted application ID。
+- `PRODUCTION_ADMIN_HOST`：只保存主机名，不含协议和路径。
 
 Production API Worker 另外保存 `AUTH_PEPPER`、`ADMIN_EMAIL`、`RESEND_API_KEY` 和 `ALLOWED_ORIGIN` secrets。`ALLOWED_ORIGIN` 必须等于 `https://` 加受保护管理员主机名。不要把这些值传入命令参数、文档或证据文件。
 
-生产管理员主机名应使用从未提交到公共 Git 历史的新名称。部署工作流会在任何 migration 前通过 Cloudflare API 验证 Access 应用的域名、隐藏 App Launcher、唯一单邮箱 allow policy 和不存在 bypass policy；部署后还会验证未登录访问只能得到 302、401 或 403。
+Production Web Worker 另外保存 `MANAGEMENT_GATE_SECRET` 和 `MANAGEMENT_ADMIN_EMAIL` secrets。前者必须是至少 32 字节的独立高熵随机值；后者必须与 API Worker 的 `ADMIN_EMAIL` 完全一致。二者不得提交到仓库或写入 GitHub 日志。
+
+生产管理员主机名应使用从未提交到公共 Git 历史的新名称。应用门禁只使用现有 Workers、服务绑定和 HMAC cookie，不启用 Cloudflare Zero Trust/Access，不要求付款方式。未验证请求只得到无脚本的最小验证码页，不会读取前端静态资源或调用业务 API；白名单外邮箱不会触发邮件。门禁 cookie 最长 4 小时、`HttpOnly; Secure; SameSite=Strict`、绑定浏览器 User-Agent；缺少配置时 Worker 以 503 失败关闭。生产联网 Web 不注册 Service Worker，所有受保护响应均 `no-store`，避免离线缓存绕过门禁。部署工作流会在任何 migration 前验证两个 Web Worker secrets 存在，部署后验证未登录根页面和常见静态资源都返回 401 及门禁标记。
 
 ## 第一门：staging
 
@@ -39,10 +40,10 @@ Production API Worker 另外保存 `AUTH_PEPPER`、`ADMIN_EMAIL`、`RESEND_API_K
 第一门通过后，汇报固定 commit、测试结果、staging deployment、恢复 artifact 和剩余风险。只有管理者再次明确确认后才执行：
 
 1. 创建 `dstationery-deletion-ledger-production`，写入 production 账本 ID并重新运行两个环境 guard。
-2. 配置新的受保护管理员主机名、Cloudflare Access 单邮箱 policy、生产邮件域和四个 Worker secrets。
+2. 配置新的受保护管理员主机名、生产邮件域、四个 API Worker secrets，以及 Web Worker 的应用门禁密钥和单一管理者邮箱。
 3. 在 GitHub `cloud-production` 环境启用人工批准并配置受保护值。
 4. 手动运行 `Cloud Connected`，target 选择 `production`，`production_confirmation` 输入 `DEPLOY_PRODUCTION`，`release_commit` 输入已通过 staging 的完整 commit SHA。
-5. 验证 API 健康、管理端未登录被 Access 拦截、管理者登录和执行者 Android 均只连接 production。
+5. 验证管理端未登录不能读取任何静态资源或代理 API、非白名单邮箱不发信、管理者验证后可进入且退出会清除门禁，并确认管理者 Web 和执行者 Android 均只连接 production。
 
 Production migration 前记录 D1 bookmark 和当前 Worker version。故障先回滚 Worker 固定版本；若兼容 migration 仍有问题，再按 bookmark 执行 Time Travel。恢复主库后必须等待删除账本重放完毕再开放写入。
 

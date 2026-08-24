@@ -21,6 +21,12 @@ if (environment === "production") {
   if (webProduction?.routes?.length || webProduction?.route || webProduction?.domains?.length) {
     throw new Error("production administrator hostname must not be committed in public Worker routes");
   }
+  if (webProduction?.workers_dev !== false) throw new Error("production administrator Worker must disable workers.dev");
+  if (webProduction?.vars?.MANAGEMENT_GATE_ENABLED !== "true") throw new Error("production administrator Worker must enable the application gate");
+  for (const secret of ["MANAGEMENT_GATE_SECRET", "MANAGEMENT_ADMIN_EMAIL"]) {
+    if (Object.hasOwn(webProduction?.vars ?? {}, secret)) throw new Error(`production ${secret} must not be committed as a public variable`);
+    if (!webProduction?.secrets?.required?.includes(secret)) throw new Error(`production administrator Worker must require ${secret}`);
+  }
 }
 const other = environment === "staging" ? config.env.production : config.env.staging;
 const otherIds = new Set(other.d1_databases.map((database) => database.database_id));

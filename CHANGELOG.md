@@ -9,7 +9,7 @@
 - 管理员 Web 和执行者 Android 的导出、删除、恢复与服务保护状态交互。
 - Windows 开发调用统一优先使用 PowerShell 7 和用户 PATH。
 - 联网阶段 4：新增独立生产执行者 Android 包名、沙箱与签名，受审计的公开 GitHub prerelease 流程。
-- 新增 staging D1 Time Travel/删除账本恢复演练、production 双确认门禁、隐藏管理端配置与 Cloudflare Access 验证。
+- 新增 staging D1 Time Travel/删除账本恢复演练、production 双确认门禁、隐藏管理端配置与零付费应用层单邮箱验证。
 - 明确三个账号真实试运行和连续七天生产观察标准。
 - DST1.1 重复任务单日修改、撤销和恢复，Dom Web 与 Sub Android 同步支持。
 - Dom 使用 DSDOM v1.2 保存单日例外；Sub 使用 Room v1.6（内部 Schema 6）和 DSTB1 业务 schema v2 持久化。

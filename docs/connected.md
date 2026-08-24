@@ -9,7 +9,7 @@
 | 组件 | 职责 | 存储与隔离 |
 | --- | --- | --- |
 | 联网 Android | 邮箱登录、邀请领取、空间任务、离线执行、同步和应用内通知 | 独立包名、签名、SQLCipher Room 与 Keystore 会话 |
-| 管理员 Web | 成员、任务库、积分组、发布、结果、冲突和审计 | 独立 PWA identity、IndexedDB 缓存与 outbox |
+| 管理员 Web | 成员、任务库、积分组、发布、结果、冲突和审计 | 独立构建、应用层单邮箱门禁、IndexedDB 缓存与 outbox |
 | API Worker + D1 | 鉴权、授权、版本、同步、结果、通知、审计和生命周期 | local/staging/production 分 Worker、主库、删除账本库与密钥 |
 
 联网和离线构建共享协议、领域规则、任务编辑器和基础 UI。Android 共享 `DstNavigation`、`ProfileScreen`、`SettingsScreen` 和执行状态机；联网状态通过参数和回调显示，离线构建隐藏对应入口。账号、成员、同步和云数据库实现保留在 connected 源集。编译期隔离规则见[离线版指南](offline.md#共享实现规则)。
@@ -36,6 +36,7 @@
 - access token 有效期 15 分钟；refresh token 每次使用后轮换，设备会话闲置 30 天、最长 90 天。
 - 服务端只保存带密钥摘要。超出并发宽限后的 refresh token 重放会撤销设备会话。
 - Web refresh token 使用 `HttpOnly; Secure; SameSite=Strict` cookie；Android 使用 Keystore 保护。
+- production 管理端在返回任何应用资源或代理 API 前要求唯一管理者邮箱验证码；门禁会话最长 4 小时并绑定浏览器，白名单外邮箱不会触发邮件。业务 API 仍独立执行管理员邮箱与空间角色授权。
 - 临时网络或服务器故障保留账号、缓存和 outbox，允许继续离线使用；只有确认成员资格被撤销后才清除该空间业务数据。
 
 ## 隐私、导出与删除
@@ -119,6 +120,7 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 
 - 每次空间查询必须同时约束 `space_id` 和对象 ID。
 - Web façade 校验精确 Origin 与 CSRF token；响应启用 CSP、HSTS、nosniff、严格 referrer policy 和 frame deny。
+- production Web 缺少门禁密钥时以 503 失败关闭；未验证请求只返回 `no-store` 的最小登录页。联网 Web 不注册 Service Worker，避免受保护静态资源被离线缓存绕过门禁。
 - 日志不得包含任务正文、完整邮箱、验证码、访问/刷新令牌、密钥或请求体。
 - 不提供端到端加密；运营服务技术上可读取任务内容，因此必须最小化日志和权限。
 - 不接入产品分析、行为遥测或崩溃正文上传。
@@ -137,7 +139,7 @@ Worker 结构日志只允许 `timestamp`、`level`、`event`、`environment`、`
 | staging | `api-staging.rochelimit.me` | `staging.rochelimit.me` | `dstationery-staging` + `dstationery-deletion-ledger-staging`（APAC） |
 | production | `api.rochelimit.me` | 受保护且不在公开仓库记录的管理员域名 | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
 
-local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。生产 `ALLOWED_ORIGIN` 与管理员域名只保存在 Cloudflare/GitHub 受保护配置中；公开仓库不记录实际值。`cloud/scripts/guard-environment.mjs` 在远程部署前验证两个绑定均非占位符、主库/账本库分离、环境间不复用、环境 cron 独立配置且生产管理端路由未被提交。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。
+local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。生产 `ALLOWED_ORIGIN`、管理员域名、`MANAGEMENT_GATE_SECRET` 与 `MANAGEMENT_ADMIN_EMAIL` 只保存在 Cloudflare/GitHub 受保护配置中；公开仓库不记录实际值。生产门禁基于已有 Workers 服务绑定和 HMAC cookie，不使用 Cloudflare Zero Trust/Access，也不需要付款方式。`cloud/scripts/guard-environment.mjs` 在远程部署前验证两个绑定均非占位符、主库/账本库分离、环境间不复用、环境 cron 独立配置、生产门禁强制启用且管理端路由未被提交。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。
 
 阶段 3 首次远程部署前必须完成：
 
@@ -173,7 +175,7 @@ Cloud GitHub 工作流负责 Worker 与 Web 的测试；staging 和 production �
 
 阶段 3 已完成 schema v6、按角色 DSEXPORT v1、30 天删除/立即永久删除、版本化隐私首次门禁、近期邮箱验证、授权与滥用自动化、安全日志白名单、原生用量观测和 70%/90% 客户端保护模式。仓库不声称完成第三方渗透测试；staging/production 删除账本仍需在阶段 4 部署前真实创建和演练。
 
-阶段 4 待完成：真实创建两个环境的删除账本、staging 恢复演练、production DNS/邮件域与 Cloudflare Access、受保护 migration、公开 GitHub 执行者 APK、三个账号真实试运行和连续七天观察。远程推送、完整 DSTB1 云迁移、端到端加密、多管理员、多空间、公开注册、应用商店分发和大陆 SLA 均后置。
+阶段 4 待完成：production 应用层严格白名单部署、受保护 migration、公开 GitHub 执行者 APK、三个账号真实试运行和连续七天观察。两个环境的删除账本、staging 恢复演练和 production 邮件域已完成准备。远程推送、完整 DSTB1 云迁移、端到端加密、多管理员、多空间、公开注册、应用商店分发和大陆 SLA 均后置。
 
 ## 变更清单
 

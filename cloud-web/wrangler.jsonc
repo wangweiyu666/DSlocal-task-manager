@@ -20,6 +20,8 @@
     "production": {
       "name": "dstationery-connected-production",
       "workers_dev": false,
+      "vars": { "MANAGEMENT_GATE_ENABLED": "true" },
+      "secrets": { "required": ["MANAGEMENT_GATE_SECRET", "MANAGEMENT_ADMIN_EMAIL"] },
       "services": [{ "binding": "API", "service": "dstationery-api-production" }]
     }
   }

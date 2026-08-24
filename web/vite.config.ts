@@ -33,30 +33,29 @@ export default defineConfig(({ mode }) => {
       }
     },
     react(),
-    VitePWA({
-      registerType: connected ? "autoUpdate" : "prompt",
+    ...(!connected ? [VitePWA({
+      registerType: "prompt",
       includeAssets: ["icon.svg"],
       manifest: {
-        id: connected ? "dstationery-connected" : "dstationery-dom-offline",
-        name: connected ? "DStationery 联网版" : "DStationery Dom",
-        short_name: connected ? "DS 联网" : "DS Dom",
-        description: connected ? "DStationery 联网版基础壳" : "完全离线的 DST1 任务生成器",
+        id: "dstationery-dom-offline",
+        name: "DStationery Dom",
+        short_name: "DS Dom",
+        description: "完全离线的 DST1 任务生成器",
         lang: "zh-CN",
         theme_color: "#6750a4",
         background_color: "#fffbfe",
         display: "standalone",
-        start_url: connected ? "./" : "./#/create",
+        start_url: "./#/create",
         icons: [
           { src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }
         ]
       },
       workbox: {
-        cacheId: connected ? "dstationery-connected" : "dstationery-offline",
+        cacheId: "dstationery-offline",
         navigateFallback: "index.html",
-        globPatterns: ["**/*.{js,css,html,svg,json}"],
-        ...(connected ? { clientsClaim: true, skipWaiting: true } : {})
+        globPatterns: ["**/*.{js,css,html,svg,json}"]
       }
-    })
+    })] : [])
   ],
   test: {
     environment: "jsdom",

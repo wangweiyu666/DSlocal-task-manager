@@ -76,7 +76,7 @@ jobs:
           npm run smoke:local
       - run: npm ci
         working-directory: cloud-web
-      - run: npm run typecheck
+      - run: npm run check
         working-directory: cloud-web
       - run: npm ci
         working-directory: web
@@ -251,23 +251,20 @@ jobs:
             grep -qx "$required" <<< "$secret_names"
           done
           test -n "$PRODUCTION_ADMIN_HOST"
-          test -n "$PRODUCTION_ACCESS_APP_ID"
-          access_api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/$PRODUCTION_ACCESS_APP_ID"
-          curl --fail --silent --show-error "$access_api" \
-            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" > "$RUNNER_TEMP/access-app.json"
-          jq -e --arg host "$PRODUCTION_ADMIN_HOST" \
-            '.success == true and .result.type == "self_hosted" and (.result.domain | split("/")[0]) == $host and .result.app_launcher_visible == false' \
-            "$RUNNER_TEMP/access-app.json" >/dev/null
-          curl --fail --silent --show-error "$access_api/policies" \
-            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" > "$RUNNER_TEMP/access-policies.json"
-          jq -e \
-            '.success == true and ([.result[] | select(.decision == "allow" and (.include | length) == 1 and (.include[0] | has("email")))] | length) == 1 and ([.result[] | select(.decision == "bypass")] | length) == 0' \
-            "$RUNNER_TEMP/access-policies.json" >/dev/null
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRODUCTION_ADMIN_HOST: ${{ secrets.PRODUCTION_ADMIN_HOST }}
-          PRODUCTION_ACCESS_APP_ID: ${{ secrets.PRODUCTION_ACCESS_APP_ID }}
+      - name: Verify application-gate secrets
+        working-directory: cloud-web
+        run: |
+          secret_names="$(npx wrangler secret list --env production | jq -r '.[].name')"
+          for required in MANAGEMENT_GATE_SECRET MANAGEMENT_ADMIN_EMAIL; do
+            grep -qx "$required" <<< "$secret_names"
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply production migrations by database name
         run: npx wrangler d1 migrations apply dstationery-production --remote --env production
         working-directory: cloud
@@ -297,9 +294,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRODUCTION_ADMIN_HOST: ${{ secrets.PRODUCTION_ADMIN_HOST }}
-      - name: Verify the administrator site is gated by Cloudflare Access
+      - name: Verify the administrator site fails closed at the application gate
         run: |
-          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://$PRODUCTION_ADMIN_HOST/")"
-          test "$status" = 302 -o "$status" = 401 -o "$status" = 403
+          status="$(curl --silent --show-error --dump-header "$RUNNER_TEMP/admin-gate-headers.txt" --output "$RUNNER_TEMP/admin-gate-body.html" --write-out '%{http_code}' "https://$PRODUCTION_ADMIN_HOST/")"
+          test "$status" = 401
+          grep -qi '^x-dstationery-gate: required' "$RUNNER_TEMP/admin-gate-headers.txt"
+          grep -qi '^cache-control:.*no-store' "$RUNNER_TEMP/admin-gate-headers.txt"
+          grep -q '受限管理入口' "$RUNNER_TEMP/admin-gate-body.html"
+          asset_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://$PRODUCTION_ADMIN_HOST/manifest.webmanifest")"
+          test "$asset_status" = 401
         env:
           PRODUCTION_ADMIN_HOST: ${{ secrets.PRODUCTION_ADMIN_HOST }}

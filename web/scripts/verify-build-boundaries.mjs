@@ -18,7 +18,9 @@ async function bundleText(root) {
 }
 
 const offline = await bundleText(fileURLToPath(new URL("../dist-offline", import.meta.url)));
-const connected = await bundleText(fileURLToPath(new URL("../dist-connected", import.meta.url)));
+const connectedRoot = fileURLToPath(new URL("../dist-connected", import.meta.url));
+const connectedPaths = await files(connectedRoot);
+const connected = await bundleText(connectedRoot);
 const connectedIndex = await readFile(fileURLToPath(new URL("../dist-connected/index.html", import.meta.url)), "utf8");
 const forbidden = ["connected-foundation-v1", "/v1/auth/", "api.rochelimit.me", "cloud-api"];
 for (const marker of forbidden) {
@@ -29,5 +31,8 @@ if (!connected.includes("data-build-channel") || !connected.includes("connected"
 }
 if (/\b(?:src|href)="\.\/(?:assets|registerSW|manifest)/u.test(connectedIndex)) {
   throw new Error("connected entry assets must use root-relative URLs");
+}
+if (connectedPaths.some((path) => /(?:^|[\\/])(?:sw\.js|registerSW\.js|manifest\.webmanifest)$/u.test(path))) {
+  throw new Error("connected build must not contain a service worker or web app manifest");
 }
 console.log("offline/connected bundle boundaries verified");
