@@ -31,6 +31,8 @@ $javaRoot = if ($env:JAVA_HOME) {
     ($javaHomeLine.ToString() -replace "^\s*java\.home\s*=\s*", "").Trim()
 }
 $avdName = "local-task-manager-api$ApiLevel"
+$emulatorPort = @{ 26 = 5554; 33 = 5556; 35 = 5558 }[$ApiLevel]
+$targetSerial = "emulator-$emulatorPort"
 $image = "system-images;android-$ApiLevel;google_apis;x86_64"
 $adb = Join-Path $sdkRoot "platform-tools\adb.exe"
 $emulator = Join-Path $sdkRoot "emulator\emulator.exe"
@@ -46,34 +48,27 @@ function Require-Tool([string]$Path, [string]$Name) {
 
 function Get-TargetSerial {
     Require-Tool $adb "adb"
-    $serials = (& $adb devices) |
-        Select-String -Pattern "^emulator-\d+\s+device$" |
-        ForEach-Object { ($_.ToString() -split "\s+")[0] }
-    foreach ($serial in $serials) {
-        $runningAvd = (& $adb -s $serial emu avd name 2>$null | Select-Object -First 1).Trim()
-        if ($runningAvd -eq $avdName) {
-            return $serial
-        }
+    $device = (& $adb devices) | Select-String -Pattern "^$([regex]::Escape($targetSerial))\s+device$"
+    if ($device) {
+        return $targetSerial
     }
     throw "$avdName is not running. Run: .\scripts\android-emulator.cmd start -ApiLevel $ApiLevel"
 }
 
 function Wait-ForBoot {
     Require-Tool $adb "adb"
-    & $adb wait-for-device
     $deadline = (Get-Date).AddMinutes(4)
     do {
-        $serial = (& $adb devices) |
-            Select-String -Pattern "^emulator-\d+\s+device$" |
+        $device = (& $adb devices) |
+            Select-String -Pattern "^$([regex]::Escape($targetSerial))\s+device$" |
             Select-Object -First 1
-        if ($serial) {
-            $id = ($serial.ToString() -split "\s+")[0]
-            $booted = (& $adb -s $id shell getprop sys.boot_completed 2>$null).Trim()
+        if ($device) {
+            $booted = ([string](& $adb -s $targetSerial shell getprop sys.boot_completed 2>$null)).Trim()
             if ($booted -eq "1") {
-                & $adb -s $id shell settings put global window_animation_scale 0
-                & $adb -s $id shell settings put global transition_animation_scale 0
-                & $adb -s $id shell settings put global animator_duration_scale 0
-                Write-Host "Ready: $id ($(& $adb -s $id shell getprop ro.build.version.release))"
+                & $adb -s $targetSerial shell settings put global window_animation_scale 0
+                & $adb -s $targetSerial shell settings put global transition_animation_scale 0
+                & $adb -s $targetSerial shell settings put global animator_duration_scale 0
+                Write-Host "Ready: $targetSerial ($(& $adb -s $targetSerial shell getprop ro.build.version.release))"
                 return
             }
         }
@@ -100,6 +95,7 @@ switch ($Action) {
             SDK = $sdkRoot
             Java = $javaRoot
             AVD = $avdName
+            Serial = $targetSerial
             Adb = Test-Path $adb
             Emulator = Test-Path $emulator
             SdkManager = Test-Path $sdkManager
@@ -121,7 +117,7 @@ switch ($Action) {
     }
     "start" {
         Require-Tool $emulator "emulator"
-        $arguments = @("-avd", $avdName, "-no-audio", "-no-boot-anim", "-gpu", "auto")
+        $arguments = @("-avd", $avdName, "-port", $emulatorPort, "-no-audio", "-no-boot-anim", "-gpu", "auto")
         if (-not $Visible) { $arguments += "-no-window" }
         if ($ColdBoot) { $arguments += "-no-snapshot-load" }
         $windowStyle = if ($Visible) { "Normal" } else { "Hidden" }
