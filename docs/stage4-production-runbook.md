@@ -28,8 +28,8 @@ Production Web Worker 另外保存 `MANAGEMENT_GATE_SECRET` 和 `MANAGEMENT_ADMI
 
 1. 通过用户 `PATH` 直接确认 `node --version` 为 22+，再进入 `cloud`。
 2. 使用 `npm exec wrangler -- d1 create dstationery-deletion-ledger-staging --location=apac` 创建独立账本；只把返回的数据库 ID写入 `cloud/wrangler.jsonc`。
-3. 运行 `npm run guard:staging`、本地全量 migration、Cloud/Web/Android 测试，提交并推送固定 commit。
-4. 手动运行 `Cloud Connected`，target 选择 `staging`。确认主库和账本 migration、API、Web 与健康检查成功。
+3. 运行 `npm run guard:staging`、本地全量 migration、Cloud/Web/Android 测试，提交并推送固定 commit。`main` push 的 `Cloud Connected` 验证全部通过后会自动部署 staging；PR 只验证、不部署。必要时仍可手动运行工作流并选择 `staging` 重新部署。
+4. 确认自动 `deploy-staging` job 中主库和账本 migration、API 与 Web 部署成功。
 5. 再手动运行同一工作流，target 选择 `staging-recovery`，输入 `RESTORE_STAGING`。该 job 会创建不含真实数据的 canary、记录主库 Time Travel bookmark、把删除事实写入独立账本、恢复主库，并等待 staging cron 重放账本。
 6. 下载 `stage4-staging-recovery-<commit>` artifact。只有 `after-restore` 中 canary 为 1、`replay-status` 中为 0 且 cleanup 成功，恢复演练才通过。artifact 只包含 bookmark 的 SHA-256，不包含可复用 bookmark。
 
