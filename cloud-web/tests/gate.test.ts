@@ -79,7 +79,11 @@ describe("production management gate", () => {
     expect(response.headers.get("X-DStationery-Gate")).toBe("required");
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(response.headers.get("X-Robots-Tag")).toContain("noindex");
-    expect(await response.text()).toContain("受限管理入口");
+    const page = await response.text();
+    expect(page).toContain("受限管理入口");
+    expect(page).toContain('name="color-scheme" content="light"');
+    expect(page).toContain("background:#fffbfe");
+    expect(page).not.toContain("background:#101114");
     expect(counts()).toEqual({ assetRequests: 0, apiRequests: 0 });
   });
 
@@ -166,7 +170,9 @@ describe("production management gate", () => {
 
     expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": tampered, "User-Agent": userAgent } }), env)).status).toBe(401);
     expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": cookie, "User-Agent": "another-browser" } }), env)).status).toBe(401);
-    vi.setSystemTime(new Date("2026-08-24T04:00:01Z"));
+    vi.setSystemTime(new Date("2026-09-22T23:59:59Z"));
+    expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": cookie, "User-Agent": userAgent } }), env)).status).toBe(200);
+    vi.setSystemTime(new Date("2026-09-23T00:00:01Z"));
     expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": cookie, "User-Agent": userAgent } }), env)).status).toBe(401);
   });
 

@@ -22,7 +22,7 @@ Production API Worker 另外保存 `AUTH_PEPPER`、`ADMIN_EMAIL`、`RESEND_API_K
 
 Production Web Worker 另外保存 `MANAGEMENT_GATE_SECRET` 和 `MANAGEMENT_ADMIN_EMAIL` secrets。前者必须是至少 32 字节的独立高熵随机值；后者必须与 API Worker 的 `ADMIN_EMAIL` 完全一致。二者不得提交到仓库或写入 GitHub 日志。
 
-生产管理员主机名应使用从未提交到公共 Git 历史的新名称。应用门禁只使用现有 Workers、服务绑定和 HMAC cookie，不启用 Cloudflare Zero Trust/Access，不要求付款方式。未验证请求只得到无脚本的最小验证码页，不会读取前端静态资源或调用业务 API；白名单外邮箱不会触发邮件。门禁 cookie 最长 4 小时、`HttpOnly; Secure; SameSite=Strict`、绑定浏览器 User-Agent；缺少配置时 Worker 以 503 失败关闭。生产联网 Web 不注册 Service Worker，所有受保护响应均 `no-store`，避免离线缓存绕过门禁。部署工作流会在任何 migration 前验证两个 Web Worker secrets 存在，部署后验证未登录根页面和常见静态资源都返回 401 及门禁标记。
+生产管理员主机名应使用从未提交到公共 Git 历史的新名称。应用门禁只使用现有 Workers、服务绑定和 HMAC cookie，不启用 Cloudflare Zero Trust/Access，不要求付款方式。未验证请求只得到无脚本的最小验证码页，不会读取前端静态资源或调用业务 API；白名单外邮箱不会触发邮件。门禁 cookie 最长 30 天、`HttpOnly; Secure; SameSite=Strict`、绑定浏览器 User-Agent；缺少配置时 Worker 以 503 失败关闭。生产联网 Web 不注册 Service Worker，所有受保护响应均 `no-store`，避免离线缓存绕过门禁。部署工作流会在任何 migration 前验证两个 Web Worker secrets 存在，部署后验证未登录根页面和常见静态资源都返回 401 及门禁标记。
 
 ## 第一门：staging
 

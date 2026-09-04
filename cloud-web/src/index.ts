@@ -7,7 +7,7 @@ interface Env {
 }
 
 const GATE_COOKIE = "__Host-dst_manager_gate";
-const GATE_TTL_SECONDS = 4 * 60 * 60;
+const GATE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const encoder = new TextEncoder();
 
 interface GatePayload {
@@ -129,7 +129,7 @@ function gatePage(options: { challengeId?: string; email?: string; error?: boole
   const form = challengeId
     ? `<form method="post" action="/__gate/verify"><input type="hidden" name="challengeId" value="${escapeHtml(challengeId)}"><input type="hidden" name="email" value="${escapeHtml(email)}"><label>邮箱验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label><button type="submit">验证并进入</button></form><a href="/">重新开始</a>`
     : `<form method="post" action="/__gate/challenge"><label>管理者邮箱<input name="email" type="email" autocomplete="email" maxlength="254" required autofocus></label><button type="submit">发送验证码</button></form>`;
-  const body = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理入口验证</title><style>html{color-scheme:light dark;font-family:system-ui,sans-serif}body{display:grid;min-height:100vh;margin:0;place-items:center;background:#101114}main{box-sizing:border-box;width:min(92vw,25rem);padding:2rem;border:1px solid #3c4048;border-radius:1rem;background:#191b20}h1{font-size:1.35rem}p,label,input,button{display:block;width:100%;box-sizing:border-box}label{margin:1.5rem 0}.hint{color:#aeb4c0}.error{color:#ffb4ab}input,button{margin-top:.55rem;padding:.8rem;border-radius:.55rem;border:1px solid #666;background:#101114;color:inherit}button{cursor:pointer;background:#d0bcff;color:#251a3a;font-weight:700}a{display:inline-block;margin-top:1rem;color:#d0bcff}</style></head><body><main><p class="hint">受限管理入口</p><h1>需要邮箱验证</h1><p class="hint">仅授权管理者可访问。验证会话最多保持 4 小时。</p>${error}${form}</main></body></html>`;
+  const body = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>管理入口验证</title><style>html{color-scheme:light;font-family:system-ui,sans-serif;color:#1d1b20;background:#fffbfe}body{display:grid;min-height:100vh;margin:0;place-items:center;background:#fffbfe}main{box-sizing:border-box;width:min(92vw,25rem);padding:2rem;border:1px solid #cac4d0;border-radius:1rem;background:#f7f2fa;box-shadow:0 8px 26px rgba(55,42,79,.1)}h1{font-size:1.35rem}p,label,input,button{display:block;width:100%;box-sizing:border-box}label{margin:1.5rem 0}.hint{color:#625b71}.error{color:#b3261e}input,button{margin-top:.55rem;padding:.8rem;border-radius:.55rem;border:1px solid #79747e;color:inherit}input{background:#fffbfe}button{cursor:pointer;border-color:#6750a4;background:#6750a4;color:#fff;font-weight:700}a{display:inline-block;margin-top:1rem;color:#6750a4}</style></head><body><main><p class="hint">受限管理入口</p><h1>需要邮箱验证</h1><p class="hint">仅授权管理者可访问。验证会话最多保持 30 天。</p>${error}${form}</main></body></html>`;
   return new Response(method === "HEAD" ? null : body, { status: 401, headers: gateHeaders() });
 }
 

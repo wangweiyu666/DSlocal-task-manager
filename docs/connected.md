@@ -36,7 +36,7 @@
 - access token 有效期 15 分钟；refresh token 每次使用后轮换，设备会话闲置 30 天、最长 90 天。
 - 服务端只保存带密钥摘要。超出并发宽限后的 refresh token 重放会撤销设备会话。
 - Web refresh token 使用 `HttpOnly; Secure; SameSite=Strict` cookie；Android 使用 Keystore 保护。
-- production 管理端在返回任何应用资源或代理 API 前要求唯一管理者邮箱验证码；门禁会话最长 4 小时并绑定浏览器，白名单外邮箱不会触发邮件。业务 API 仍独立执行管理员邮箱与空间角色授权。
+- production 管理端在返回任何应用资源或代理 API 前要求唯一管理者邮箱验证码；门禁会话最长 30 天并绑定浏览器，白名单外邮箱不会触发邮件。业务 API 仍独立执行管理员邮箱与空间角色授权。
 - 临时网络或服务器故障保留账号、缓存和 outbox，允许继续离线使用；只有确认成员资格被撤销后才清除该空间业务数据。
 
 ## 隐私、导出与删除
