@@ -5,6 +5,10 @@
   "compatibility_date": "2026-08-01",
   "workers_dev": true,
   "preview_urls": false,
+  "ratelimits": [
+    { "name": "API_RATE_LIMITER", "namespace_id": "71001", "simple": { "limit": 1200, "period": 60 } },
+    { "name": "AUTH_RATE_LIMITER", "namespace_id": "71002", "simple": { "limit": 120, "period": 60 } }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
@@ -30,6 +34,10 @@
   "env": {
     "staging": {
       "name": "dstationery-api-staging",
+      "ratelimits": [
+        { "name": "API_RATE_LIMITER", "namespace_id": "71011", "simple": { "limit": 120, "period": 60 } },
+        { "name": "AUTH_RATE_LIMITER", "namespace_id": "71012", "simple": { "limit": 20, "period": 60 } }
+      ],
       "workers_dev": false,
       "triggers": { "crons": ["*/5 * * * *"] },
       "routes": [{
@@ -56,6 +64,10 @@
     },
     "production": {
       "name": "dstationery-api-production",
+      "ratelimits": [
+        { "name": "API_RATE_LIMITER", "namespace_id": "71021", "simple": { "limit": 120, "period": 60 } },
+        { "name": "AUTH_RATE_LIMITER", "namespace_id": "71022", "simple": { "limit": 20, "period": 60 } }
+      ],
       "workers_dev": false,
       "triggers": { "crons": ["17 * * * *"] },
       "routes": [{

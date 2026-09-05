@@ -29,6 +29,12 @@ if (environment === "production") {
   }
 }
 const other = environment === "staging" ? config.env.production : config.env.staging;
+for (const name of ["API_RATE_LIMITER", "AUTH_RATE_LIMITER"]) {
+  const binding = selected.ratelimits?.find((item) => item.name === name);
+  if (!binding || binding.simple?.period !== 60 || !(binding.simple.limit > 0)) throw new Error(`${environment} requires ${name}`);
+}
+const rateNamespaces = [config, config.env.staging, config.env.production].flatMap((item) => (item.ratelimits ?? []).map((binding) => binding.namespace_id));
+if (new Set(rateNamespaces).size !== rateNamespaces.length) throw new Error("rate limit namespaces must be separate across bindings and environments");
 const otherIds = new Set(other.d1_databases.map((database) => database.database_id));
 for (const database of selected.d1_databases) {
   if (otherIds.has(database.database_id)) throw new Error("staging and production share a D1 database");

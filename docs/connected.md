@@ -122,6 +122,14 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 
 ## 稳定错误与安全
 
+API 使用 Workers Rate Limiting binding，在任何 D1/删除账本查询前限流。staging 与 production 各自按来源 IP（`CF-Connecting-IP`）设置所有请求 120 次/60 秒，登录验证码发送、验证、刷新及无 Bearer 请求再共用 20 次/60 秒的较低额度。伪造包名、User-Agent 或 Bearer 不会绕过所有请求的额度，登录接口也不会因带 Bearer 而免限流。缺少凭据的业务请求直接返回 401；CORS 预检不读取数据库。未认证客户端的 IP 可能多人共用，因此这些阈值需要结合实际 429 监测调整。
+
+local 的两项阈值分别为 1200/120，便于串行 smoke 测试；三个环境使用独立的限流 namespace。超限返回 `429/RATE_LIMITED`、`Retry-After: 60` 及 JSON `retryAfterSeconds`。缺少限流绑定时返回 `503/SERVICE_UNAVAILABLE`，部署 guard 检查绑定配置和 namespace 隔离。原有邮箱/IP 验证码限额继续生效。
+
+Android 在同一个 API 客户端实例内，发送验证码至少间隔 60 秒、验证至少 2 秒、刷新至少 1 秒；收到 429（或带重试时间的 503）后暂停该客户端的新网络请求，并显示剩余等待时间。支持 JSON 秒数与 `Retry-After` 的秒数/HTTP 日期，缺少重试时间的 429 默认等待 60 秒，单次最多等待 24 小时；应用重启后的最终保护仍由服务器承担。
+
+这些措施是资源保护，不是官方 APK 身份证明；项目不把 APK 内置共享密钥、包名或自报设备标识当作可信身份。[Workers 限流](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)按 Cloudflare 站点计数、最终一致，不是精确的全球配额或完整 DDoS 防护，仍会执行 Worker。真正限制官方应用需另行接入应用/设备证明，并兼容当前侧载、Debug 和 Web 客户端；本次不启用这种限制。
+
 非 2xx 响应统一返回 `error.code`、安全的用户消息、`requestId`、`retryable` 和可选重试时间。稳定码至少包括：`INVALID_REQUEST`、`REQUEST_TOO_LARGE`、`UNAUTHENTICATED`、`SESSION_EXPIRED`、`PRIVACY_ACK_REQUIRED`、`ACCOUNT_DELETION_PENDING`、`SPACE_DELETION_PENDING`、`REAUTHENTICATION_REQUIRED`、`MEMBERSHIP_REVOKED`、`FORBIDDEN`、`NOT_FOUND`、`RATE_LIMITED`、`EMAIL_CAPACITY_PROTECTED`、`INVITATION_INVALID`、`IDEMPOTENCY_KEY_REUSED`、`TASK_VERSION_CONFLICT`、`SYNC_CURSOR_EXPIRED`、`CONFLICT`、`INTERNAL_ERROR`。
 
 - 每次空间查询必须同时约束 `space_id` 和对象 ID。

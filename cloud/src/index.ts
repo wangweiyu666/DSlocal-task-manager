@@ -4,6 +4,7 @@ import { ApiError, assertOrigin, errorResponse, json, securityHeaders } from "./
 import { acceptInvitationById, createInvitation, createSpace, listInvitations, listMembers, removeMember } from "./spaces";
 import { auditTimeline, bootstrap, changes, snapshot, submitCommands, unreadNotifications } from "./sync";
 import type { Env } from "./types";
+import { guardRequest } from "./request-guard";
 
 const exactRouteLabels = new Map<string, string>([
   ["/health", "/health"],
@@ -90,9 +91,9 @@ export default {
     const started = Date.now();
     const requestRoute = routeLabel(new URL(request.url).pathname);
     try {
-      const contentLength = Number(request.headers.get("Content-Length") ?? 0);
-      if (contentLength > 2_000_000) throw new ApiError(413, "REQUEST_TOO_LARGE", "请求体过大");
-      await enforceDeletionLedger(env);
+      await guardRequest(env, request);
+      if (requestRoute === "unmatched") throw new ApiError(404, "NOT_FOUND", "接口不存在");
+      if (request.method !== "OPTIONS") await enforceDeletionLedger(env);
       const response = await route(request, env);
       console.log(JSON.stringify({ timestamp: new Date().toISOString(), level: "info", event: "http_request", environment: env.ENVIRONMENT, requestId: response.headers.get("X-Request-Id"), method: request.method, route: requestRoute, status: response.status, durationMs: Date.now() - started }));
       return response;

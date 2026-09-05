@@ -29,6 +29,7 @@ export function securityHeaders(env: Env, request: Request): Headers {
   if (origin === env.ALLOWED_ORIGIN) {
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Access-Control-Allow-Credentials", "true");
+    headers.set("Access-Control-Expose-Headers", "Retry-After, X-Request-Id");
   }
   return headers;
 }

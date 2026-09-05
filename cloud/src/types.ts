@@ -1,4 +1,6 @@
 export interface Env {
+  API_RATE_LIMITER: RateLimit;
+  AUTH_RATE_LIMITER: RateLimit;
   DB: D1Database;
   DELETION_LEDGER: D1Database;
   ENVIRONMENT: "local" | "staging" | "production";

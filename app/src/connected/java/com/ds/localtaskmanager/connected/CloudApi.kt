@@ -24,6 +24,7 @@ class CloudApiException(
     val code: String,
     override val message: String,
     val retryable: Boolean,
+    val retryAfterSeconds: Int? = null,
 ) : Exception(message)
 
 data class CloudTokens(
@@ -72,8 +73,12 @@ data class CloudNotificationSummary(
     val unread: Boolean,
 )
 
-class CloudApi(private val baseUrl: String = BuildConfig.CLOUD_API_BASE_URL) {
+class CloudApi(
+    private val baseUrl: String = BuildConfig.CLOUD_API_BASE_URL,
+    private val openConnection: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
+) {
     private val json = Json { ignoreUnknownKeys = false }
+    private val cooldown = RequestCooldown()
 
     suspend fun requestChallenge(email: String, purpose: String = "SIGN_IN"): String =
         request("POST", "/v1/auth/challenges", body = buildJsonObject { put("email", email); put("purpose", purpose) })
@@ -207,7 +212,8 @@ class CloudApi(private val baseUrl: String = BuildConfig.CLOUD_API_BASE_URL) {
         accessToken: String? = null,
         body: JsonObject? = null,
     ): JsonObject = withContext(Dispatchers.IO) {
-        val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
+        cooldown.beforeRequest(path)
+        val connection = openConnection(URL(baseUrl + path)).apply {
             requestMethod = method
             connectTimeout = 15_000
             readTimeout = 20_000
@@ -225,12 +231,18 @@ class CloudApi(private val baseUrl: String = BuildConfig.CLOUD_API_BASE_URL) {
             val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
             val parsed = runCatching { json.parseToJsonElement(text).jsonObject }.getOrDefault(JsonObject(emptyMap()))
             if (status !in 200..299) {
-                val error = parsed["error"]?.jsonObject
+                val error = parsed["error"] as? JsonObject
+                val retryAfter = retryAfterSeconds(connection.getHeaderField("Retry-After"),
+                    (error?.get("retryAfterSeconds") as? JsonPrimitive)?.intOrNull)
+                    ?: if (status == 429) 60 else null
+                if (retryAfter != null && (status == 429 || status == 503)) cooldown.pause(retryAfter)
                 throw CloudApiException(
                     status,
                     error?.get("code")?.jsonPrimitive?.contentOrNull ?: "HTTP_ERROR",
-                    error?.get("message")?.jsonPrimitive?.contentOrNull ?: "云端请求失败",
-                    error?.get("retryable")?.jsonPrimitive?.booleanOrNull ?: (status >= 500),
+                    if (status == 429) "请求过于频繁，请在 $retryAfter 秒后重试"
+                    else error?.get("message")?.jsonPrimitive?.contentOrNull ?: "云端请求失败",
+                    error?.get("retryable")?.jsonPrimitive?.booleanOrNull ?: (status == 429 || status >= 500),
+                    retryAfter,
                 )
             }
             parsed

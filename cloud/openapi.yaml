@@ -2,7 +2,14 @@ openapi: 3.1.0
 info:
   title: DStationery Cloud API
   version: 3.0.0
-  description: Stage 3 identity, privacy acknowledgement, role-bound export, recoverable deletion, offline command and incremental sync contract.
+  description: >-
+    Identity, privacy acknowledgement, role-bound export, recoverable deletion,
+    offline command and incremental sync contract. All endpoints may return
+    429 RATE_LIMITED with Retry-After and error.retryAfterSeconds. Requests are
+    limited before database access: staging/production allow 120 requests per IP
+    per 60 seconds, with a shared 20-request limit for auth challenge/verify/refresh
+    and requests without a Bearer credential. These are approximate per-Cloudflare-location
+    limits, not client authenticity proof. Missing limiter bindings fail with 503.
 servers:
   - url: /v1
 paths:
@@ -49,12 +56,14 @@ paths:
       responses:
         "200": { description: New device session }
         "400": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
   /auth/refresh:
     post:
       operationId: refreshSession
       responses:
         "200": { description: Rotated access and refresh credentials }
         "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
   /auth/logout:
     post:
       operationId: logout

@@ -7,7 +7,7 @@
 | 产品目标、业务规则和状态语义 | [需求总稿](preview.md) |
 | 离线 Android/Web、Room、备份、构建和发布 | [离线版指南](offline.md) |
 | 联网架构、同步协议、状态矩阵、环境和恢复 | [联网版指南](connected.md) |
-| 阶段四上线门禁、恢复演练、执行者 Release 与七天观察 | [生产运行手册](stage4-production-runbook.md) |
+| Luna 推送部署、阶段四上线门禁、恢复演练与执行者 Release | [生产运行手册](stage4-production-runbook.md) |
 | DST1/DST1.1 字段和严格校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
 | DSTB1 文件格式和测试向量 | [DSTB1 格式](dstb1-format.md) |
 | Android API 26/33/35 与截图测试 | [模拟器测试环境](android-emulator-testing.md) |
@@ -19,7 +19,7 @@
 - 联网 Android：GitHub CI 验证 staging/production Debug 变体；生产执行者 Release 在本地用仓库外独立密钥签名审计，再上传公开 GitHub Release。
 - 离线 Android：推送 `main` 后由 GitHub `Android CI` 构建并上传 APK 与 SHA-256 artifact。
 - 离线 Web：由 `Dom Web Pages` 验证并部署 `web/dist-offline`。
-- 联网 Web 与 API：由 `Cloud Connected` 验证；staging、恢复演练和 production 均通过受保护的手动工作流执行。
+- 联网 Web 与 API：由 `Cloud Connected` 验证；`main` 推送自动部署 staging，恢复演练和 production 通过受保护的手动工作流执行。
 
 ## 配套机器资产
 
