@@ -31,6 +31,9 @@ for (const secret of ["ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MANAGEMENT_ADMIN_EMAI
   if (!web?.secrets?.required?.includes(secret)) throw new Error(`${environment} web must require ${secret}`);
 }
 const other = environment === "staging" ? config.env.production : config.env.staging;
+for (const secret of ["ACCESS_TEAM_DOMAIN", "ACCESS_AUD"]) {
+  if (Object.hasOwn(selected.vars, secret) || !selected.secrets?.required?.includes(secret)) throw new Error(`${environment} API must require protected ${secret}`);
+}
 for (const name of ["API_RATE_LIMITER", "AUTH_RATE_LIMITER"]) {
   const binding = selected.ratelimits?.find((item) => item.name === name);
   if (!binding || binding.simple?.period !== 60 || !(binding.simple.limit > 0)) throw new Error(`${environment} requires ${name}`);

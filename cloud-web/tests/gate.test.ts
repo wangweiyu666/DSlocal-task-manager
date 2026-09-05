@@ -64,7 +64,8 @@ describe("Cloudflare Access management gate", () => {
       new Request(`${origin}/`, { headers: { "Cf-Access-Authenticated-User-Email": administrator } }),
       new Request(`${origin}/`, { headers: { Cookie: "__Host-dst_manager_gate=old-cookie" } }),
       request("/__gate/challenge"), request("/assets/application.js"),
-      request("/v1/auth/refresh", { method: "POST" }), new Request(`${origin}/`, { method: "HEAD" }),
+      request("/v1/auth/refresh", { method: "POST" }), request("/v1/auth/access", { method: "GET" }),
+      request("/v1/auth/access/", { method: "POST" }), new Request(`${origin}/`, { method: "HEAD" }),
     ];
     for (const candidate of cases) {
       const response = await handleRequest(candidate, env);
@@ -133,7 +134,8 @@ describe("Cloudflare Access management gate", () => {
   it("enforces origin rules and strips Access credentials while preserving API session headers", async () => {
     const handleRequest = await loadHandler();
     let forwarded: Headers | undefined;
-    const { env } = environment((request) => { forwarded = request.headers; return Response.json({ ok: true }); });
+    let forwardedPath: string | undefined;
+    const { env } = environment((request) => { forwarded = request.headers; forwardedPath = new URL(request.url).pathname; return Response.json({ ok: true }); });
     const assertion = await token();
     const common = { "Cf-Access-Jwt-Assertion": assertion, "Cf-Access-Authenticated-User-Email": administrator, "Cf-Access-Client-Id": "id", "Cf-Access-Client-Secret": "secret", Cookie: "CF_Authorization=x; dst_refresh=r; __Host-dst_manager_gate=old", Authorization: "Bearer app-token", "X-CSRF-Token": "csrf", "CF-Connecting-IP": "192.0.2.1" };
     expect((await handleRequest(request("/v1/auth/logout", { method: "POST", headers: { ...common, Origin: "https://attacker.example.test" } }), env)).status).toBe(403);
@@ -149,6 +151,10 @@ describe("Cloudflare Access management gate", () => {
     expect(forwarded?.get("Cookie")).toContain("dst_refresh=r");
     expect(forwarded?.get("Cookie")).not.toContain("CF_Authorization");
     expect(forwarded?.get("Cookie")).not.toContain("__Host-dst_manager_gate");
+    const accessResponse = await handleRequest(request("/v1/auth/access", { method: "POST", headers: { "Cf-Access-Jwt-Assertion": assertion, Origin: origin } }), env);
+    expect(accessResponse.status).toBe(200);
+    expect(forwardedPath).toBe("/v1/auth/access");
+    expect(forwarded?.get("Cf-Access-Jwt-Assertion")).toBe(assertion);
   });
 
   it("rejects when the Access JWKS cannot be fetched without touching bindings", async () => {

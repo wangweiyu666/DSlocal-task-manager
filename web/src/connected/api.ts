@@ -13,6 +13,7 @@ type RequestOptions = RequestInit & { authenticated?: boolean; mutation?: boolea
 export class CloudApi {
   private session: SessionTokens | null = null;
   private refreshInFlight: Promise<SessionTokens> | null = null;
+  private initializeInFlight: Promise<SessionTokens> | null = null;
   private accessGate = false;
 
   setSession(session: SessionTokens | null): void { this.session = session; }
@@ -65,9 +66,29 @@ export class CloudApi {
     return session;
   }
 
+  async initializeSession(): Promise<SessionTokens> {
+    if (this.initializeInFlight) return this.initializeInFlight;
+    const operation = this.request<SessionTokens>("/v1/auth/access", { method: "POST", retry: false })
+      .catch((error: unknown) => {
+        // Only the explicitly local endpoint can fall back to the development login.
+        if (!this.accessGate && error instanceof CloudApiError && error.code === "ACCESS_UNAVAILABLE") return this.refresh();
+        throw error;
+      })
+      .then((session) => { this.session = session; return session; });
+    this.initializeInFlight = operation;
+    try { return await operation; }
+    finally { if (this.initializeInFlight === operation) this.initializeInFlight = null; }
+  }
+
   async refresh(): Promise<SessionTokens> {
     if (this.refreshInFlight) return this.refreshInFlight;
     const operation = this.request<SessionTokens>("/v1/auth/refresh", { method: "POST", retry: false })
+      .catch((error: unknown) => {
+        if (this.accessGate && error instanceof CloudApiError && ["UNAUTHENTICATED", "SESSION_EXPIRED", "SESSION_REPLAYED"].includes(error.code)) {
+          return this.request<SessionTokens>("/v1/auth/access", { method: "POST", retry: false });
+        }
+        throw error;
+      })
       .then((session) => {
         this.session = session;
         return session;

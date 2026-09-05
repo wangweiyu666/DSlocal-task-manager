@@ -20,7 +20,7 @@
 - 生产环境共三个账号：管理者、管理者控制的执行者测试账号、真实执行者账号。
 - 先用非敏感测试数据完成登录、邀请、权限隔离、断网同步、导出、计划删除、立即删除和恢复演练；通过后才录入真实任务。
 - 执行者 APK 公开发布到 GitHub Releases。按管理者授权，生产管理入口改为 `staging.rochelimit.me`，测试入口改为 `test.rochelimit.me`；旧生产私密主机名仍不得写入公开记录。
-- 两个管理入口均由 Cloudflare Access 保护整站，Web Worker 在返回 HTML、JS、CSS 或代理 API 前再次校验 Access JWT。应用内仍保留邮箱登录、`ADMIN_EMAIL` 白名单、空间角色授权和近期邮箱验证。
+- 两个管理入口均由 Cloudflare Access 保护整站，Web Worker 在返回 HTML、JS、CSS 或代理 API 前再次校验 Access JWT。网页通过 Access 后自动取得现有管理员账号的业务会话，不再重复邮箱登录；保留 `ADMIN_EMAIL` 白名单、空间角色授权及敏感操作的近期邮箱验证。
 - 不包含公开注册、应用商店、远程推送、端到端加密、多管理员或大陆 SLA。
 
 ## 受保护配置
@@ -32,7 +32,7 @@ GitHub Environment `cloud-staging` 保存 staging Cloudflare 凭据。`cloud-pro
 
 Production API Worker 另外保存 `AUTH_PEPPER`、`ADMIN_EMAIL`、`RESEND_API_KEY` 和 `ALLOWED_ORIGIN` secrets。本次迁移将 `ALLOWED_ORIGIN` 设为 `https://staging.rochelimit.me`；staging API 配置为 `https://test.rochelimit.me`。其余秘密值不得写入命令正文、文档或证据。两个 API 的域名、应用认证与限流保持不变，不添加 Access 浏览器门禁。
 
-两个 Web Worker 均配置 `ACCESS_TEAM_DOMAIN`（仅 `团队名.cloudflareaccess.com`）、`ACCESS_AUD`（各自应用的 64 位十六进制 audience）和 `MANAGEMENT_ADMIN_EMAIL` secrets。邮箱须与各自 API 的管理员白名单一致；两个应用 audience 必须不同，不能复用。旧 `MANAGEMENT_GATE_SECRET` 与 GitHub `PRODUCTION_ADMIN_HOST` 不再被代码或 CI 使用，可在迁移验收后按凭据清理流程移除。
+两个 Web Worker 均配置 `ACCESS_TEAM_DOMAIN`（仅 `团队名.cloudflareaccess.com`）、`ACCESS_AUD`（各自应用的 64 位十六进制 audience）和 `MANAGEMENT_ADMIN_EMAIL` secrets。邮箱须与各自 API 的管理员白名单一致；两个应用 audience 必须不同，不能复用。各 API Worker 同时配置与自己 Web 相同的 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD` secrets，以独立验证身份交换。旧 `MANAGEMENT_GATE_SECRET` 与 GitHub `PRODUCTION_ADMIN_HOST` 不再被代码或 CI 使用，可在迁移验收后按凭据清理流程移除。
 
 Access 使用两个独立的 self-hosted 应用，分别覆盖两个完整主机名（不限定路径）。仅允许现有管理员的精确邮箱，使用 One-time PIN；不要加入 Everyone、Bypass、通配邮箱域或面向 APK 的共享 service token。建议会话有效期 24 小时。首次开通 Zero Trust 的套餐与付款信息由账号所有者确认；免费方案不代表无需开通流程。
 
@@ -40,7 +40,11 @@ Access 使用两个独立的 self-hosted 应用，分别覆盖两个完整主机
 
 2026-09-05 账号所有者已完成 Zero Trust Free 开通，One-time PIN 已添加，两个管理主机名的独立 Access 应用均已创建，限制为各自现有管理员精确邮箱、24 小时会话，并启用 HTTP Only 和 Binding Cookie。管理者已明确批准先保护仍指向 staging 服务的 `staging.rochelimit.me`，再将其切换到 production。网页域名与 Worker 的实际部署状态以发布运行及验收记录为准，不能将创建 Access 应用视为 Worker 已部署。
 
-边缘先拦截未登录请求；Worker 使用固定 issuer 的 JWKS 验证 RS256 签名、audience、有效期、签发时间和管理员邮箱，拒绝伪造邮箱头、旧门禁 cookie 及其他主机名。配置缺失时 503，JWT 验证失败或公钥不可用时 403，均不触达静态资源或业务 API。两个环境关闭 workers.dev 与 preview URLs，所有资源经 Worker 执行且 `no-store`。网页退出在应用会话与本地缓存清理后导航到 Access logout；Access 与应用邮箱登录为两层身份验证。
+边缘先拦截未登录请求；Worker 使用固定 issuer 的 JWKS 验证 RS256 签名、audience、有效期、签发时间和管理员邮箱，拒绝伪造邮箱头、旧门禁 cookie 及其他主机名。配置缺失时 503，JWT 验证失败或公钥不可用时 403，均不触达静态资源或业务 API。两个环境关闭 workers.dev 与 preview URLs，所有资源经 Worker 执行且 `no-store`。网页退出在应用会话与本地缓存清理后导航到 Access logout。
+
+网页初始化调用 `POST /v1/auth/access`，仅此同源请求转发已验证的 Access JWT。API 再次验证固定 issuer、audience、时间和 `ADMIN_EMAIL`，只映射已有账号的活动 ADMIN 成员，不创建账号或提升角色；删除恢复期账号只能进入既有恢复流程，业务冻结规则继续执行。交换保留业务 Bearer、HttpOnly refresh cookie、CSRF 与认证限流，不把 Access 登录视为敏感操作验证。Android 仍使用原有邮箱登录；仅 local 环境回退到网页邮箱登录，正式环境交换失败显示重试/退出入口。
+
+部署此单次登录变更前，先为 staging API 配置对应 Access secrets，完成测试环境真实管理员自动进入验证；再为 production API 配置其独立 audience 并发布同一 SHA。CI 在 migration 前检查这些 secret 名称。回退 API 与 Web 到兼容版本时保留 Access 配置和边缘策略，不降低门禁。
 
 ## 本次域名与 Access 迁移顺序
 
@@ -70,10 +74,10 @@ Access 使用两个独立的 self-hosted 应用，分别覆盖两个完整主机
 第一门通过后，汇报固定 commit、测试结果、staging deployment、恢复 artifact 和剩余风险。只有管理者再次明确确认后才执行：
 
 1. 创建 `dstationery-deletion-ledger-production`，写入 production 账本 ID并重新运行两个环境 guard。
-2. 配置受 Access 保护的管理员主机名、生产邮件域、四个 API Worker secrets，以及 Web Worker 的 Access issuer、独立 audience 和单一管理者邮箱。
+2. 配置受 Access 保护的管理员主机名、生产邮件域、API Worker 业务 secrets 与 Access issuer/audience，以及 Web Worker 的 Access issuer、独立 audience 和单一管理者邮箱。
 3. 在 GitHub `cloud-production` 环境启用人工批准并配置受保护值。
 4. 手动运行 `Cloud Connected`，target 选择 `production`，`production_confirmation` 输入 `DEPLOY_PRODUCTION`，`release_commit` 输入已通过 staging 的完整 commit SHA。
-5. 验证管理端未登录不能读取任何静态资源或代理 API、非白名单身份不能进入、管理者完成 Access 和应用登录后可进入且退出会离开 Access 会话，并确认管理者 Web 和执行者 Android 均只连接 production。
+5. 验证管理端未登录不能读取任何静态资源或代理 API、非白名单身份不能进入、管理者完成 Access 后自动进入工作台且退出会离开 Access 会话，并确认管理者 Web 和执行者 Android 均只连接 production。
 
 Production migration 前记录 D1 bookmark 和当前 Worker version。故障先回滚 Worker 固定版本；若兼容 migration 仍有问题，再按 bookmark 执行 Time Travel。恢复主库后必须等待删除账本重放完毕再开放写入。
 

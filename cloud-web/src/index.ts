@@ -84,9 +84,14 @@ async function proxyApi(request: Request, env: Env, url: URL, gate: string): Pro
   headers.set("Origin", url.origin);
   headers.set("X-Forwarded-Host", url.host);
   for (const name of ["Cf-Access-Jwt-Assertion", "Cf-Access-Authenticated-User-Email", "Cf-Access-Client-Id", "Cf-Access-Client-Secret"]) headers.delete(name);
+  // Forward the verified assertion only to the identity exchange; the API verifies it
+  // independently against its own environment's issuer, audience and administrator.
+  if (gate === "access" && request.method === "POST" && url.pathname === "/v1/auth/access") {
+    headers.set("Cf-Access-Jwt-Assertion", request.headers.get("Cf-Access-Jwt-Assertion")!);
+  }
   headers.set("Cookie", (headers.get("Cookie") ?? "").split(";")
     .filter((part) => !["CF_Authorization", "__Host-dst_manager_gate"].includes(part.trim().split("=")[0])).join(";"));
-  // Access admits the browser; the API still authenticates and authorizes its own account/session.
+  // All other API routes continue to require their normal account/session authorization.
   return protectResponse(await env.API.fetch(new Request(request, { headers })), gate);
 }
 

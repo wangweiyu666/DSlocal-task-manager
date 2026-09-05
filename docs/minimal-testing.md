@@ -65,6 +65,8 @@ npm --prefix web run build:all
 
 远程部署后分别运行 `node cloud-web/scripts/verify-access.mjs test.rochelimit.me` 和 `node cloud-web/scripts/verify-access.mjs staging.rochelimit.me`，验证匿名访问页面、资源与代理 API 都跳转 Access。此检查只证明边缘拦截；还须记录管理员登录成功、非管理员拒绝、两个网站各自连接正确环境，以及直接 API 仍使用应用认证的结果。本次没有 Android 代码/地址修改，不因网页门禁重复本地完整 Android 测试；若 CI 执行完整 Android 测试，则仍按下节交付 APK。
 
+网页单次 Access 登录追加最小覆盖：API 用真实 RSA/JWKS 验证身份交换成功、无效/跨环境令牌、同源约束、账号和成员状态、同身份会话复用、CSRF 及敏感操作未自动授权；Web 覆盖自动交换、仅 local 回退和 Access 失败不回退；代理只向精确交换路径转发 JWT。身份会话与数据库授权发生变化时运行 Cloud 全套和既有 HTTP smoke，网页运行完整测试与构建，远程验证两个环境通过 Access 后直接进入工作台及匿名 API 拒绝。Android 源码未变，不重复本地完整测试。
+
 ## 完整 Android 测试后的 Debug APK
 
 API 入口限流及 Android 重试修改的最小追加验证为 `cloud/tests/request-guard.test.ts`（4 条）和 `CloudApiRateLimitTest`（3 条）。检查超限与缺凭据时不访问数据库、伪造客户端标识不豁免限流，以及客户端等待期间不再次联网；部署前再运行本地 HTTP smoke，验证真实 binding 与原有登录/同步兼容。

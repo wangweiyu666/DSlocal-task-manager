@@ -1,4 +1,4 @@
-import { logout, refreshSession, requestChallenge, verifyChallenge } from "./auth";
+import { accessSession, logout, refreshSession, requestChallenge, verifyChallenge } from "./auth";
 import { accountStatus, acknowledgePrivacy, cancelDeletion, enforceDeletionLedger, exportData, requestDeletion, runMaintenance } from "./account";
 import { ApiError, assertOrigin, errorResponse, json, securityHeaders } from "./http";
 import { acceptInvitationById, createInvitation, createSpace, listInvitations, listMembers, removeMember } from "./spaces";
@@ -12,6 +12,7 @@ const exactRouteLabels = new Map<string, string>([
   ["/v1/auth/challenges", "/v1/auth/challenges"],
   ["/v1/auth/verify", "/v1/auth/verify"],
   ["/v1/auth/refresh", "/v1/auth/refresh"],
+  ["/v1/auth/access", "/v1/auth/access"],
   ["/v1/auth/logout", "/v1/auth/logout"],
   ["/v1/account", "/v1/account"],
   ["/v1/account/privacy-acknowledgements", "/v1/account/privacy-acknowledgements"],
@@ -55,6 +56,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/v1/auth/challenges") return requestChallenge(env, request);
   if (request.method === "POST" && url.pathname === "/v1/auth/verify") return verifyChallenge(env, request);
   if (request.method === "POST" && url.pathname === "/v1/auth/refresh") return refreshSession(env, request);
+  if (request.method === "POST" && url.pathname === "/v1/auth/access") return accessSession(env, request);
   if (request.method === "POST" && url.pathname === "/v1/auth/logout") return logout(env, request);
   if (request.method === "GET" && url.pathname === "/v1/account") return accountStatus(env, request);
   if (request.method === "POST" && url.pathname === "/v1/account/privacy-acknowledgements") return acknowledgePrivacy(env, request);

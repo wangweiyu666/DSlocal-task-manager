@@ -7,6 +7,8 @@ export interface Env {
   ALLOWED_ORIGIN: string;
   AUTH_PEPPER: string;
   ADMIN_EMAIL: string;
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   RESEND_API_KEY: string;
   RESEND_FROM: string;
 }

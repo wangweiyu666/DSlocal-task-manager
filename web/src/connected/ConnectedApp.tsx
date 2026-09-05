@@ -17,7 +17,7 @@ import { pullChanges, queueCommand, synchronize, uuidV7 } from "./sync";
 import { useOutboxSync } from "./useOutboxSync";
 import type { Bootstrap, CloudEntity, ConflictRecord, MembershipBootstrap, SpaceMember, SyncCommand, SyncMeta } from "./types";
 
-type AuthState = "restoring" | "email" | "code" | "privacy" | "deletion-pending" | "create-space" | "ready" | "wrong-role";
+type AuthState = "restoring" | "access-error" | "email" | "code" | "privacy" | "deletion-pending" | "create-space" | "ready" | "wrong-role";
 type Tab = "tasks" | "groups" | "results" | "settings";
 type SettingsSection = "general" | "notifications" | "audit";
 type AssignmentMode = "ALL" | "SELECTED";
@@ -32,7 +32,11 @@ function Login({ state, email, setEmail, code, setCode, busy, error, onEmail, on
   return <main className="connected-auth"><section className="connected-auth-card">
     <div className="connected-mark"><Cloud size={28} /></div><p className="eyebrow">DStationery 联网版</p><h1>管理员工作台</h1>
     <p className="supporting">任务在离线时也可编辑；恢复联网后按顺序同步。可携带偏好只保存在此浏览器。</p>
-    {state === "restoring" ? <div className="connected-restoring"><RefreshCw className="spin" />正在恢复安全会话…</div> : <>
+    {state === "restoring" ? <div className="connected-restoring"><RefreshCw className="spin" />正在恢复安全会话…</div> : state === "access-error" ? <>
+      <p className="connected-error">{error || "暂时无法进入工作台，请刷新重试。"}</p>
+      <button className="button primary" onClick={() => window.location.reload()}>重新进入</button>
+      <a className="button text" href="/cdn-cgi/access/logout">退出访问验证</a>
+    </> : <>
       <label className="field"><span>管理员邮箱</span><input type="email" value={email} disabled={state === "code" || busy} onChange={(event) => setEmail(event.target.value)} autoComplete="email" /></label>
       {state === "code" && <label className="field"><span>6 位验证码</span><input inputMode="numeric" maxLength={6} value={code} disabled={busy} onChange={(event) => setCode(event.target.value.replace(/\D/gu, ""))} autoComplete="one-time-code" /></label>}
       {error && <p className="connected-error">{error}</p>}
@@ -147,7 +151,11 @@ export default function ConnectedApp() {
   }, [selectBootstrap]);
 
   useEffect(() => {
-    void cloudApi.refresh().then(enterAccount).catch(() => setAuthState("email"));
+    void cloudApi.initializeSession().then(enterAccount).catch((value: unknown) => {
+      setError(value instanceof Error ? value.message : "暂时无法进入工作台");
+      const local = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+      setAuthState(local && !cloudApi.requiresAccessLogout() ? "email" : "access-error");
+    });
     const onlineHandler = () => { setOnline(true); };
     const offlineHandler = () => setOnline(false);
     window.addEventListener("online", onlineHandler); window.addEventListener("offline", offlineHandler);
@@ -248,7 +256,8 @@ export default function ConnectedApp() {
         if (spaceId) await purgeSpace(spaceId);
         cloudApi.setSession(null); setBootstrap(null); setMembership(null);
         setDeletionDueAt(result.executeAfter ?? null);
-        setAuthState(result.status === "PENDING" ? "deletion-pending" : "email");
+        setAuthState(result.status === "PENDING" ? "deletion-pending" : cloudApi.requiresAccessLogout() ? "access-error" : "email");
+        if (result.status !== "PENDING" && cloudApi.requiresAccessLogout()) window.location.assign("/cdn-cgi/access/logout");
       }
       setSensitiveAction(null); setSensitiveCode(""); setSensitiveChallengeId("");
     } catch (value) { setError(value instanceof Error ? value.message : "敏感操作失败"); }
@@ -429,7 +438,7 @@ export default function ConnectedApp() {
     if (!confirm("退出会清除此浏览器中的加密会话、空间缓存和未同步命令。确认继续？")) return;
     try { await cloudApi.logout(); } catch { /* local purge is still explicit user intent */ }
     if (spaceId) await purgeSpace(spaceId);
-    cloudApi.setSession(null); setBootstrap(null); setMembership(null); setAuthState("email");
+    cloudApi.setSession(null); setBootstrap(null); setMembership(null); setAuthState(cloudApi.requiresAccessLogout() ? "restoring" : "email");
     if (cloudApi.requiresAccessLogout()) window.location.assign("/cdn-cgi/access/logout");
   };
 
@@ -440,7 +449,7 @@ export default function ConnectedApp() {
   </nav>;
 
   if (authState === "privacy") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">首次使用</p><h1>联网版隐私说明</h1><p>任务、执行结果、成员邮箱和审计记录会保存到当前 Cloudflare 环境并按空间权限同步。服务不提供端到端加密；运营服务技术上可以读取任务内容。系统不接入产品分析、行为遥测或崩溃正文上传。</p><p>账号可先进入 30 天删除恢复期，也可经邮箱复验后立即从活动系统永久删除；供应商灾备副本会在其保留窗口届满后清除。</p>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy} onClick={() => void acknowledgePrivacy()}>{busy ? "请稍候…" : "我已了解并继续"}</button></section></main>;
-  if (authState === "deletion-pending") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">账号已冻结</p><h1>账号正在删除恢复期内</h1><p>{deletionDueAt ? `计划在 ${new Date(deletionDueAt).toLocaleString("zh-CN")} 永久删除。` : "账号不能读取、同步或产生新的业务数据。"} 本次登录已经重新验证邮箱，可以取消删除并恢复。</p>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy || cloudApi.getSession() === null} onClick={() => void cancelAccountDeletion()}>{busy ? "请稍候…" : "取消删除并恢复"}</button><button className="button text" onClick={() => { cloudApi.setSession(null); setAuthState("email"); }}>返回登录</button></section></main>;
+  if (authState === "deletion-pending") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">账号已冻结</p><h1>账号正在删除恢复期内</h1><p>{deletionDueAt ? `计划在 ${new Date(deletionDueAt).toLocaleString("zh-CN")} 永久删除。` : "账号不能读取、同步或产生新的业务数据。"} 完成身份验证后可以取消删除并恢复。</p>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy || cloudApi.getSession() === null} onClick={() => void cancelAccountDeletion()}>{busy ? "请稍候…" : "取消删除并恢复"}</button><button className="button text" onClick={() => void logout()}>退出登录</button></section></main>;
   if (authState === "create-space") return <main className="connected-auth"><section className="connected-auth-card"><Cloud size={42} /><p className="eyebrow">管理员初始化</p><h1>创建首个空间</h1><p>空间创建后才能邀请两个执行者账号。服务器会再次核对当前邮箱是否等于受保护的管理员白名单。</p><label className="field"><span>空间名称</span><input value={newSpaceName} maxLength={80} disabled={busy} onChange={(event) => setNewSpaceName(event.target.value)} autoFocus /></label>{error && <p className="connected-error">{error}</p>}<button className="button primary" disabled={busy || !newSpaceName.trim()} onClick={() => void createFirstSpace()}>{busy ? "正在创建…" : "创建并进入"}</button></section></main>;
   if (authState !== "ready" && authState !== "wrong-role") return <Login state={authState} email={email} setEmail={setEmail} code={code} setCode={setCode} busy={busy} error={error} onEmail={() => void sendChallenge()} onCode={() => void verify()} />;
   if (authState === "wrong-role") return <main className="connected-auth"><section className="connected-auth-card"><ShieldAlert size={42} /><p className="eyebrow">平台角色不匹配</p><h1>请在 Android 应用中执行任务</h1><p>此 Web 入口仅提供管理员功能；服务器仍以空间成员角色为权限依据。</p><button className="button tonal" onClick={() => void logout()}>退出账号</button></section></main>;

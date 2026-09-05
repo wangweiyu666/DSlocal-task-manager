@@ -1,6 +1,7 @@
 import { addSeconds, decryptReplay, encryptReplay, hmac, randomCode, randomToken, uuidV7 } from "./crypto";
 import { ApiError, json, readObject, requiredString } from "./http";
 import { sendCode } from "./mail";
+import { accessIdentity } from "./access";
 import type { Env, SessionPrincipal } from "./types";
 
 interface SessionBundle { accessToken: string; refreshToken: string; csrfToken: string; accessExpiresAt: string; }
@@ -72,14 +73,14 @@ export async function requestChallenge(env: Env, request: Request): Promise<Resp
   return json(env, request, { challengeId: id, accepted: true }, 202);
 }
 
-async function createSession(env: Env, accountId: string, now: string): Promise<SessionBundle & { sessionId: string }> {
+async function createSession(env: Env, accountId: string, now: string, sensitiveVerified = true): Promise<SessionBundle & { sessionId: string }> {
   const sessionId = uuidV7();
   const accessToken = randomToken();
   const refreshToken = randomToken();
   const csrfToken = randomToken(24);
   const accessExpiresAt = addSeconds(now, 900);
   await env.DB.prepare("INSERT INTO device_sessions(id,account_id,access_digest,refresh_digest,csrf_digest,created_at,last_seen_at,access_expires_at,idle_expires_at,absolute_expires_at,sensitive_verified_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-    .bind(sessionId, accountId, await digest(env, "access", accessToken), await digest(env, "refresh", refreshToken), await digest(env, "csrf", csrfToken), now, now, accessExpiresAt, addSeconds(now, 2_592_000), addSeconds(now, 7_776_000), now).run();
+    .bind(sessionId, accountId, await digest(env, "access", accessToken), await digest(env, "refresh", refreshToken), await digest(env, "csrf", csrfToken), now, now, accessExpiresAt, addSeconds(now, 2_592_000), addSeconds(now, 7_776_000), sensitiveVerified ? now : null).run();
   return { sessionId, accessToken, refreshToken, csrfToken, accessExpiresAt };
 }
 
@@ -117,6 +118,33 @@ export async function verifyChallenge(env: Env, request: Request): Promise<Respo
   }
   const bundle = await createSession(env, account.id, now);
   return sessionResponse(env, request, bundle);
+}
+
+export async function accessSession(env: Env, request: Request): Promise<Response> {
+  const email = await accessIdentity(env, request);
+  const account = await env.DB.prepare("SELECT a.id,a.status FROM accounts a JOIN memberships m ON m.account_id=a.id JOIN spaces s ON s.id=m.space_id WHERE a.email_normalized=? AND a.status IN ('ACTIVE','DELETION_PENDING') AND m.role='ADMIN' AND m.status='ACTIVE' AND s.status IN ('ACTIVE','DELETION_PENDING') LIMIT 1")
+    .bind(email).first<{ id: string; status: string }>();
+  if (!account) throw new ApiError(403, "ADMIN_REQUIRED", "当前身份没有可用的管理员空间");
+  // Reuse only a session belonging to the verified Access identity. Never grant a role or
+  // sensitive-action verification merely because the browser passed the outer gate.
+  const token = cookie(request, "dst_refresh");
+  // Pending accounts may enter the existing recovery screen, while business endpoints
+  // keep enforcing requireAccountReady and the space state. Deleted identities stay denied.
+  if (token && account.status === "ACTIVE") {
+    const tokenDigest = await digest(env, "refresh", token);
+    const existing = await env.DB.prepare("SELECT account_id FROM device_sessions WHERE refresh_digest=? OR previous_refresh_digest=?")
+      .bind(tokenDigest, tokenDigest).first<{ account_id: string }>();
+    if (existing?.account_id === account.id) {
+      try { return await rotateSession(env, request, token); }
+      catch (error) {
+        // An old cookie can still carry a deletion revocation after the account was
+        // restored elsewhere. The current account/role above and fresh Access proof
+        // authorize a new session; they never unfreeze a pending account or space.
+        if (!(error instanceof ApiError) || !["SESSION_EXPIRED", "SESSION_REPLAYED", "ACCOUNT_DELETION_PENDING", "SPACE_DELETION_PENDING"].includes(error.code)) throw error;
+      }
+    }
+  }
+  return sessionResponse(env, request, await createSession(env, account.id, nowIso(), false));
 }
 
 export async function refreshSession(env: Env, request: Request): Promise<Response> {

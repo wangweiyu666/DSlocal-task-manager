@@ -9,7 +9,7 @@
 | 组件 | 职责 | 存储与隔离 |
 | --- | --- | --- |
 | 联网 Android | 邮箱登录、邀请领取、空间任务、离线执行、同步和应用内通知 | 独立包名、签名、SQLCipher Room 与 Keystore 会话 |
-| 管理员 Web | 成员、任务库、积分组、发布、结果、冲突和审计 | 独立构建、应用层单邮箱门禁、IndexedDB 缓存与 outbox |
+| 管理员 Web | 成员、任务库、积分组、发布、结果、冲突和审计 | 独立构建、Cloudflare Access 管理员登录、IndexedDB 缓存与 outbox |
 | API Worker + D1 | 鉴权、授权、版本、同步、结果、通知、审计和生命周期 | local/staging/production 分 Worker、主库、删除账本库与密钥 |
 
 联网和离线构建共享协议、领域规则、任务编辑器和基础 UI。Android 共享 `DstNavigation`、`ProfileScreen`、`SettingsScreen` 和执行状态机；联网状态通过参数和回调显示，离线构建隐藏对应入口。账号、成员、同步和云数据库实现保留在 connected 源集。编译期隔离规则见[离线版指南](offline.md#共享实现规则)。
@@ -17,7 +17,7 @@
 ## 用户主流程
 
 ```text
-管理员邮箱登录 Web
+管理员通过 Cloudflare Access 验证后自动进入 Web
 → 创建空间并邀请一个或多个执行者
 → 发布给全部或指定执行者
 → 执行者登录 Android 后在账号邀请箱领取邀请
@@ -36,7 +36,7 @@
 - access token 有效期 15 分钟；refresh token 每次使用后轮换，设备会话闲置 30 天、最长 90 天。
 - 服务端只保存带密钥摘要。超出并发宽限后的 refresh token 重放会撤销设备会话。
 - Web refresh token 使用 `HttpOnly; Secure; SameSite=Strict` cookie；Android 使用 Keystore 保护。
-- production 管理端在返回任何应用资源或代理 API 前要求唯一管理者邮箱验证码；门禁会话最长 30 天并绑定浏览器，白名单外邮箱不会触发邮件。业务 API 仍独立执行管理员邮箱与空间角色授权。
+- 两个管理网页在返回资源或代理 API 前验证 Cloudflare Access 身份，会话设为 24 小时并绑定浏览器。网页通过 `/v1/auth/access` 自动换取现有管理员业务会话，无需第二次邮箱登录；API 独立校验 Access 签名、环境 audience、管理员邮箱及现有 ADMIN 成员，继续执行业务角色授权。
 - 临时网络或服务器故障保留账号、缓存和 outbox，允许继续离线使用；只有确认成员资格被撤销后才清除该空间业务数据。
 
 ## 隐私、导出与删除
@@ -134,7 +134,7 @@ Android 在同一个 API 客户端实例内，发送验证码至少间隔 60 秒
 
 - 每次空间查询必须同时约束 `space_id` 和对象 ID。
 - Web façade 校验精确 Origin 与 CSRF token；响应启用 CSP、HSTS、nosniff、严格 referrer policy 和 frame deny。
-- production Web 缺少门禁密钥时以 503 失败关闭；未验证请求只返回 `no-store` 的最小登录页。联网 Web 不注册 Service Worker，避免受保护静态资源被离线缓存绕过门禁。
+- 正式 Web 缺少 Access 配置时以 503 失败关闭；无效 JWT 返回 403，边缘匿名请求跳转 Cloudflare 登录。联网 Web 不注册 Service Worker，避免受保护静态资源被离线缓存绕过门禁。
 - 日志不得包含任务正文、完整邮箱、验证码、访问/刷新令牌、密钥或请求体。
 - 不提供端到端加密；运营服务技术上可读取任务内容，因此必须最小化日志和权限。
 - 不接入产品分析、行为遥测或崩溃正文上传。
@@ -153,7 +153,7 @@ Worker 结构日志只允许 `timestamp`、`level`、`event`、`environment`、`
 | staging | `api-staging.rochelimit.me` | `test.rochelimit.me`（Access） | `dstationery-staging` + `dstationery-deletion-ledger-staging`（APAC） |
 | production | `api.rochelimit.me` | `staging.rochelimit.me`（Access，名称历史遗留） | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
 
-此表是 Access 迁移后的目标配置，实际切换需按[生产运行手册](stage4-production-runbook.md#本次域名与-access-迁移顺序)完成云端配置与验收。local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。两个网页使用独立 Access 应用 audience，`ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`MANAGEMENT_ADMIN_EMAIL` 保存在 Worker secrets 中。Worker 验证签名、issuer、audience、有效期和精确邮箱；页面、资源和代理 API 均在验证之后返回。应用内邮箱登录、角色和敏感操作验证继续保留。直接 API 不加 Access，Android 地址、应用认证和限流保持不变。
+此表是 Access 迁移后的配置，按[生产运行手册](stage4-production-runbook.md#本次域名与-access-迁移顺序)完成云端配置与验收。local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。两个网页使用独立 Access 应用 audience，`ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`MANAGEMENT_ADMIN_EMAIL` 保存在 Web Worker secrets 中；API 保存对应的前两项，并使用既有 `ADMIN_EMAIL`。Worker 验证签名、issuer、audience、有效期和精确邮箱；页面、资源和代理 API 均在验证之后返回。Access 自动登录代替网页第二次邮箱验证，业务角色、隐私确认和敏感操作验证继续保留。直接 API 不加浏览器门禁，Android 地址、应用认证和限流保持不变。
 
 `cloud/scripts/guard-environment.mjs` 验证数据库隔离、环境 cron、限流命名空间、Access 开关、整站 Worker 检查、域名和 API 服务绑定，禁止 workers.dev/preview 旁路。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。旧 staging 域改作生产前，应先同步未上传的网页修改并关闭旧标签页；新测试源不能直接读取旧源的本地缓存，测试 D1 数据不会迁往生产。
 

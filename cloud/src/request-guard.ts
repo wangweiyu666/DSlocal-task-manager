@@ -1,7 +1,7 @@
 import { ApiError, assertOrigin } from "./http";
 import type { Env } from "./types";
 
-const publicAuthPaths = new Set(["/v1/auth/challenges", "/v1/auth/verify", "/v1/auth/refresh"]);
+const publicAuthPaths = new Set(["/v1/auth/challenges", "/v1/auth/verify", "/v1/auth/refresh", "/v1/auth/access"]);
 
 // Run before any D1 work. Credentials and client-supplied app IDs never bypass this limit.
 export async function guardRequest(env: Env, request: Request): Promise<void> {

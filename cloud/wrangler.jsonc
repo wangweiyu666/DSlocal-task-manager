@@ -49,7 +49,7 @@
         "ALLOWED_ORIGIN": "https://test.rochelimit.me",
         "RESEND_FROM": "DStationery Staging <no-reply@staging.notify.rochelimit.me>"
       },
-      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY"] },
+      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"] },
       "d1_databases": [{
         "binding": "DB",
         "database_name": "dstationery-staging",
@@ -78,7 +78,7 @@
         "ENVIRONMENT": "production",
         "RESEND_FROM": "DStationery <no-reply@notify.rochelimit.me>"
       },
-      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY", "ALLOWED_ORIGIN"] },
+      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY", "ALLOWED_ORIGIN", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"] },
       "d1_databases": [{
         "binding": "DB",
         "database_name": "dstationery-production",

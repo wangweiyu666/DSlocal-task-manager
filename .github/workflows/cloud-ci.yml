@@ -112,6 +112,16 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify staging API Access bindings
+        working-directory: cloud
+        run: |
+          secret_names="$(npx wrangler secret list --env staging | jq -r '.[].name')"
+          for required in ACCESS_TEAM_DOMAIN ACCESS_AUD; do
+            grep -qx "$required" <<< "$secret_names"
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply staging migrations by database name
         run: npx wrangler d1 migrations apply dstationery-staging --remote --env staging
         working-directory: cloud
@@ -260,7 +270,7 @@ jobs:
         working-directory: cloud
         run: |
           secret_names="$(npx wrangler secret list --env production | jq -r '.[].name')"
-          for required in AUTH_PEPPER ADMIN_EMAIL RESEND_API_KEY ALLOWED_ORIGIN; do
+          for required in AUTH_PEPPER ADMIN_EMAIL RESEND_API_KEY ALLOWED_ORIGIN ACCESS_TEAM_DOMAIN ACCESS_AUD; do
             grep -qx "$required" <<< "$secret_names"
           done
         env:
