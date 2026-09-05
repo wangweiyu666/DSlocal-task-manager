@@ -46,6 +46,8 @@ Access 使用两个独立的 self-hosted 应用，分别覆盖两个完整主机
 
 部署此单次登录变更前，先为 staging API 配置对应 Access secrets，完成测试环境真实管理员自动进入验证；再为 production API 配置其独立 audience 并发布同一 SHA。CI 在 migration 前检查这些 secret 名称。回退 API 与 Web 到兼容版本时保留 Access 配置和边缘策略，不降低门禁。
 
+早期联网版曾注册 `/sw.js`。仅停止生成 Service Worker 不会注销既有浏览器注册，旧缓存可能持续显示已移除的登录页。Web Worker 在 Access 校验后为 `/sw.js` 返回停用脚本：立即激活并接管旧注册，只删除 `dstationery-connected-` 前缀的静态缓存，然后注销；不接管 fetch、不清理 IndexedDB 或 outbox、不强制刷新正在编辑的页面。浏览器检查更新后，下次刷新取得最新工作台。验收需同时核对已登录旧浏览器与无会话请求，不能仅凭服务器发布成功判断旧页面已退出。
+
 ## 本次域名与 Access 迁移顺序
 
 以下是实施步骤，不代表云端已经完成迁移。完成后另行记录固定 SHA、运行结果和登录验收。

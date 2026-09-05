@@ -1,3 +1,4 @@
+import vm from "node:vm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 
@@ -64,7 +65,7 @@ describe("Cloudflare Access management gate", () => {
       new Request(`${origin}/`, { headers: { "Cf-Access-Authenticated-User-Email": administrator } }),
       new Request(`${origin}/`, { headers: { Cookie: "__Host-dst_manager_gate=old-cookie" } }),
       request("/__gate/challenge"), request("/assets/application.js"),
-      request("/v1/auth/refresh", { method: "POST" }), request("/v1/auth/access", { method: "GET" }),
+      request("/v1/auth/refresh", { method: "POST" }), request("/sw.js"), request("/v1/auth/access", { method: "GET" }),
       request("/v1/auth/access/", { method: "POST" }), new Request(`${origin}/`, { method: "HEAD" }),
     ];
     for (const candidate of cases) {
@@ -86,6 +87,45 @@ describe("Cloudflare Access management gate", () => {
     expect(asset.headers.get("Content-Security-Policy")).toContain("default-src 'self'");
     expect(api.headers.get("Cache-Control")).toContain("no-store");
     expect(counts()).toEqual({ assetRequests: 1, apiRequests: 1 });
+  });
+
+  it("serves a verified retirement service worker for GET/HEAD and unregisters only connected caches", async () => {
+    const handleRequest = await loadHandler();
+    const { env } = environment();
+    const assertion = await token();
+    const get = await handleRequest(request("/sw.js", { headers: { "Cf-Access-Jwt-Assertion": assertion } }), env);
+    expect(get.status).toBe(200);
+    expect(get.headers.get("Content-Type")).toContain("application/javascript");
+    expect(get.headers.get("Cache-Control")).toContain("no-store");
+    expect(get.headers.get("Service-Worker-Allowed")).toBe("/");
+    const head = await handleRequest(request("/sw.js", { method: "HEAD", headers: { "Cf-Access-Jwt-Assertion": assertion } }), env);
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+
+    const listeners = new Map<string, (event: { waitUntil: (promise: Promise<unknown>) => void }) => void>();
+    const skipWaiting = vi.fn(async () => {});
+    const claim = vi.fn(async () => {});
+    const unregister = vi.fn(async () => true);
+    const names = ["dstationery-connected-precache-v1", "dstationery-offline-precache-v1", "other-cache"];
+    const deleted: string[] = [];
+    const context = {
+      self: {
+        addEventListener: (name: string, listener: (event: { waitUntil: (promise: Promise<unknown>) => void }) => void) => listeners.set(name, listener),
+        skipWaiting, clients: { claim }, registration: { unregister },
+      },
+      caches: { keys: async () => names, delete: async (name: string) => { deleted.push(name); return true; } },
+    };
+    vm.runInNewContext(await get.text(), context);
+    expect(listeners.has("fetch")).toBe(false);
+    let install!: Promise<unknown>, activate!: Promise<unknown>;
+    listeners.get("install")!({ waitUntil: (promise) => { install = promise; } });
+    await install;
+    listeners.get("activate")!({ waitUntil: (promise) => { activate = promise; } });
+    await activate;
+    expect(skipWaiting).toHaveBeenCalledOnce();
+    expect(claim).toHaveBeenCalledOnce();
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(deleted).toEqual(["dstationery-connected-precache-v1"]);
   });
 
   it("rejects wrong audience, issuer, time, identity, missing claim, algorithm, and signature", async () => {

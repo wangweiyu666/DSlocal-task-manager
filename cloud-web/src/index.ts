@@ -12,6 +12,18 @@ interface Env {
 
 const keySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
+// Older connected builds registered /sw.js. Keep this retirement response available
+// so those browsers can stop serving an obsolete login shell from their precache.
+const retireConnectedWorker = `self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
+self.addEventListener("activate", event => event.waitUntil((async () => {
+  await self.clients.claim();
+  for (const name of await caches.keys()) {
+    if (name.startsWith("dstationery-connected-")) await caches.delete(name);
+  }
+  await self.registration.unregister();
+})()));
+`;
+
 function normalizeEmail(value: string): string | null {
   const normalized = value.trim().normalize("NFC").toLowerCase();
   return normalized.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : null;
@@ -105,6 +117,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return deny(request, 503, "misconfigured");
   }
   const gate = gated ? "access" : "local";
+  if (url.pathname === "/sw.js" && ["GET", "HEAD"].includes(request.method)) {
+    return protectResponse(new Response(request.method === "HEAD" ? null : retireConnectedWorker, {
+      headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" },
+    }), gate);
+  }
   if (url.pathname.startsWith("/__gate/")) return deny(request, 404, "retired");
   if (url.pathname.startsWith("/v1/") || url.pathname === "/health") return proxyApi(request, env, url, gate);
   return protectResponse(await env.ASSETS.fetch(request), gate);
