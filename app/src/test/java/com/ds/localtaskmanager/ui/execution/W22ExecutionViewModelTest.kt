@@ -65,6 +65,27 @@ class W22ExecutionViewModelTest {
         assertTrue(left)
     }
 
+    @Test
+    fun `successful completion requests connected synchronization`() = runTest(dispatcher) {
+        var synchronizationRequests = 0
+        val viewModel = ExecutionViewModel(
+            KEY,
+            FakeExecutionService(),
+            FakeRepository(),
+            FakeNoteService(),
+            onCompletionCommitted = { synchronizationRequests += 1 },
+        )
+        runCurrent()
+
+        viewModel.complete()
+        runCurrent()
+
+        assertEquals(1, synchronizationRequests)
+        viewModel.undoCompletion()
+        runCurrent()
+        assertEquals(2, synchronizationRequests)
+    }
+
     private class FakeNoteService : TaskNoteService {
         val saved = mutableListOf<String>()
         override suspend fun getNote(key: TaskInstanceKey): String = ""

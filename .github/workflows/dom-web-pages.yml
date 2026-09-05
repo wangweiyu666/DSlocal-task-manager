@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "web/**"
+      - "shared/**"
       - "docs/dst1-schema.json"
       - "protocol-test-vectors/**"
       - ".github/workflows/dom-web-pages.yml"
@@ -34,6 +35,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm test
+      - run: npm run verify:protocol
       - run: npm run build:offline
       - run: npm run build:connected
       - run: npm run verify:boundaries

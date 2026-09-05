@@ -14,6 +14,7 @@ import { connectedDb, purgeAllConnectedData, purgeSpace } from "./db";
 import { buildCloudTaskContent, editableFromCloudTask, unpackCloudTask } from "./library";
 import { presentExecutionResult } from "./results";
 import { pullChanges, queueCommand, synchronize, uuidV7 } from "./sync";
+import { useOutboxSync } from "./useOutboxSync";
 import type { Bootstrap, CloudEntity, ConflictRecord, MembershipBootstrap, SpaceMember, SyncCommand, SyncMeta } from "./types";
 
 type AuthState = "restoring" | "email" | "code" | "privacy" | "deletion-pending" | "create-space" | "ready" | "wrong-role";
@@ -52,7 +53,6 @@ export default function ConnectedApp() {
   const [tab, setTab] = useState<Tab>("tasks");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [online, setOnline] = useState(navigator.onLine);
-  const [syncing, setSyncing] = useState(false);
   const [editor, setEditor] = useState<TaskEditorState | null>(null);
   const [groupEditor, setGroupEditor] = useState<{ baseVersion: number; value: GroupRecord; conflictCommandId?: string } | null>(null);
   const [taskSearch, setTaskSearch] = useState("");
@@ -164,19 +164,18 @@ export default function ConnectedApp() {
     return () => window.removeEventListener("keydown", handler);
   }, [tab]);
 
-  const sync = useCallback(async () => {
-    if (!spaceId || !navigator.onLine || syncing) return;
-    setSyncing(true); setError("");
+  const runSync = useCallback(async () => {
+    if (!spaceId || !navigator.onLine) throw new Error("当前无法连接服务器");
+    setError("");
     try {
-      await synchronize(spaceId);
+      const result = await synchronize(spaceId);
       try { setSpaceMembers((await cloudApi.members(spaceId)).members); } catch { /* sync remains successful if the member list cannot refresh */ }
-      setNotice("同步完成");
+      setNotice(result.pending > 0 ? "仍有待同步内容，将稍后重试" : "同步完成");
+      return result.pending;
     }
-    catch (value) { setError(value instanceof Error ? value.message : "同步失败"); }
-    finally { setSyncing(false); }
-  }, [spaceId, syncing]);
-
-  useEffect(() => { if (online && authState === "ready" && outboxCount > 0) void sync(); }, [online, authState, outboxCount, sync]);
+    catch (value) { setError(value instanceof Error ? value.message : "同步失败"); throw value; }
+  }, [spaceId]);
+  const { syncing, synchronize: sync } = useOutboxSync(online && authState === "ready", outboxCount, runSync);
 
   const sendChallenge = async () => {
     setBusy(true); setError("");

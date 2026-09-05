@@ -16,6 +16,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +30,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ds.localtaskmanager.connected.ConnectedNotification
 import com.ds.localtaskmanager.connected.ConnectedRuntime
 import com.ds.localtaskmanager.connected.ConnectedState
@@ -55,6 +59,7 @@ internal fun ConnectivityContent(
     val runtime = remember(application) { ConnectedRuntime(application) }
     val state by runtime.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         val export = state as? ConnectedState.ExportReady
@@ -64,6 +69,13 @@ internal fun ConnectivityContent(
         if (export != null) runtime.leaveSensitiveAction()
     }
     LaunchedEffect(Unit) { runtime.restore() }
+    DisposableEffect(lifecycleOwner, runtime) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) runtime.synchronizeIfStale()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     when (val current = state) {
         ConnectedState.Restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         ConnectedState.SignedOut -> ConnectedLogin(runtime)
@@ -168,6 +180,7 @@ internal fun ConnectivityContent(
                 notifications = current.notifications.map(ConnectedNotification::toUi),
                 serviceMode = current.serviceMode,
             ),
+            onAutoSynchronize = runtime::synchronizeIfStale,
             onSynchronize = runtime::synchronize,
             onMarkNotificationsRead = runtime::markNotificationsRead,
             onLogout = runtime::logout,

@@ -51,6 +51,7 @@ class ExecutionViewModel(
     private val noteService: TaskNoteService,
     private val timer: TimerSessionController = TimerSessionController(service),
     private val reminderReconciler: ReminderReconciler? = null,
+    private val onCompletionCommitted: () -> Unit = {},
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ExecutionUiState())
     val state: StateFlow<ExecutionUiState> = mutableState.asStateFlow()
@@ -163,6 +164,7 @@ class ExecutionViewModel(
                     .ifBlank { "任务已完成" }
                 refreshNow()
                 mutableState.value = mutableState.value.copy(completionFeedback = message)
+                onCompletionCommitted()
             }.onFailure(::showError)
         }
     }
@@ -170,6 +172,7 @@ class ExecutionViewModel(
     fun undoCompletion() = perform {
         service.undoCompletion(key)
         reminderReconciler?.reconcileAll()
+        onCompletionCommitted()
     }
 
     fun clearCompletionFeedback() {
@@ -319,6 +322,7 @@ class ExecutionViewModelFactory(
     private val repository: TaskRepository,
     private val noteService: TaskNoteService,
     private val reminderReconciler: ReminderReconciler? = null,
+    private val onCompletionCommitted: () -> Unit = {},
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -329,6 +333,7 @@ class ExecutionViewModelFactory(
             repository,
             noteService,
             reminderReconciler = reminderReconciler,
+            onCompletionCommitted = onCompletionCommitted,
         ) as T
     }
 }

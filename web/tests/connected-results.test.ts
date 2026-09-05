@@ -7,6 +7,18 @@ function entity(entityType: string, entityId: string, payload: Record<string, un
 }
 
 describe("connected result presentation", () => {
+  it("shows an undo as pending without reusing the old information submission", () => {
+    const undo = entity("execution_event", "undo-1", {
+      assignmentId: "assignment-1", occurrenceKey: "occurrence-1", eventType: "COMPLETION_UNDONE",
+      occurredAt: "2026-09-05T01:01:00Z", data: { status: "PENDING" },
+    });
+    const submission = entity("information_submission", "submission-1", {
+      assignmentId: "assignment-1", occurrenceKey: "occurrence-1", content: "previous submission",
+    });
+    expect(presentExecutionResult(undo, [undo, submission], "Asia/Hong_Kong")).toMatchObject({
+      statusLabel: "待完成", eventLabel: "执行者撤销了任务完成状态", informationContent: null,
+    });
+  });
   const task = entity("task", "CloudTask0000001", {
     content: { v: 1, b: "CloudBatch00001", t: [{ i: "CloudTask0000001", n: "每日体温记录", r: 1, u: { k: 3 } }] },
   });

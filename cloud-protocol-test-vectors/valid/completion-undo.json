@@ -1,0 +1,17 @@
+{
+  "commands": [{
+    "commandId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331010",
+    "entityId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331011",
+    "baseVersion": 0,
+    "createdAt": "2026-09-05T01:01:00Z",
+    "type": "EXECUTION_EVENT",
+    "payload": {
+      "assignmentId": "0198f7b4-5b80-7a01-8ad2-7fe0c4331003",
+      "occurrenceKey": "CloudTask0000001:1:1:2026-09-05T00:00",
+      "taskRevision": 1,
+      "eventType": "COMPLETION_UNDONE",
+      "occurredAt": "2026-09-05T01:01:00Z",
+      "data": { "status": "PENDING", "localOccurrenceKey": "once", "taskName": "测试", "taskDate": "2026-09-05", "executionKind": "NORMAL" }
+    }
+  }]
+}

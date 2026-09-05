@@ -93,7 +93,7 @@ interface ConnectedSyncDao {
     @Query("DELETE FROM cloud_entity WHERE key = :key") suspend fun deleteEntity(key: String)
     @Query("DELETE FROM cloud_entity WHERE spaceId = :spaceId") suspend fun clearEntities(spaceId: String)
 
-    @Query("SELECT * FROM cloud_outbox WHERE spaceId = :spaceId ORDER BY queuedAt") suspend fun outbox(spaceId: String): List<CloudOutboxEntity>
+    @Query("SELECT * FROM cloud_outbox WHERE spaceId = :spaceId ORDER BY queuedAt, rowid") suspend fun outbox(spaceId: String): List<CloudOutboxEntity>
     @Query("SELECT COUNT(*) FROM cloud_outbox WHERE spaceId = :spaceId") fun observeOutboxCount(spaceId: String): Flow<Int>
     @Query("SELECT (SELECT COUNT(*) FROM cloud_outbox WHERE semanticKey = :semanticKey) + (SELECT COUNT(*) FROM cloud_sent_semantic WHERE semanticKey = :semanticKey)") suspend fun hasSemanticKey(semanticKey: String): Int
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun enqueue(value: CloudOutboxEntity): Long

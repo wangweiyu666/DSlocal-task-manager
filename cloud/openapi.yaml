@@ -315,7 +315,14 @@ components:
         type:
           type: string
           enum: [GROUP_UPSERT, GROUP_ARCHIVE, SPACE_TIMEZONE_UPDATE, TASK_PUBLISH, TASK_UPDATE, TASK_CANCEL, TASK_ARCHIVE, TASK_RESTORE, OCCURRENCE_UPSERT, EXECUTION_EVENT, INFORMATION_SUBMISSION, RESULT_SELECT, NOTIFICATION_READ]
-        payload: { type: object }
+        payload:
+          type: object
+          description: >-
+            EXECUTION_EVENT supports COMPLETION_UNDONE with assignmentId, occurrenceKey,
+            taskRevision, occurredAt and data.status (PENDING, NOT_STARTED or MISSED).
+            Undo preserves execution history and updates the automatic result selection;
+            delayed older events do not override newer results or explicit administrator choices.
+            TASK_PUBLISH, TASK_UPDATE and TASK_RESTORE content must pass the complete shared DST1 schema and semantic validation.
     SpaceMember:
       type: object
       additionalProperties: false

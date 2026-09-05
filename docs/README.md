@@ -11,6 +11,7 @@
 | DST1/DST1.1 字段和严格校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
 | DSTB1 文件格式和测试向量 | [DSTB1 格式](dstb1-format.md) |
 | Android API 26/33/35 与截图测试 | [模拟器测试环境](android-emulator-testing.md) |
+| 日常最小回归、测试去重与扩大验证条件 | [最小测试方案](minimal-testing.md) |
 | Windows PowerShell、Node 与用户 PATH 解析 | [Windows 命令行工具](windows-tooling.md) |
 
 ## 构建职责
@@ -42,7 +43,7 @@
 | 业务语义 | `preview.md`、对应主指南和测试 |
 | DST1/DSTB1 | Schema/格式、测试向量、双端解析器测试 |
 | Room/D1 | migration、导出 Schema、数据保留或恢复测试 |
-| 共享 UI/领域逻辑 | 离线和联网双变体测试 |
+| 共享 UI/领域逻辑 | 按[最小测试方案](minimal-testing.md)选择日常回归；提交时保留离线和联网双变体验证 |
 | 构建与部署 | 对应主指南和 GitHub 工作流 |
 
 文档中不记录密钥、验证码、令牌、完整私人邮箱、任务正文或可复用的恢复凭据。

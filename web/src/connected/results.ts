@@ -52,6 +52,7 @@ function dateTimeLabel(value: unknown, timeZone: string): string {
 }
 
 const statusLabels: Record<string, string> = {
+  NOT_STARTED: "未开始",
   COMPLETED: "已完成",
   MISSED: "未完成",
   PENDING: "待完成",
@@ -59,6 +60,7 @@ const statusLabels: Record<string, string> = {
 };
 
 const eventLabels: Record<string, string> = {
+  COMPLETION_UNDONE: "执行者撤销了任务完成状态",
   RESULT_SUBMITTED: "执行者提交了任务结果",
   COMPLETED: "执行者完成了任务",
   CORRECTION: "执行者更正了任务结果",
@@ -90,7 +92,9 @@ export function presentExecutionResult(
     ? entities.filter((item) => item.entityType === "information_submission" && item.payload.occurrenceKey === occurrenceKey && item.payload.assignmentId === assignmentId)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
     : undefined;
-  const informationContent = nonEmptyString(data.informationContent) ?? nonEmptyString(separateSubmission?.payload.content);
+  const informationContent = eventType === "COMPLETION_UNDONE"
+    ? null
+    : nonEmptyString(data.informationContent) ?? nonEmptyString(separateSubmission?.payload.content);
   const reviewReason = nonEmptyString(result.payload.reviewReason);
 
   return {

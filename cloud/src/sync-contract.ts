@@ -1,4 +1,7 @@
 import { ApiError } from "./http";
+import validateSchema from "../../shared/protocol/schema-validator";
+import { validateDst1Batch } from "../../shared/protocol/validation";
+import type { SchemaValidator } from "../../shared/protocol/validation";
 
 export const COMMAND_TYPES = [
   "GROUP_UPSERT",
@@ -109,6 +112,8 @@ export function assertDst11Content(value: unknown): Record<string, unknown> {
   if (content.sv === undefined && content.e !== undefined) {
     throw new ApiError(400, "INVALID_REQUEST", "DST1 内容不能包含单日例外数组");
   }
+  try { validateDst1Batch(content, validateSchema as SchemaValidator); }
+  catch { throw new ApiError(400, "INVALID_REQUEST", "DST1 任务内容未通过完整协议校验"); }
   return content;
 }
 

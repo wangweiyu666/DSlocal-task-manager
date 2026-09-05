@@ -3,10 +3,10 @@ name: Cloud Connected
 on:
   push:
     branches: [main]
-    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", ".github/workflows/cloud-ci.yml"]
+    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", ".github/workflows/cloud-ci.yml"]
   pull_request:
     branches: [main]
-    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", ".github/workflows/cloud-ci.yml"]
+    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", ".github/workflows/cloud-ci.yml"]
   workflow_dispatch:
     inputs:
       target:

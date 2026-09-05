@@ -151,7 +151,8 @@ export async function flushOutbox(spaceId: string): Promise<{ accepted: number; 
   return { accepted, conflicts, pending: await connectedDb.outbox.where("spaceId").equals(spaceId).count() };
 }
 
-export async function synchronize(spaceId: string): Promise<void> {
-  await flushOutbox(spaceId);
+export async function synchronize(spaceId: string): Promise<{ accepted: number; conflicts: number; pending: number }> {
+  const result = await flushOutbox(spaceId);
   await pullChanges(spaceId);
+  return result;
 }

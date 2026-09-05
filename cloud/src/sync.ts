@@ -23,6 +23,9 @@ interface MembershipRow { id: string; role: "ADMIN" | "EXECUTOR"; space_id: stri
 type AssignmentMode = "ALL" | "SELECTED";
 interface TaskRow { id: string; current_revision: number; status: "ACTIVE" | "CANCELLED" | "ARCHIVED"; content_json: string; assignment_mode: AssignmentMode; }
 
+interface CommandEnv extends Env { writes: D1PreparedStatement[]; }
+function stage(env: CommandEnv, statements: D1PreparedStatement[]): void { env.writes.push(...statements); }
+
 const DAY = 86_400;
 const iso = () => new Date().toISOString();
 
@@ -59,13 +62,13 @@ function entityStatements(env: Env, spaceId: string, entityType: string, entityI
   ];
 }
 
-async function notification(env: Env, spaceId: string, role: "ADMIN" | "EXECUTOR", type: string, entityId: string, groupKey: string, payload: unknown, now: string, recipientMembershipId?: string): Promise<Record<string, unknown> | null> {
+async function notification(env: CommandEnv, spaceId: string, role: "ADMIN" | "EXECUTOR", type: string, entityId: string, groupKey: string, payload: unknown, now: string, recipientMembershipId?: string): Promise<Record<string, unknown> | null> {
   const recipients = recipientMembershipId
     ? await env.DB.prepare("SELECT id FROM memberships WHERE id=? AND space_id=? AND role=? AND status='ACTIVE'").bind(recipientMembershipId, spaceId, role).all<{ id: string }>()
     : await env.DB.prepare("SELECT id FROM memberships WHERE space_id=? AND role=? AND status='ACTIVE' ORDER BY joined_at,id").bind(spaceId, role).all<{ id: string }>();
   if (!recipients.results.length) return null;
   const values = recipients.results.map((recipient) => ({ id: uuidV7(), type, entityId, groupKey, payload, createdAt: now, recipientMembershipId: recipient.id }));
-  await env.DB.batch(values.flatMap((value) => [
+  stage(env, values.flatMap((value) => [
     env.DB.prepare("INSERT INTO notifications(id,space_id,recipient_membership_id,type,entity_id,payload_json,created_at,group_key,payload_version) VALUES (?,?,?,?,?,?,?, ?,1)")
       .bind(value.id, spaceId, value.recipientMembershipId, type, entityId, JSON.stringify(payload), now, groupKey),
     ...entityStatements(env, spaceId, "notification", value.id, 1, { ...value, readAt: null }, now),
@@ -77,18 +80,23 @@ function occurrenceStorageKey(assignmentId: string, occurrenceKey: string): stri
   return `${assignmentId}:${occurrenceKey}`;
 }
 
-async function audit(env: Env, principal: SessionPrincipal, memberId: string, spaceId: string, eventType: string, entityType: string, entityId: string, metadata: unknown, request: Request, now: string): Promise<void> {
-  await env.DB.prepare("INSERT INTO audit_events(id,space_id,actor_account_id,actor_membership_id,event_type,entity_type,entity_id,safe_metadata_json,request_id,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-    .bind(uuidV7(), spaceId, principal.accountId, memberId, eventType, entityType, entityId, JSON.stringify(metadata), requestId(request), now).run();
+async function audit(env: CommandEnv, principal: SessionPrincipal, memberId: string, spaceId: string, eventType: string, entityType: string, entityId: string, metadata: unknown, request: Request, now: string): Promise<void> {
+  stage(env, [env.DB.prepare("INSERT INTO audit_events(id,space_id,actor_account_id,actor_membership_id,event_type,entity_type,entity_id,safe_metadata_json,request_id,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .bind(uuidV7(), spaceId, principal.accountId, memberId, eventType, entityType, entityId, JSON.stringify(metadata), requestId(request), now)]);
 }
 
-async function storeReceipt(env: Env, principal: SessionPrincipal, spaceId: string, hash: string, result: CommandResult): Promise<void> {
+function receiptStatement(env: Env, principal: SessionPrincipal, spaceId: string, hash: string, result: CommandResult): D1PreparedStatement {
   const createdAt = iso();
-  await env.DB.prepare("INSERT INTO command_receipts(command_id,space_id,session_id,payload_hash,status,response_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(result.commandId, spaceId, principal.sessionId, hash, receiptStatus(result), JSON.stringify(result), createdAt, addSeconds(createdAt, 90 * DAY)).run();
+  return env.DB.prepare("INSERT INTO command_receipts(command_id,space_id,session_id,payload_hash,status,response_json,created_at,expires_at) SELECT ?,?,?,?,?,CASE WHEN ?='accepted' THEN json_set(?, '$.changeSequence', current_sequence) ELSE ? END,?,? FROM spaces WHERE id=?")
+    .bind(result.commandId, spaceId, principal.sessionId, hash, receiptStatus(result), result.status, JSON.stringify(result), JSON.stringify(result), createdAt, addSeconds(createdAt, 90 * DAY), spaceId);
 }
 
-async function executeGroup(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+function replayReceipt(commandId: string, original: CommandResult): CommandResult {
+  // A duplicate delivery must not turn a previously rejected/conflicting write into success.
+  return { ...original, commandId, status: original.status === "accepted" ? "duplicate" : original.status };
+}
+
+async function executeGroup(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const now = iso();
   const payload = strictObject(command.payload, command.type === "GROUP_UPSERT" ? ["content"] : [], "payload");
   const existing = await env.DB.prepare("SELECT current_revision,status FROM task_groups WHERE id=? AND space_id=?").bind(command.entityId, spaceId).first<{ current_revision: number; status: string }>();
@@ -96,7 +104,7 @@ async function executeGroup(env: Env, request: Request, principal: SessionPrinci
     if (!existing) throw new ApiError(404, "NOT_FOUND", "任务组不存在");
     if (existing.current_revision !== command.baseVersion) throw new ApiError(409, "TASK_VERSION_CONFLICT", "任务组版本冲突");
     const value = { id: command.entityId, version: existing.current_revision, status: "ARCHIVED" };
-    await env.DB.batch([
+    stage(env, [
       env.DB.prepare("UPDATE task_groups SET status='ARCHIVED',updated_at=? WHERE id=? AND space_id=? AND current_revision=?").bind(now, command.entityId, spaceId, command.baseVersion),
       ...entityStatements(env, spaceId, "task_group", command.entityId, existing.current_revision, value, now),
     ]);
@@ -110,7 +118,7 @@ async function executeGroup(env: Env, request: Request, principal: SessionPrinci
   if ((existing?.current_revision ?? 0) !== command.baseVersion) throw new ApiError(409, "TASK_VERSION_CONFLICT", "任务组版本冲突");
   const contentJson = stable(content);
   const value = { id: command.entityId, version, status: "ACTIVE", content };
-  await env.DB.batch([
+  stage(env, [
     existing
       ? env.DB.prepare("UPDATE task_groups SET current_revision=?,status='ACTIVE',updated_at=? WHERE id=? AND space_id=? AND current_revision=?").bind(version, now, command.entityId, spaceId, command.baseVersion)
       : env.DB.prepare("INSERT INTO task_groups(id,space_id,current_revision,status,created_at,updated_at) VALUES (?,?,1,'ACTIVE',?,?)").bind(command.entityId, spaceId, now, now),
@@ -122,7 +130,7 @@ async function executeGroup(env: Env, request: Request, principal: SessionPrinci
   return { commandId: command.commandId, status: "accepted", entityVersion: version, changeSequence: await currentSequence(env, spaceId) };
 }
 
-async function executeTimezone(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeTimezone(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const payload = strictObject(command.payload, ["timeZone", "effectiveAt"], "payload");
   const timeZone = stringField(payload, "timeZone", 80); assertTimeZone(timeZone);
   const effectiveAt = stringField(payload, "effectiveAt", 40);
@@ -132,7 +140,7 @@ async function executeTimezone(env: Env, request: Request, principal: SessionPri
   if (space.time_zone_version !== command.baseVersion) throw new ApiError(409, "TASK_VERSION_CONFLICT", "空间时区版本冲突");
   const version = space.time_zone_version + 1; const now = iso();
   const value = { timeZone, timeZoneVersion: version, effectiveAt };
-  await env.DB.batch([
+  stage(env, [
     env.DB.prepare("UPDATE spaces SET time_zone=?,time_zone_version=?,time_zone_changed_at=? WHERE id=? AND time_zone_version=?").bind(timeZone, version, effectiveAt, spaceId, command.baseVersion),
     ...entityStatements(env, spaceId, "space_timezone", spaceId, version, value, now),
   ]);
@@ -186,7 +194,7 @@ async function taskAssignments(env: Env, spaceId: string, taskId: string, revisi
   return { active, changes: [...active, ...cancelled] };
 }
 
-async function executeTask(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeTask(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const existing = await env.DB.prepare("SELECT t.id,t.current_revision,t.status,t.assignment_mode,r.content_json FROM tasks t JOIN task_revisions r ON r.task_id=t.id AND r.revision=t.current_revision WHERE t.id=? AND t.space_id=?").bind(command.entityId, spaceId).first<TaskRow>();
   const now = iso();
   if (command.type === "TASK_CANCEL" || command.type === "TASK_ARCHIVE") {
@@ -202,7 +210,7 @@ async function executeTask(env: Env, request: Request, principal: SessionPrincip
       ...entityStatements(env, spaceId, "task", command.entityId, existing.current_revision, value, now),
     ];
     assigned.results.forEach((assignment) => statements.push(...entityStatements(env, spaceId, "assignment", assignment.id, existing.current_revision, { id: assignment.id, taskId: command.entityId, executorMembershipId: assignment.executor_membership_id, assignedRevision: existing.current_revision, status }, now)));
-    await env.DB.batch(statements);
+    stage(env, statements);
     let note: Record<string, unknown> | null = null;
     for (const assignment of assigned.results) {
       const delivered = await notification(env, spaceId, "EXECUTOR", `TASK_${status}`, command.entityId, command.entityId, value, now, assignment.executor_membership_id);
@@ -242,7 +250,7 @@ async function executeTask(env: Env, request: Request, principal: SessionPrincip
   statements.push(...assignmentPlan.changes.map((item) => item.statement));
   statements.push(...entityStatements(env, spaceId, "task", command.entityId, version, value, now));
   assignmentPlan.changes.forEach((assignment) => statements.push(...entityStatements(env, spaceId, "assignment", assignment.value.id, version, { ...assignment.value, taskId: command.entityId, assignedRevision: version }, now)));
-  await env.DB.batch(statements);
+  stage(env, statements);
   let note: Record<string, unknown> | null = null;
   for (const assignment of assignments) {
     const delivered = await notification(env, spaceId, "EXECUTOR", existing ? "TASK_UPDATED" : "TASK_CREATED", command.entityId, command.entityId, { version }, now, assignment.value.executorMembershipId);
@@ -252,7 +260,7 @@ async function executeTask(env: Env, request: Request, principal: SessionPrincip
   return { commandId: command.commandId, status: "accepted", entityVersion: version, changeSequence: await currentSequence(env, spaceId), details: { assignmentId: assignments[0]?.value.id ?? null, assignmentIds: assignments.map((item) => item.value.id), assignments: assignments.map((item) => item.value), notificationId: note?.id ?? null } };
 }
 
-async function executeOccurrence(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeOccurrence(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const payload = strictObject(command.payload, ["taskId", "assignmentId", "occurrenceKey", "localDate", "scheduledAt", "taskRevision", "timeZoneVersion"], "payload");
   const taskId = stringField(payload, "taskId", 64); const assignmentId = stringField(payload, "assignmentId", 64);
   const occurrenceKey = stringField(payload, "occurrenceKey", 160); const taskRevision = integerField(payload, "taskRevision", 1); const timeZoneVersion = integerField(payload, "timeZoneVersion", 1);
@@ -267,7 +275,7 @@ async function executeOccurrence(env: Env, request: Request, principal: SessionP
   if (existing) return { commandId: command.commandId, status: "accepted", entityVersion: 1, changeSequence: await currentSequence(env, spaceId) };
   const now = iso();
   const value = { occurrenceKey, taskId, assignmentId, taskRevision, timeZoneVersion, localDate, scheduledAt, status: assignment.status === "ACTIVE" ? "OPEN" : "CANCELLED", generatedBy: "CLIENT" };
-  await env.DB.batch([
+  stage(env, [
     env.DB.prepare("INSERT INTO task_occurrences(occurrence_key,space_id,assignment_id,task_id,task_revision,time_zone_version,local_date,scheduled_at,status,generated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,'CLIENT',?,?)")
       .bind(storageKey, spaceId, assignmentId, taskId, taskRevision, timeZoneVersion, localDate, scheduledAt, value.status, now, now),
     ...entityStatements(env, spaceId, "occurrence", storageKey, 1, value, now),
@@ -276,7 +284,7 @@ async function executeOccurrence(env: Env, request: Request, principal: SessionP
   return { commandId: command.commandId, status: "accepted", entityVersion: 1, changeSequence: await currentSequence(env, spaceId) };
 }
 
-async function executeEvent(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeEvent(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const payload = strictObject(command.payload, ["assignmentId", "occurrenceKey", "taskRevision", "eventType", "data", "occurredAt"], "payload");
   const assignmentId = stringField(payload, "assignmentId", 64); const occurrenceKey = stringField(payload, "occurrenceKey", 160);
   const taskRevision = integerField(payload, "taskRevision", 1); const eventType = stringField(payload, "eventType", 64); const occurredAt = stringField(payload, "occurredAt", 40);
@@ -288,27 +296,41 @@ async function executeEvent(env: Env, request: Request, principal: SessionPrinci
   const staleTimeZone = Number(occurrence.time_zone_version) !== Number(occurrence.current_time_zone_version);
   const reviewReason = occurrence.task_status === "CANCELLED" || occurrence.assignment_status === "CANCELLED" ? "CANCELLED_AFTER_SEEN" : Number(occurrence.current_revision) !== taskRevision || staleTimeZone ? "STALE_REVISION" : null;
   const storedOccurrenceKey = String(occurrence.storage_occurrence_key);
-  const selected = await env.DB.prepare("SELECT execution_event_id FROM result_selections WHERE space_id=? AND assignment_id=? AND occurrence_key=? ORDER BY created_at DESC LIMIT 1").bind(spaceId, assignmentId, storedOccurrenceKey).first<{ execution_event_id: string }>();
+  const selected = await env.DB.prepare("SELECT r.execution_event_id,r.selected_by_membership_id,e.event_type,e.occurred_at FROM result_selections r JOIN execution_events e ON e.id=r.execution_event_id WHERE r.space_id=? AND r.assignment_id=? AND r.occurrence_key=? ORDER BY r.created_at DESC,r.rowid DESC LIMIT 1")
+    .bind(spaceId, assignmentId, storedOccurrenceKey).first<{ execution_event_id: string; selected_by_membership_id: string; event_type: string; occurred_at: string }>();
   const terminal = new Set(["COMPLETED", "RESULT_SUBMITTED", "CORRECTION"]).has(eventType);
-  const duplicateOf = terminal && selected ? selected.execution_event_id : null; const now = iso();
+  const undo = eventType === "COMPLETION_UNDONE";
+  if (undo) {
+    const data = strictObject(payload.data, ["status", "localOccurrenceKey", "taskName", "taskDate", "executionKind"], "data");
+    if (!["PENDING", "NOT_STARTED", "MISSED"].includes(String(data.status))) throw new ApiError(400, "INVALID_REQUEST", "撤销完成后的状态无效");
+  }
+  const followsSelected = !selected || Date.parse(selected.occurred_at) <= Date.parse(occurredAt);
+  // Preserve explicit administrator choices and do not let delayed old events
+  // replace a newer result. A later completion can follow an accepted undo.
+  const selectAutomatically = undo
+    ? followsSelected && (!selected || selected.selected_by_membership_id === memberId)
+    : terminal && (!selected || (selected.event_type === "COMPLETION_UNDONE" && selected.selected_by_membership_id === memberId && followsSelected));
+  const duplicateOf = terminal && selected && !selectAutomatically ? selected.execution_event_id : null; const now = iso();
   const value = { id: command.entityId, assignmentId, occurrenceKey, taskRevision, eventType, data: payload.data ?? null, occurredAt, receivedAt: now, reviewReason, staleTimeZone, duplicateOf };
   const statements: D1PreparedStatement[] = [
     env.DB.prepare("INSERT INTO execution_events(id,space_id,assignment_id,executor_membership_id,task_revision,event_type,payload_json,review_reason,duplicate_of,occurred_at,received_at,occurrence_key,payload_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)")
       .bind(command.entityId, spaceId, assignmentId, memberId, taskRevision, eventType, payload.data === undefined ? null : JSON.stringify(payload.data), reviewReason, duplicateOf, occurredAt, now, storedOccurrenceKey),
     ...entityStatements(env, spaceId, "execution_event", command.entityId, 1, value, now),
   ];
-  if (terminal && !selected) {
+  if (selectAutomatically) {
     const selectionId = uuidV7();
-    statements.push(env.DB.prepare("INSERT INTO result_selections(id,space_id,assignment_id,execution_event_id,selected_by_membership_id,reason,created_at,occurrence_key) VALUES (?,?,?,?,?,'FIRST_VALID_RESULT',?,?)")
-      .bind(selectionId, spaceId, assignmentId, command.entityId, memberId, now, storedOccurrenceKey));
+    const reason = undo ? "COMPLETION_UNDONE" : "FIRST_VALID_RESULT";
+    statements.push(env.DB.prepare("INSERT INTO result_selections(id,space_id,assignment_id,execution_event_id,selected_by_membership_id,reason,created_at,occurrence_key) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(selectionId, spaceId, assignmentId, command.entityId, memberId, reason, now, storedOccurrenceKey));
+    statements.push(...entityStatements(env, spaceId, "result_selection", selectionId, 1, { id: selectionId, assignmentId, occurrenceKey, executionEventId: command.entityId, reason, selectedAt: now }, now));
   }
-  await env.DB.batch(statements);
-  const note = await notification(env, spaceId, "ADMIN", reviewReason ? "RESULT_NEEDS_REVIEW" : "RESULT_SUBMITTED", command.entityId, storageKey, { assignmentId, occurrenceKey, reviewReason, staleTimeZone, duplicateOf }, now);
+  stage(env, statements);
+  const note = await notification(env, spaceId, "ADMIN", reviewReason ? "RESULT_NEEDS_REVIEW" : undo ? "COMPLETION_UNDONE" : "RESULT_SUBMITTED", command.entityId, storageKey, { assignmentId, occurrenceKey, reviewReason, staleTimeZone, duplicateOf }, now);
   await audit(env, principal, memberId, spaceId, "EXECUTION_EVENT_CREATED", "execution_event", command.entityId, { eventType, reviewReason, duplicate: duplicateOf !== null }, request, now);
   return { commandId: command.commandId, status: "accepted", entityVersion: 1, changeSequence: await currentSequence(env, spaceId), details: { reviewReason, duplicateOf, notificationId: note?.id ?? null } };
 }
 
-async function executeInformationSubmission(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeInformationSubmission(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const payload = strictObject(command.payload, ["assignmentId", "occurrenceKey", "taskRevision", "content", "submittedAt"], "payload");
   const assignmentId = stringField(payload, "assignmentId", 64);
   const occurrenceKey = stringField(payload, "occurrenceKey", 160);
@@ -324,20 +346,20 @@ async function executeInformationSubmission(env: Env, request: Request, principa
   if (occurrence.task_revision !== taskRevision) throw new ApiError(409, "CONFLICT", "告知正文与任务版本不一致");
   const now = iso();
   const value = { id: command.entityId, assignmentId, occurrenceKey, taskRevision, content, submittedAt, receivedAt: now };
-  await env.DB.batch(entityStatements(env, spaceId, "information_submission", command.entityId, 1, value, now));
+  stage(env, entityStatements(env, spaceId, "information_submission", command.entityId, 1, value, now));
   const note = await notification(env, spaceId, "ADMIN", "INFORMATION_SUBMITTED", command.entityId, storageKey, { assignmentId, occurrenceKey, taskRevision }, now);
   await audit(env, principal, memberId, spaceId, "INFORMATION_SUBMITTED", "information_submission", command.entityId, { taskRevision, codePoints: Array.from(content).length }, request, now);
   return { commandId: command.commandId, status: "accepted", entityVersion: 1, changeSequence: await currentSequence(env, spaceId), details: note ? { notificationId: note.id } : undefined };
 }
 
-async function executeSelection(env: Env, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeSelection(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const payload = strictObject(command.payload, ["assignmentId", "occurrenceKey", "executionEventId", "reason"], "payload");
   const assignmentId = stringField(payload, "assignmentId", 64); const occurrenceKey = stringField(payload, "occurrenceKey", 160); const executionEventId = stringField(payload, "executionEventId", 64); const reason = stringField(payload, "reason", 200);
   const storageKey = occurrenceStorageKey(assignmentId, occurrenceKey);
   const event = await env.DB.prepare("SELECT e.id,e.occurrence_key,a.executor_membership_id FROM execution_events e JOIN assignments a ON a.id=e.assignment_id WHERE e.id=? AND e.space_id=? AND e.assignment_id=? AND e.occurrence_key IN (?,?)").bind(executionEventId, spaceId, assignmentId, storageKey, occurrenceKey).first<{ id: string; occurrence_key: string; executor_membership_id: string }>();
   if (!event) throw new ApiError(404, "NOT_FOUND", "候选结果不存在");
   const now = iso(); const value = { id: command.entityId, assignmentId, occurrenceKey, executionEventId, reason, selectedAt: now };
-  await env.DB.batch([
+  stage(env, [
     env.DB.prepare("INSERT INTO result_selections(id,space_id,assignment_id,execution_event_id,selected_by_membership_id,reason,created_at,occurrence_key) VALUES (?,?,?,?,?,?,?,?)")
       .bind(command.entityId, spaceId, assignmentId, executionEventId, memberId, reason, now, event.occurrence_key),
     ...entityStatements(env, spaceId, "result_selection", command.entityId, 1, value, now),
@@ -347,19 +369,19 @@ async function executeSelection(env: Env, request: Request, principal: SessionPr
   return { commandId: command.commandId, status: "accepted", entityVersion: 1, changeSequence: await currentSequence(env, spaceId), details: note ? { notificationId: note.id } : undefined };
 }
 
-async function executeNotificationRead(env: Env, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeNotificationRead(env: CommandEnv, memberId: string, spaceId: string, command: SyncCommand): Promise<CommandResult> {
   const payload = strictObject(command.payload, ["notificationIds"], "payload");
   if (!Array.isArray(payload.notificationIds) || payload.notificationIds.length < 1 || payload.notificationIds.length > 100 || payload.notificationIds.some((id) => typeof id !== "string")) throw new ApiError(400, "INVALID_REQUEST", "notificationIds 无效");
   const ids = payload.notificationIds as string[]; const now = iso();
   const owned = await env.DB.prepare(`SELECT id FROM notifications WHERE space_id=? AND recipient_membership_id=? AND id IN (${ids.map(() => "?").join(",")})`).bind(spaceId, memberId, ...ids).all<{ id: string }>();
   if (owned.results.length !== new Set(ids).size) throw new ApiError(403, "FORBIDDEN", "包含不属于当前成员的通知");
-  await env.DB.batch(ids.map((id) => env.DB.prepare("INSERT INTO notification_reads(notification_id,membership_id,read_at) VALUES (?,?,?) ON CONFLICT(notification_id,membership_id) DO UPDATE SET read_at=excluded.read_at").bind(id, memberId, now)));
+  stage(env, ids.map((id) => env.DB.prepare("INSERT INTO notification_reads(notification_id,membership_id,read_at) VALUES (?,?,?) ON CONFLICT(notification_id,membership_id) DO UPDATE SET read_at=excluded.read_at").bind(id, memberId, now)));
   const value = { membershipId: memberId, notificationIds: ids, readAt: now };
-  await env.DB.batch(entityStatements(env, spaceId, "notification_read", command.commandId, 1, value, now));
+  stage(env, entityStatements(env, spaceId, "notification_read", command.commandId, 1, value, now));
   return { commandId: command.commandId, status: "accepted", entityVersion: 1, changeSequence: await currentSequence(env, spaceId) };
 }
 
-async function executeOne(env: Env, request: Request, principal: SessionPrincipal, memberId: string, role: "ADMIN" | "EXECUTOR", spaceId: string, command: SyncCommand): Promise<CommandResult> {
+async function executeOne(env: CommandEnv, request: Request, principal: SessionPrincipal, memberId: string, role: "ADMIN" | "EXECUTOR", spaceId: string, command: SyncCommand): Promise<CommandResult> {
   if (["GROUP_UPSERT", "GROUP_ARCHIVE", "SPACE_TIMEZONE_UPDATE", "TASK_PUBLISH", "TASK_UPDATE", "TASK_CANCEL", "TASK_ARCHIVE", "TASK_RESTORE", "RESULT_SELECT"].includes(command.type) && role !== "ADMIN") throw new ApiError(403, "FORBIDDEN", "当前角色无权执行管理员命令");
   if (["OCCURRENCE_UPSERT", "EXECUTION_EVENT", "INFORMATION_SUBMISSION"].includes(command.type) && role !== "EXECUTOR") throw new ApiError(403, "FORBIDDEN", "当前角色无权执行任务命令");
   if (command.type === "GROUP_UPSERT" || command.type === "GROUP_ARCHIVE") return executeGroup(env, request, principal, memberId, spaceId, command);
@@ -401,14 +423,38 @@ export async function submitCommands(env: Env, request: Request, spaceId: string
         results.push({ commandId: command.commandId, status: "rejected", code: "IDEMPOTENCY_KEY_REUSED" });
       } else {
         const original = parseJson(prior.response_json) as unknown as CommandResult;
-        results.push({ ...original, status: "duplicate" });
+        results.push(replayReceipt(command.commandId, original));
       }
       continue;
     }
     let result: CommandResult;
-    try { result = await executeOne(env, request, principal, member.id, member.role as "ADMIN" | "EXECUTOR", spaceId, command); }
+    const commandEnv: CommandEnv = { ...env, writes: [] };
+    const sequence = await currentSequence(env, spaceId);
+    try { result = await executeOne(commandEnv, request, principal, member.id, member.role as "ADMIN" | "EXECUTOR", spaceId, command); }
     catch (error) { result = resultForError(command.commandId, error); }
-    if (result.status !== "retryable") await storeReceipt(env, principal, spaceId, hash, result);
+    if (result.status !== "retryable") {
+      try {
+        const statements = result.status === "accepted" ? [
+          // All reads used to plan this command precede the batch. Abort the entire
+          // batch if another writer changed the space before it acquires the write lock.
+          env.DB.prepare("INSERT INTO sync_write_guards(space_id,expected_sequence,actual_sequence) SELECT id,?,current_sequence FROM spaces WHERE id=?").bind(sequence, spaceId),
+          ...commandEnv.writes,
+        ] : [];
+        statements.push(receiptStatement(env, principal, spaceId, hash, result));
+        if (result.status === "accepted") statements.push(env.DB.prepare("DELETE FROM sync_write_guards WHERE space_id=?").bind(spaceId));
+        statements.push(env.DB.prepare("SELECT response_json FROM command_receipts WHERE command_id=? AND space_id=?").bind(command.commandId, spaceId));
+        const committed = await env.DB.batch<{ response_json: string }>(statements);
+        result = parseJson(committed[committed.length - 1].results[0].response_json) as unknown as CommandResult;
+      } catch (error) {
+        // A concurrent delivery may already have committed this exact command.
+        const committed = await env.DB.prepare("SELECT payload_hash,response_json FROM command_receipts WHERE command_id=? AND space_id=?").bind(command.commandId, spaceId).first<{ payload_hash: string; response_json: string }>();
+        result = committed
+          ? committed.payload_hash === hash
+            ? replayReceipt(command.commandId, parseJson(committed.response_json) as unknown as CommandResult)
+            : { commandId: command.commandId, status: "rejected", code: "IDEMPOTENCY_KEY_REUSED" }
+          : resultForError(command.commandId, error);
+      }
+    }
     results.push(result);
   }
   return json(env, request, { results }, 207);

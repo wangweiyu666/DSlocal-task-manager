@@ -7,13 +7,16 @@ import androidx.room.withTransaction
 import com.ds.localtaskmanager.DstApplication
 import com.ds.localtaskmanager.data.DuplicateBatchException
 import com.ds.localtaskmanager.data.TaskInstanceEntity
+import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.protocol.cloudOccurrenceKey
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -91,6 +94,8 @@ class ConnectedRuntime(
     private var readyBeforeSensitive: ConnectedState.Ready? = null
     private var autoSyncIntervalMillis: Long? = NOTIFICATION_POLL_INTERVAL_MILLIS
     private var serviceMode: String = "NORMAL"
+    private val synchronizationRequested = AtomicBoolean(false)
+    private val synchronizationWorkerActive = AtomicBoolean(false)
 
     init {
         val connectivity = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -200,25 +205,68 @@ class ConnectedRuntime(
     }
 
     fun synchronize() {
+        if (mutableState.value !is ConnectedState.Ready) return
+        synchronizationRequested.set(true)
+        startSynchronizationWorker()
+    }
+
+    fun synchronizeIfStale() {
+        val current = mutableState.value as? ConnectedState.Ready ?: return
+        if (current.syncing || !shouldRunAutomaticSync(current.lastSyncedAt)) return
+        synchronize()
+    }
+
+    private fun startSynchronizationWorker() {
+        if (!synchronizationWorkerActive.compareAndSet(false, true)) return
         val current = mutableState.value as? ConnectedState.Ready
-        if (current?.syncing == true) return
-        if (current != null) mutableState.value = current.copy(syncing = true)
-        scope.launchSessionOperation {
-            val session = dao.session() ?: run { mutableState.value = ConnectedState.SignedOut; return@launchSessionOperation }
-            runCatching {
-                withSessionRecovery(session) { synchronize(it) }
-            }
-                .onFailure { error ->
-                    if (isTerminalSessionFailure(error)) {
-                        purge(session.spaceId)
-                        mutableState.value = ConnectedState.SignedOut
-                    } else {
-                        val cached = cachedReady(session)
-                        mutableState.value = if (error is CloudApiException && error.retryable && cached != null) cached
-                        else ConnectedState.Failure(error.message ?: "同步失败", true)
+        if (current == null) {
+            synchronizationRequested.set(false)
+            synchronizationWorkerActive.set(false)
+            return
+        }
+        mutableState.value = current.copy(syncing = true)
+        scope.launch {
+            try {
+                while (synchronizationRequested.getAndSet(false)) {
+                    val successful = sessionOperationMutex.withLock { runSynchronization() }
+                    if (!successful || mutableState.value !is ConnectedState.Ready) {
+                        synchronizationRequested.set(false)
+                        break
                     }
                 }
+            } finally {
+                (mutableState.value as? ConnectedState.Ready)?.let { latest ->
+                    if (latest.syncing) mutableState.value = latest.copy(syncing = false)
+                }
+                synchronizationWorkerActive.set(false)
+                if (synchronizationRequested.get() && mutableState.value is ConnectedState.Ready) {
+                    startSynchronizationWorker()
+                }
+            }
         }
+    }
+
+    private suspend fun runSynchronization(): Boolean {
+        val session = dao.session() ?: run {
+            mutableState.value = ConnectedState.SignedOut
+            return false
+        }
+        return runCatching {
+            withSessionRecovery(session) { synchronize(it, keepSyncing = true) }
+        }.fold(
+            onSuccess = { true },
+            onFailure = { error ->
+                if (isTerminalSessionFailure(error)) {
+                    purge(session.spaceId)
+                    mutableState.value = ConnectedState.SignedOut
+                } else {
+                    val cached = cachedReady(session)
+                    mutableState.value = if (error is CloudApiException && error.retryable && cached != null) cached
+                    else ConnectedState.Failure(error.message ?: "同步失败", true)
+                }
+                false
+            },
+        )
     }
 
     fun logout() {
@@ -328,6 +376,7 @@ class ConnectedRuntime(
     }
 
     private suspend fun refreshNotifications() {
+        var shouldSynchronize = false
         sessionOperationMutex.withLock {
             val current = mutableState.value as? ConnectedState.Ready ?: return
             if (current.syncing) return
@@ -338,16 +387,18 @@ class ConnectedRuntime(
                 }
             }.onSuccess { notifications ->
                 val latest = mutableState.value as? ConnectedState.Ready ?: return@onSuccess
+                val refreshed = notifications.map { item ->
+                    ConnectedNotification(
+                        groupKey = item.groupKey,
+                        type = item.type,
+                        createdAt = item.createdAt,
+                        notificationIds = item.notificationIds,
+                        unread = item.unread,
+                    )
+                }
+                shouldSynchronize = hasNewNotificationIds(latest.notifications, refreshed)
                 mutableState.value = latest.copy(
-                    notifications = notifications.map { item ->
-                        ConnectedNotification(
-                            groupKey = item.groupKey,
-                            type = item.type,
-                            createdAt = item.createdAt,
-                            notificationIds = item.notificationIds,
-                            unread = item.unread,
-                        )
-                    },
+                    notifications = refreshed,
                 )
             }.onFailure { error ->
                 if (isTerminalSessionFailure(error)) {
@@ -356,6 +407,7 @@ class ConnectedRuntime(
                 }
             }
         }
+        if (shouldSynchronize) synchronize()
     }
 
     private suspend fun bootstrap(session: CloudSessionEntity, showInvitations: Boolean = true) {
@@ -399,7 +451,11 @@ class ConnectedRuntime(
         synchronize(saved, membership)
     }
 
-    private suspend fun synchronize(session: CloudSessionEntity, knownMembership: CloudMembership? = null) {
+    private suspend fun synchronize(
+        session: CloudSessionEntity,
+        knownMembership: CloudMembership? = null,
+        keepSyncing: Boolean = false,
+    ) {
         val membership = knownMembership ?: api.bootstrap(session.accessToken).let { bootstrap ->
             serviceMode = bootstrap.serviceMode
             autoSyncIntervalMillis = bootstrap.autoSyncIntervalSeconds?.times(1_000L)
@@ -417,7 +473,7 @@ class ConnectedRuntime(
         application.instanceGenerationService.reconcileAll(LocalDate.now(ZoneId.of(membership.timeZone)))
         enqueueLocalWork(session, membership, entities)
         flush(session, membership.spaceId)
-        mutableState.value = readyState(session, Instant.now().toString(), isolatedTaskCount)
+        mutableState.value = readyState(session, Instant.now().toString(), isolatedTaskCount, syncing = keepSyncing)
     }
 
     private suspend fun pullRemote(session: CloudSessionEntity, membership: CloudMembership) {
@@ -611,6 +667,22 @@ class ConnectedRuntime(
                     },
                 ),
             )
+            // Read durable undo logs, including undos made before a process restart
+            // or followed by another completion while offline.
+            application.database.auditDao().getLogs(instance.taskId, instance.occurrenceKey)
+                .filter { it.action == "COMPLETION_UNDONE" }
+                .forEach { undo ->
+                    enqueue(
+                        membership.spaceId,
+                        "completion-undo:${undo.eventId}",
+                        buildCommand("EXECUTION_EVENT", uuidV7(), buildJsonObject {
+                            put("assignmentId", occurrenceAssignmentId); put("occurrenceKey", occurrenceKey)
+                            put("taskRevision", occurrenceRevision); put("eventType", "COMPLETION_UNDONE")
+                            put("occurredAt", Instant.ofEpochMilli(undo.createdAtEpochMillis).toString())
+                            put("data", buildCompletionUndoData(instance, undo.createdAtEpochMillis, meta.timeZone))
+                        }),
+                    )
+                }
             if (instance.status in setOf("COMPLETED", "MISSED")) enqueueResult(membership.spaceId, occurrenceAssignmentId, occurrenceKey, occurrenceRevision, instance)
         }
     }
@@ -727,6 +799,25 @@ internal fun needsAccessTokenRefresh(
     !Instant.parse(accessExpiresAt).isAfter(now.plusSeconds(refreshSkewSeconds))
 }.getOrDefault(true)
 
+internal fun shouldRunAutomaticSync(
+    lastSyncedAt: String?,
+    now: Instant = Instant.now(),
+    minimumIntervalMillis: Long = AUTOMATIC_SYNC_MIN_INTERVAL_MILLIS,
+): Boolean = lastSyncedAt
+    ?.let { runCatching { Instant.parse(it) }.getOrNull() }
+    ?.plusMillis(minimumIntervalMillis)
+    ?.isAfter(now)
+    ?.not()
+    ?: true
+
+internal fun hasNewNotificationIds(
+    previous: List<ConnectedNotification>,
+    current: List<ConnectedNotification>,
+): Boolean {
+    val previousIds = previous.flatMap(ConnectedNotification::notificationIds).toSet()
+    return current.any { notification -> notification.notificationIds.any { it !in previousIds } }
+}
+
 internal fun buildExecutionResultData(
     instance: TaskInstanceEntity,
     informationContent: String?,
@@ -740,7 +831,17 @@ internal fun buildExecutionResultData(
     informationContent?.takeIf { it.isNotBlank() }?.let { put("informationContent", it) }
 }
 
+internal fun buildCompletionUndoData(instance: TaskInstanceEntity, occurredAtMillis: Long, timeZone: String): JsonObject {
+    val status = TaskStateMachine.statusAt(
+        LocalDate.parse(instance.taskDate),
+        instance.deadline?.let(LocalDateTime::parse),
+        LocalDateTime.ofInstant(Instant.ofEpochMilli(occurredAtMillis), ZoneId.of(timeZone)),
+    )
+    return buildExecutionResultData(instance.copy(status = status.name, completedAtEpochMillis = null), null)
+}
+
 private const val NOTIFICATION_POLL_INTERVAL_MILLIS = 15_000L
+private const val AUTOMATIC_SYNC_MIN_INTERVAL_MILLIS = 15_000L
 private const val PROTECTED_POLL_RECHECK_MILLIS = 60_000L
 
 private fun deterministicDstId(value: String): String = Base64.getUrlEncoder().withoutPadding()

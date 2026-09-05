@@ -69,10 +69,16 @@
 `POST /v1/spaces/{spaceId}/commands`
 
 - 每批最多 100 条，按顺序处理，每条命令独立事务。
+- schema v7 将业务数据、change、通知、审计与命令回执放入同一 D1 batch；空间序列已变化时整批回滚，客户端可以安全重试。部署此版本前必须应用 `0007_atomic_sync_commands.sql`。
 - 命令包含 `commandId`、`entityId`、`baseVersion`、`createdAt`、`type` 和严格校验的 `payload`。
 - 单条结果为 `accepted`、`duplicate`、`conflict`、`rejected` 或 `retryable`。
 - 相同 ID/相同载荷重放返回首次回执；相同 ID/不同载荷返回 `IDEMPOTENCY_KEY_REUSED`。
+- 仅成功回执重放标记为 `duplicate`；`conflict` 和 `rejected` 保持首次状态。管理员 Web 对保留在 outbox 中的命令采用 1、2、4 秒递增至 60 秒的重试间隔，手动同步仍可立即触发。
 - 客户端仅在收到确定结果后删除 outbox；会话过期和可重试错误不能丢弃 outbox。
+
+Android 将持久化的撤销日志作为 `EXECUTION_EVENT / COMPLETION_UNDONE` 上传，携带撤销后的状态与发生时间。服务端保留原执行记录、同步新的结果选择，允许随后再次完成；延迟到达的旧撤销不覆盖较新结果，管理员明确选定的结果也不会被自动覆盖。
+
+Web 与云端共用 `shared/protocol` 中的 DST1 类型与语义规则。云端使用预编译的 Schema 校验器，避免 Workers 运行时动态生成代码；修改 Schema 后在 `web` 运行 `npm run generate:protocol`，CI 通过 `npm run verify:protocol` 检查生成文件一致性。
 
 ### 时区与实例
 
@@ -178,6 +184,8 @@ Cloud GitHub 工作流负责 Worker 与 Web 的测试；staging 和 production �
 阶段 4 待完成：production 应用层严格白名单部署、受保护 migration、公开 GitHub 执行者 APK、三个账号真实试运行和连续七天观察。两个环境的删除账本、staging 恢复演练和 production 邮件域已完成准备。远程推送、完整 DSTB1 云迁移、端到端加密、多管理员、多空间、公开注册、应用商店分发和大陆 SLA 均后置。
 
 ## 变更清单
+
+日常修改先按[最小测试方案](minimal-testing.md)运行受影响的测试；以下双变体、部署和发布要求在对应交付阶段执行，不必每次局部修改都重复完整矩阵。
 
 - 协议/API：更新 OpenAPI、Schema、TypeScript/Kotlin 共用向量和稳定错误码。
 - 云 schema：追加 migration，验证授权索引、快照、增量与 Time Travel 恢复。

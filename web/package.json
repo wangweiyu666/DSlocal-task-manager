@@ -11,13 +11,16 @@
     "build": "npm run build:offline",
     "build:offline": "vite build --mode offline",
     "build:connected": "vite build --mode connected",
-    "build:all": "npm run typecheck && npm run build:offline && npm run build:connected && npm run verify:boundaries",
+    "build:all": "npm run verify:protocol && npm run typecheck && npm run build:offline && npm run build:connected && npm run verify:boundaries",
     "verify:boundaries": "node scripts/verify-build-boundaries.mjs",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:minimum": "vitest run tests/connected-sync-scheduler.test.ts tests/connected-results.test.ts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit -p tsconfig.check.json"
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "generate:protocol": "node scripts/generate-protocol-validator.mjs",
+    "verify:protocol": "node scripts/generate-protocol-validator.mjs --check"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -46,6 +49,7 @@
     "typescript": "^5.7.2",
     "vite": "^6.4.3",
     "vite-plugin-pwa": "^0.21.1",
-    "vitest": "^3.2.6"
+    "vitest": "^3.2.6",
+    "esbuild": "0.25.12"
   }
 }

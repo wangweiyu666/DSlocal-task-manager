@@ -34,6 +34,24 @@ class ConnectedRuntimeTest {
     }
 
     @Test
+    fun automaticSyncRunsOnlyWhenTheCachedDataIsStale() {
+        val now = Instant.parse("2026-08-23T00:00:15Z")
+
+        assertFalse(shouldRunAutomaticSync("2026-08-23T00:00:01Z", now))
+        assertTrue(shouldRunAutomaticSync("2026-08-23T00:00:00Z", now))
+        assertTrue(shouldRunAutomaticSync(null, now))
+        assertTrue(shouldRunAutomaticSync("not-an-instant", now))
+    }
+
+    @Test
+    fun aPreviouslyUnseenNotificationRequestsAFullSync() {
+        val previous = listOf(notification("group-1", "notification-1"))
+
+        assertFalse(hasNewNotificationIds(previous, previous))
+        assertTrue(hasNewNotificationIds(previous, previous + notification("group-2", "notification-2")))
+    }
+
+    @Test
     fun onlyActiveAssignmentsMaterializeCloudTasks() {
         assertTrue(shouldKeepAssignedCloudTask("ACTIVE", "ACTIVE"))
         assertFalse(shouldKeepAssignedCloudTask("ACTIVE", "CANCELLED"))
@@ -68,5 +86,21 @@ class ConnectedRuntimeTest {
         assertEquals("2026-08-23", data["taskDate"]?.toString()?.trim('"'))
         assertEquals("体温 36.6℃\\n无不适", data["informationContent"]?.toString()?.trim('"'))
         assertFalse(data.containsKey("description"))
+
+        val undone = buildCompletionUndoData(instance, Instant.parse("2026-08-23T05:00:00Z").toEpochMilli(), "Asia/Hong_Kong")
+        assertEquals("\"PENDING\"", undone["status"].toString())
+        assertFalse(undone.containsKey("completedAt"))
+        assertFalse(undone.containsKey("informationContent"))
+
+        val lateUndo = buildCompletionUndoData(instance.copy(deadline = "2026-08-23T12:00"), Instant.parse("2026-08-23T05:00:00Z").toEpochMilli(), "Asia/Hong_Kong")
+        assertEquals("\"MISSED\"", lateUndo["status"].toString())
     }
+
+    private fun notification(groupKey: String, notificationId: String) = ConnectedNotification(
+        groupKey = groupKey,
+        type = "TASK_UPDATED",
+        createdAt = "2026-08-23T00:00:00Z",
+        notificationIds = listOf(notificationId),
+        unread = true,
+    )
 }

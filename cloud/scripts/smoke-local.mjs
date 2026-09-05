@@ -73,7 +73,7 @@ async function authenticate(email, acknowledgePrivacy = true) {
 }
 
 const health = await request("/health");
-if (health.environment !== "local" || health.schemaVersion !== "6") throw new Error(`unexpected health response: ${JSON.stringify(health)}`);
+if (health.environment !== "local" || health.schemaVersion !== "7") throw new Error(`unexpected health response: ${JSON.stringify(health)}`);
 
 const privacyEmail = `privacy-${randomUUID()}@example.com`;
 const privacySession = await authenticate(privacyEmail, false);

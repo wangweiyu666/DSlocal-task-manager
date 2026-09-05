@@ -124,6 +124,10 @@ export async function refreshSession(env: Env, request: Request): Promise<Respon
   const body = cookieToken ? {} : await readObject(request, ["refreshToken"]);
   const token = cookieToken ?? (typeof body.refreshToken === "string" ? body.refreshToken : null);
   if (!token) throw new ApiError(401, "UNAUTHENTICATED", "缺少刷新令牌");
+  return rotateSession(env, request, token);
+}
+
+async function rotateSession(env: Env, request: Request, token: string, retry = true): Promise<Response> {
   const tokenDigest = await digest(env, "refresh", token);
   const session = await env.DB.prepare("SELECT * FROM device_sessions WHERE refresh_digest = ? OR previous_refresh_digest = ?").bind(tokenDigest, tokenDigest).first<Record<string, unknown>>();
   const now = nowIso();
@@ -138,8 +142,14 @@ export async function refreshSession(env: Env, request: Request): Promise<Respon
     throw new ApiError(401, "SESSION_REPLAYED", "检测到会话令牌重放，请重新验证邮箱");
   }
   const bundle: SessionBundle = { accessToken: randomToken(), refreshToken: randomToken(), csrfToken: randomToken(24), accessExpiresAt: addSeconds(now, 900) };
-  await env.DB.prepare("UPDATE device_sessions SET previous_refresh_digest=refresh_digest,previous_refresh_valid_until=?,replay_bundle_ciphertext=?,refresh_digest=?,access_digest=?,csrf_digest=?,last_seen_at=?,access_expires_at=?,idle_expires_at=? WHERE id=?")
-    .bind(addSeconds(now, 30), await encryptReplay(env.AUTH_PEPPER, bundle), await digest(env, "refresh", bundle.refreshToken), await digest(env, "access", bundle.accessToken), await digest(env, "csrf", bundle.csrfToken), now, bundle.accessExpiresAt, addSeconds(now, 2_592_000), session.id).run();
+  const rotated = await env.DB.prepare("UPDATE device_sessions SET previous_refresh_digest=refresh_digest,previous_refresh_valid_until=?,replay_bundle_ciphertext=?,refresh_digest=?,access_digest=?,csrf_digest=?,last_seen_at=?,access_expires_at=?,idle_expires_at=? WHERE id=? AND refresh_digest=? AND revoked_at IS NULL AND idle_expires_at>? AND absolute_expires_at>?")
+    .bind(addSeconds(now, 30), await encryptReplay(env.AUTH_PEPPER, bundle), await digest(env, "refresh", bundle.refreshToken), await digest(env, "access", bundle.accessToken), await digest(env, "csrf", bundle.csrfToken), now, bundle.accessExpiresAt, addSeconds(now, 2_592_000), session.id, tokenDigest, now, now).run();
+  if ((rotated.meta.changes ?? 0) !== 1) {
+    // Another request may have rotated this token while cryptography was running.
+    // Re-read its replay bundle instead of returning tokens that were never stored.
+    if (retry) return rotateSession(env, request, token, false);
+    throw new ApiError(401, "SESSION_EXPIRED", "会话已过期，请重新验证邮箱");
+  }
   return sessionResponse(env, request, bundle);
 }
 

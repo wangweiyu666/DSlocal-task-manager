@@ -114,6 +114,26 @@ gradle compileConnectedDebugKotlin --no-daemon
 
 如果 `java --version` 不是 JDK 17，先用 `Get-Command java -All` 查找用户 PATH 中的 JDK 17；仍找不到时再设置当前进程的 `JAVA_HOME` 并把其 `bin` 前置到 `PATH`。
 
+### 使用已缓存的 Robolectric 运行离线单元测试
+
+Gradle 的 `--offline` 不会关闭 Robolectric 自己的 Maven 下载。若用户缓存已有目标 Android 运行包，可显式指定缓存目录：
+
+```powershell
+$env:GRADLE_USER_HOME = Join-Path $env:USERPROFILE '.gradle'
+$projectRobolectricJar = Get-ChildItem (Join-Path $env:USERPROFILE '.m2\repository\org\robolectric\android-all-instrumented') `
+  -Filter '*15-robolectric-12650502-i7.jar' -Recurse | Select-Object -First 1
+if (-not $projectRobolectricJar) { throw '缺少当前 Robolectric Android 15 运行包' }
+$projectPreviousJavaOptions = $env:JAVA_TOOL_OPTIONS
+try {
+  $env:JAVA_TOOL_OPTIONS = "$projectPreviousJavaOptions -Drobolectric.offline=true `"-Drobolectric.dependency.dir=$($projectRobolectricJar.DirectoryName)`""
+  .\gradlew.bat testOfflineDebugUnitTest testConnectedDebugUnitTest testProductionDebugUnitTest --offline --no-daemon
+} finally {
+  $env:JAVA_TOOL_OPTIONS = $projectPreviousJavaOptions
+}
+```
+
+Java 进程必须有权限读取该 JAR。受限环境拒绝访问缓存时，Robolectric 可能退回 Android stub 类并报 `NoSuchFieldError: noncompatWidthPixels`；应先检查缓存可读性，再判断是否为应用测试失败。
+
 ## 已验证的用户级来源
 
 下列目录在当前 Windows 开发环境中可用。文档使用环境变量表达，避免绑定用户名或磁盘布局：

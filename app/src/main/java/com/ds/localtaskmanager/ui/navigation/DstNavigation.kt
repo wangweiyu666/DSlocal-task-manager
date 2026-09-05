@@ -147,6 +147,7 @@ fun DstNavigation(
     onNotificationTaskConsumed: () -> Unit,
     onNotificationPermissionChanged: () -> Unit,
     connectedState: ConnectedUiState? = null,
+    onAutoSynchronize: () -> Unit = {},
     onSynchronize: () -> Unit = {},
     onMarkNotificationsRead: (List<String>) -> Unit = {},
     onLogout: () -> Unit = {},
@@ -257,7 +258,10 @@ fun DstNavigation(
                 )
             }
             composable(Destination.Today.route) {
-                 TodayScreen(todayViewModel, shareImageService, connectedMode = connectedMode) { key ->
+                LaunchedEffect(Unit) {
+                    if (connectedMode) onAutoSynchronize()
+                }
+                TodayScreen(todayViewModel, shareImageService, connectedMode = connectedMode) { key ->
                     navController.navigate("task/${key.taskId}/${key.occurrenceKey}")
                 }
             }
@@ -370,6 +374,7 @@ fun DstNavigation(
                         taskRepository,
                         taskNoteService,
                         reminderReconciler,
+                        onCompletionCommitted = onSynchronize,
                     ),
                 )
                 TaskDetailRoute(executionViewModel, shareImageService, navController::popBackStack)
