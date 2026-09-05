@@ -19,23 +19,40 @@
 
 - 生产环境共三个账号：管理者、管理者控制的执行者测试账号、真实执行者账号。
 - 先用非敏感测试数据完成登录、邀请、权限隔离、断网同步、导出、计划删除、立即删除和恢复演练；通过后才录入真实任务。
-- 执行者 APK 公开发布到 GitHub Releases；管理员网址不在仓库、README、Release、Issue、工作流日志或证据文件中记录。
-- 管理端不是依靠隐藏 URL 保证安全。Production Web Worker 在返回 HTML、JS、CSS 或代理 API 前执行应用层单邮箱白名单和邮箱验证码门禁；应用内仍保留 `ADMIN_EMAIL` 白名单、空间角色授权和近期邮箱验证。
+- 执行者 APK 公开发布到 GitHub Releases。按管理者授权，生产管理入口改为 `staging.rochelimit.me`，测试入口改为 `test.rochelimit.me`；旧生产私密主机名仍不得写入公开记录。
+- 两个管理入口均由 Cloudflare Access 保护整站，Web Worker 在返回 HTML、JS、CSS 或代理 API 前再次校验 Access JWT。应用内仍保留邮箱登录、`ADMIN_EMAIL` 白名单、空间角色授权和近期邮箱验证。
 - 不包含公开注册、应用商店、远程推送、端到端加密、多管理员或大陆 SLA。
 
 ## 受保护配置
 
 GitHub Environment `cloud-staging` 保存 staging Cloudflare 凭据。`cloud-production` 必须启用 required reviewer，并保存：
 
-- `CLOUDFLARE_API_TOKEN`：最小权限只包含本工作流所需的 Workers、D1 和 DNS，不需要 Zero Trust/Access 或付费订阅权限；
-- `CLOUDFLARE_ACCOUNT_ID`；
-- `PRODUCTION_ADMIN_HOST`：只保存主机名，不含协议和路径。
+- `CLOUDFLARE_API_TOKEN`：日常发布只需要 Workers、D1 和 DNS 权限；首次配置或修改 Access 应用与身份策略，需要另外的 Access 管理权限，不必永久扩大 CI token 权限；
+- `CLOUDFLARE_ACCOUNT_ID`。
 
-Production API Worker 另外保存 `AUTH_PEPPER`、`ADMIN_EMAIL`、`RESEND_API_KEY` 和 `ALLOWED_ORIGIN` secrets。`ALLOWED_ORIGIN` 必须等于 `https://` 加受保护管理员主机名。不要把这些值传入命令参数、文档或证据文件。
+Production API Worker 另外保存 `AUTH_PEPPER`、`ADMIN_EMAIL`、`RESEND_API_KEY` 和 `ALLOWED_ORIGIN` secrets。本次迁移将 `ALLOWED_ORIGIN` 设为 `https://staging.rochelimit.me`；staging API 配置为 `https://test.rochelimit.me`。其余秘密值不得写入命令正文、文档或证据。两个 API 的域名、应用认证与限流保持不变，不添加 Access 浏览器门禁。
 
-Production Web Worker 另外保存 `MANAGEMENT_GATE_SECRET` 和 `MANAGEMENT_ADMIN_EMAIL` secrets。前者必须是至少 32 字节的独立高熵随机值；后者必须与 API Worker 的 `ADMIN_EMAIL` 完全一致。二者不得提交到仓库或写入 GitHub 日志。
+两个 Web Worker 均配置 `ACCESS_TEAM_DOMAIN`（仅 `团队名.cloudflareaccess.com`）、`ACCESS_AUD`（各自应用的 64 位十六进制 audience）和 `MANAGEMENT_ADMIN_EMAIL` secrets。邮箱须与各自 API 的管理员白名单一致；两个应用 audience 必须不同，不能复用。旧 `MANAGEMENT_GATE_SECRET` 与 GitHub `PRODUCTION_ADMIN_HOST` 不再被代码或 CI 使用，可在迁移验收后按凭据清理流程移除。
 
-生产管理员主机名应使用从未提交到公共 Git 历史的新名称。应用门禁只使用现有 Workers、服务绑定和 HMAC cookie，不启用 Cloudflare Zero Trust/Access，不要求付款方式。未验证请求只得到无脚本的最小验证码页，不会读取前端静态资源或调用业务 API；白名单外邮箱不会触发邮件。门禁 cookie 最长 30 天、`HttpOnly; Secure; SameSite=Strict`、绑定浏览器 User-Agent；缺少配置时 Worker 以 503 失败关闭。生产联网 Web 不注册 Service Worker，所有受保护响应均 `no-store`，避免离线缓存绕过门禁。部署工作流会在任何 migration 前验证两个 Web Worker secrets 存在，部署后验证未登录根页面和常见静态资源都返回 401 及门禁标记。
+Access 使用两个独立的 self-hosted 应用，分别覆盖两个完整主机名（不限定路径）。仅允许现有管理员的精确邮箱，使用 One-time PIN；不要加入 Everyone、Bypass、通配邮箱域或面向 APK 的共享 service token。建议会话有效期 24 小时。首次开通 Zero Trust 的套餐与付款信息由账号所有者确认；免费方案不代表无需开通流程。
+
+2026-09-05 当前账号的开通页显示 Free 为 $0、最多 50 席位，但要求付款资料、账单地址、服务条款以及对超出免费额度的用量按月扣费的授权。选择 Free 不代表已完成开通；由账号所有者自行审阅并完成 `Activate Zero Trust Free` 后，再创建 Access 应用和切换域名。
+
+2026-09-05 账号所有者已完成 Zero Trust Free 开通，One-time PIN 已添加，两个管理主机名的独立 Access 应用均已创建，限制为各自现有管理员精确邮箱、24 小时会话，并启用 HTTP Only 和 Binding Cookie。管理者已明确批准先保护仍指向 staging 服务的 `staging.rochelimit.me`，再将其切换到 production。网页域名与 Worker 的实际部署状态以发布运行及验收记录为准，不能将创建 Access 应用视为 Worker 已部署。
+
+边缘先拦截未登录请求；Worker 使用固定 issuer 的 JWKS 验证 RS256 签名、audience、有效期、签发时间和管理员邮箱，拒绝伪造邮箱头、旧门禁 cookie 及其他主机名。配置缺失时 503，JWT 验证失败或公钥不可用时 403，均不触达静态资源或业务 API。两个环境关闭 workers.dev 与 preview URLs，所有资源经 Worker 执行且 `no-store`。网页退出在应用会话与本地缓存清理后导航到 Access logout；Access 与应用邮箱登录为两层身份验证。
+
+## 本次域名与 Access 迁移顺序
+
+以下是实施步骤，不代表云端已经完成迁移。完成后另行记录固定 SHA、运行结果和登录验收。
+
+1. 盘点 Zero Trust 组织、套餐、Access 应用、精确管理员邮箱及当前 Worker 自定义域映射。权限不足时由账号所有者登录控制台；不为读取配置输出令牌或完整邮箱。
+2. 保留旧生产入口和当前 Worker 版本作为回退信息。先为 `test.rochelimit.me` 与 `staging.rochelimit.me` 建立 Access 整站策略，确认没有更具体路径的放行策略；配置两个 Web Worker 的独立 Access secrets。先保护旧 staging 主机名，再转移它的用途。
+3. 提醒管理者先同步旧 staging 页面尚未上传的修改并关闭旧标签页。新域名不会自动搬迁旧源的 IndexedDB/未同步命令；数据库内容仍在 staging D1，不复制进 production。
+4. Luna 提交并推送固定 SHA，等待自动 staging 部署，将 staging Web 移到 `test.rochelimit.me` 并更新对应 API origin。检查测试入口 Access 跳转、管理员登录和 staging 服务绑定，确认旧 staging 域已从 staging Worker 解除。
+5. 记录生产两个 D1 的恢复 bookmark 与两个 Worker 版本；更新生产 API 的 `ALLOWED_ORIGIN`，然后按本次已获授权的流程发布相同 SHA。生产 Web 绑定 `staging.rochelimit.me`；核对旧生产域不再路由至该 Worker，不为旧域新增公开绕过入口。
+6. 验证两个站点根页面、静态资源和 `/v1/bootstrap` 均被 Access 拦截；验证管理员登录后可正常使用各自数据、非管理员不能进入，以及两个直接 API 仍返回应用认证响应、Android 地址不变。CI 的 `verify-access.mjs` 只验证匿名拦截，不能代替管理员登录成功验证。
+7. 回退时同时恢复 Worker 版本、域名映射和 API origin，维持 Access 保护。不能只回滚代码而留下错配的域名；新生产主机名不允许回指 staging 并继续用于生产操作。
 
 ## 第一门：staging
 
@@ -53,10 +70,10 @@ Production Web Worker 另外保存 `MANAGEMENT_GATE_SECRET` 和 `MANAGEMENT_ADMI
 第一门通过后，汇报固定 commit、测试结果、staging deployment、恢复 artifact 和剩余风险。只有管理者再次明确确认后才执行：
 
 1. 创建 `dstationery-deletion-ledger-production`，写入 production 账本 ID并重新运行两个环境 guard。
-2. 配置新的受保护管理员主机名、生产邮件域、四个 API Worker secrets，以及 Web Worker 的应用门禁密钥和单一管理者邮箱。
+2. 配置受 Access 保护的管理员主机名、生产邮件域、四个 API Worker secrets，以及 Web Worker 的 Access issuer、独立 audience 和单一管理者邮箱。
 3. 在 GitHub `cloud-production` 环境启用人工批准并配置受保护值。
 4. 手动运行 `Cloud Connected`，target 选择 `production`，`production_confirmation` 输入 `DEPLOY_PRODUCTION`，`release_commit` 输入已通过 staging 的完整 commit SHA。
-5. 验证管理端未登录不能读取任何静态资源或代理 API、非白名单邮箱不发信、管理者验证后可进入且退出会清除门禁，并确认管理者 Web 和执行者 Android 均只连接 production。
+5. 验证管理端未登录不能读取任何静态资源或代理 API、非白名单身份不能进入、管理者完成 Access 和应用登录后可进入且退出会离开 Access 会话，并确认管理者 Web 和执行者 Android 均只连接 production。
 
 Production migration 前记录 D1 bookmark 和当前 Worker version。故障先回滚 Worker 固定版本；若兼容 migration 仍有问题，再按 bookmark 执行 Time Travel。恢复主库后必须等待删除账本重放完毕再开放写入。
 

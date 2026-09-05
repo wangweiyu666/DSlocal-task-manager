@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "check": "npm run typecheck && npm test",
     "typecheck": "tsc --noEmit",
@@ -18,5 +20,8 @@
     "typescript": "5.9.2",
     "vitest": "3.2.7",
     "wrangler": "4.123.0"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
   }
 }

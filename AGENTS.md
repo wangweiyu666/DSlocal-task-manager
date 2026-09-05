@@ -22,3 +22,11 @@
 - Use the same tested Android source and build configuration. Do not repeat passing full tests solely to package APKs; targeted test runs do not trigger this handoff. Reuse verified outputs from the same source when available.
 - Follow `docs/minimal-testing.md` for commands and handoff checks. Report actual APK paths, environments and SHA-256 values; do not report stale artifacts as new builds.
 - Local Debug APK building does not itself authorize publishing a GitHub Release, production deployment, or installation on a device. If Luna is unavailable, report the limitation explicitly.
+
+# Test delegation
+
+- Delegate writing simple tests and running tests to Luna (`gpt-5.6-luna`) by default when available. Simple tests have clear behavior and expected results, such as focused unit tests, validation/error cases, and direct regressions.
+- The primary agent defines the scope and acceptance criteria and reviews assertions. For complex concurrency, cross-client consistency, security, or recovery testing, the primary agent designs the scenarios; Luna can execute the agreed plan.
+- Follow `docs/minimal-testing.md`: reuse existing coverage, run the smallest relevant suite, and avoid repeating passing checks without a new reason. Report actual commands, tested source state, passed/failed/skipped counts, failures and coverage limits.
+- Never hide failures by skipping tests or weakening assertions. Escalate unresolved failures to the primary agent. If Luna is unavailable, explicitly report that limitation.
+- After successful full Android tests, continue with the existing Luna Debug APK handoff rule.

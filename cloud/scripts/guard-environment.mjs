@@ -16,17 +16,19 @@ if (!selected.triggers?.crons?.length) throw new Error(`${environment} must defi
 if (environment === "production") {
   if (Object.hasOwn(selected.vars, "ALLOWED_ORIGIN")) throw new Error("production ALLOWED_ORIGIN must not be committed as a public variable");
   if (!selected.secrets?.required?.includes("ALLOWED_ORIGIN")) throw new Error("production must require the protected ALLOWED_ORIGIN secret");
-  const webConfig = JSON.parse((await readFile(new URL("../../cloud-web/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*$/gm, ""));
-  const webProduction = webConfig.env?.production;
-  if (webProduction?.routes?.length || webProduction?.route || webProduction?.domains?.length) {
-    throw new Error("production administrator hostname must not be committed in public Worker routes");
-  }
-  if (webProduction?.workers_dev !== false) throw new Error("production administrator Worker must disable workers.dev");
-  if (webProduction?.vars?.MANAGEMENT_GATE_ENABLED !== "true") throw new Error("production administrator Worker must enable the application gate");
-  for (const secret of ["MANAGEMENT_GATE_SECRET", "MANAGEMENT_ADMIN_EMAIL"]) {
-    if (Object.hasOwn(webProduction?.vars ?? {}, secret)) throw new Error(`production ${secret} must not be committed as a public variable`);
-    if (!webProduction?.secrets?.required?.includes(secret)) throw new Error(`production administrator Worker must require ${secret}`);
-  }
+}
+const webConfig = JSON.parse((await readFile(new URL("../../cloud-web/wrangler.jsonc", import.meta.url), "utf8")).replace(/^\s*\/\/.*$/gm, ""));
+const web = webConfig.env?.[environment];
+const host = environment === "staging" ? "test.rochelimit.me" : "staging.rochelimit.me";
+if (web?.workers_dev !== false || webConfig.preview_urls !== false) throw new Error(`${environment} web must disable workers.dev and preview URLs`);
+if (web?.vars?.ACCESS_REQUIRED !== "true") throw new Error(`${environment} web must require Cloudflare Access`);
+if (web?.vars?.MANAGEMENT_HOST !== host || web?.routes?.length !== 1 || web.routes[0].pattern !== host || web.routes[0].custom_domain !== true) throw new Error(`${environment} web hostname mismatch`);
+if (web.services?.find((item) => item.binding === "API")?.service !== `dstationery-api-${environment}`) throw new Error(`${environment} web API binding mismatch`);
+if (webConfig.assets?.run_worker_first !== true) throw new Error("all assets must pass through Access JWT validation");
+if (environment === "staging" && selected.vars.ALLOWED_ORIGIN !== `https://${host}`) throw new Error("staging API origin mismatch");
+for (const secret of ["ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MANAGEMENT_ADMIN_EMAIL"]) {
+  if (Object.hasOwn(web?.vars ?? {}, secret)) throw new Error(`${environment} ${secret} must not be committed as a public variable`);
+  if (!web?.secrets?.required?.includes(secret)) throw new Error(`${environment} web must require ${secret}`);
 }
 const other = environment === "staging" ? config.env.production : config.env.staging;
 for (const name of ["API_RATE_LIMITER", "AUTH_RATE_LIMITER"]) {

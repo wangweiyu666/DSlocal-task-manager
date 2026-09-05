@@ -1,200 +1,161 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { handleRequest } from "../src/index";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 
-const origin = "https://private.example.test";
+const origin = "https://test.example.test";
+const host = "test.example.test";
+const team = "team-example.cloudflareaccess.com";
+const audience = "a".repeat(64);
 const administrator = "manager@example.test";
-const gateSecret = "test-only-management-gate-secret-with-more-than-32-bytes";
-const userAgent = "gate-test-browser";
+const userAgent = "access-test-browser";
 
-type TestEnv = Parameters<typeof handleRequest>[1];
+type PrivateKey = Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
+let privateKey: PrivateKey;
+let publicJwk: JWK;
+type Handler = (typeof import("../src/index"))["handleRequest"];
+type TestEnv = Parameters<Handler>[1];
 
-function environment(api: (request: Request) => Response | Promise<Response> = () => new Response("api")) {
+beforeAll(async () => {
+  const pair = await generateKeyPair("RS256");
+  privateKey = pair.privateKey;
+  publicJwk = await exportJWK(pair.publicKey);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+async function loadHandler(fetchJwks = true): Promise<Handler> {
+  vi.resetModules();
+  if (fetchJwks) vi.stubGlobal("fetch", vi.fn(async () => Response.json({ keys: [publicJwk] })));
+  return (await import("../src/index")).handleRequest;
+}
+
+function environment(api: (request: Request) => Response | Promise<Response> = () => Response.json({ ok: true })) {
   let assetRequests = 0;
   let apiRequests = 0;
   const env = {
-    MANAGEMENT_GATE_ENABLED: "true",
-    MANAGEMENT_ADMIN_EMAIL: administrator,
-    MANAGEMENT_GATE_SECRET: gateSecret,
-    ASSETS: {
-      fetch: async () => {
-        assetRequests += 1;
-        return new Response("protected application", { headers: { "Content-Type": "text/html" } });
-      },
-    },
-    API: {
-      fetch: async (request: Request) => {
-        apiRequests += 1;
-        return api(request);
-      },
-    },
+    ACCESS_REQUIRED: "true", ACCESS_TEAM_DOMAIN: team, ACCESS_AUD: audience,
+    MANAGEMENT_HOST: host, MANAGEMENT_ADMIN_EMAIL: administrator,
+    ASSETS: { fetch: async () => { assetRequests += 1; return new Response("protected application"); } },
+    API: { fetch: async (request: Request) => { apiRequests += 1; return api(request); } },
   } as unknown as TestEnv;
   return { env, counts: () => ({ assetRequests, apiRequests }) };
 }
 
-function form(path: string, values: Record<string, string>): Request {
-  return new Request(`${origin}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Origin": origin,
-      "User-Agent": userAgent,
-    },
-    body: new URLSearchParams(values),
-  });
+async function token(overrides: Partial<{ issuer: string; aud: string; email: string; iat: number; exp: number; sub: string }> = {}, key: PrivateKey = privateKey) {
+  const now = Math.floor(Date.now() / 1000);
+  const claims = { issuer: `https://${team}`, aud: audience, email: administrator, iat: now, exp: now + 300, sub: "cf-user-1", ...overrides };
+  return new SignJWT({ email: claims.email, sub: claims.sub })
+    .setProtectedHeader({ alg: "RS256", typ: "JWT" }).setIssuer(claims.issuer).setAudience(claims.aud)
+    .setIssuedAt(claims.iat).setExpirationTime(claims.exp).sign(key);
 }
 
-async function gateCookie(env: TestEnv): Promise<string> {
-  await handleRequest(form("/__gate/challenge", { email: administrator }), env);
-  const verified = await handleRequest(form("/__gate/verify", { email: administrator, challengeId: "challenge-1", code: "123456" }), env);
-  const combined = verified.headers.get("Set-Cookie") ?? "";
-  const match = combined.match(/__Host-dst_manager_gate=([^;,\s]+)/u);
-  if (!match) throw new Error("gate cookie was not issued");
-  return `__Host-dst_manager_gate=${match[1]}`;
+function request(path: string, init: RequestInit = {}) {
+  return new Request(`${origin}${path}`, { ...init, headers: { "Cf-Access-Jwt-Assertion": "invalid", "User-Agent": userAgent, ...(init.headers ?? {}) } });
 }
 
-function successfulApi(request: Request): Response {
-  const path = new URL(request.url).pathname;
-  if (path === "/v1/auth/challenges") {
-    return Response.json({ challengeId: "challenge-1", accepted: true }, { status: 202 });
-  }
-  if (path === "/v1/auth/verify") {
-    return Response.json(
-      { accessToken: "must-not-reach-the-browser-here", csrfToken: "also-hidden", accessExpiresAt: "2099-01-01T00:00:00Z" },
-      { headers: { "Set-Cookie": "dst_refresh=refresh-token; Path=/v1/auth; HttpOnly; Secure; SameSite=Strict" } },
-    );
-  }
-  return Response.json({ ok: true }, { headers: { "Set-Cookie": "dst_refresh=; Path=/v1/auth; Max-Age=0" } });
-}
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe("production management gate", () => {
-  it("fails closed before touching assets or the API", async () => {
+describe("Cloudflare Access management gate", () => {
+  it("rejects missing, spoofed, old-cookie, and retired requests before bindings", async () => {
+    const handleRequest = await loadHandler();
     const { env, counts } = environment();
-    const response = await handleRequest(new Request(`${origin}/assets/application.js`), env);
-
-    expect(response.status).toBe(401);
-    expect(response.headers.get("X-DStationery-Gate")).toBe("required");
-    expect(response.headers.get("Cache-Control")).toContain("no-store");
-    expect(response.headers.get("X-Robots-Tag")).toContain("noindex");
-    const page = await response.text();
-    expect(page).toContain("受限管理入口");
-    expect(page).toContain('name="color-scheme" content="light"');
-    expect(page).toContain("background:#fffbfe");
-    expect(page).not.toContain("background:#101114");
+    const cases = [
+      new Request(`${origin}/`),
+      new Request(`${origin}/`, { headers: { "Cf-Access-Authenticated-User-Email": administrator } }),
+      new Request(`${origin}/`, { headers: { Cookie: "__Host-dst_manager_gate=old-cookie" } }),
+      request("/__gate/challenge"), request("/assets/application.js"),
+      request("/v1/auth/refresh", { method: "POST" }), new Request(`${origin}/`, { method: "HEAD" }),
+    ];
+    for (const candidate of cases) {
+      const response = await handleRequest(candidate, env);
+      expect(response.status, candidate.method === "HEAD" ? "HEAD must be denied" : candidate.url).toBe(403);
+      if (candidate.method === "HEAD") expect(await response.text()).toBe("");
+    }
     expect(counts()).toEqual({ assetRequests: 0, apiRequests: 0 });
   });
 
-  it("does not send a challenge for an email outside the whitelist", async () => {
+  it("allows a valid JWT to reach assets and API with protected headers", async () => {
+    const handleRequest = await loadHandler();
     const { env, counts } = environment();
-    const response = await handleRequest(form("/__gate/challenge", { email: "someone@example.test" }), env);
-
-    expect(response.status).toBe(401);
-    expect(await response.text()).toContain("邮箱验证码");
-    expect(counts().apiRequests).toBe(0);
-  });
-
-  it("rejects cross-origin and oversized gate submissions", async () => {
-    const { env, counts } = environment();
-    const crossOrigin = form("/__gate/challenge", { email: administrator });
-    crossOrigin.headers.set("Origin", "https://attacker.example.test");
-    const oversized = form("/__gate/challenge", { email: `${"x".repeat(5000)}@example.test` });
-
-    expect((await handleRequest(crossOrigin, env)).status).toBe(403);
-    expect((await handleRequest(oversized, env)).status).toBe(401);
-    expect(counts().apiRequests).toBe(0);
-  });
-
-  it("accepts a same-origin browser form navigation with an opaque Origin", async () => {
-    const { env, counts } = environment(successfulApi);
-    const request = form("/__gate/challenge", { email: administrator });
-    request.headers.set("Origin", "null");
-    request.headers.set("Sec-Fetch-Site", "same-origin");
-
-    const response = await handleRequest(request, env);
-
-    expect(response.status).toBe(401);
-    expect(await response.text()).toContain("邮箱验证码");
-    expect(counts().apiRequests).toBe(1);
-  });
-
-  it("uses the API only for the exact normalized administrator email", async () => {
-    let submitted: unknown;
-    const { env, counts } = environment(async (request) => {
-      submitted = await request.json();
-      return Response.json({ challengeId: "challenge-1", accepted: true }, { status: 202 });
-    });
-    const response = await handleRequest(form("/__gate/challenge", { email: " Manager@Example.Test " }), env);
-
-    expect(response.status).toBe(401);
-    expect(submitted).toEqual({ email: administrator, purpose: "SIGN_IN" });
-    expect(counts().apiRequests).toBe(1);
-  });
-
-  it("issues an HttpOnly gate cookie without exposing API tokens", async () => {
-    const { env } = environment(successfulApi);
-    const response = await handleRequest(form("/__gate/verify", { email: administrator, challengeId: "challenge-1", code: "123456" }), env);
-    const cookies = response.headers.get("Set-Cookie") ?? "";
-
-    expect(response.status).toBe(303);
-    expect(response.headers.get("Location")).toBe("/");
-    expect(cookies).toContain("dst_refresh=refresh-token");
-    expect(cookies).toContain("__Host-dst_manager_gate=");
-    expect(cookies).toContain("HttpOnly");
-    expect(await response.text()).not.toContain("must-not-reach-the-browser-here");
-  });
-
-  it("allows protected assets and API calls only with a valid bound cookie", async () => {
-    const { env, counts } = environment(successfulApi);
-    const cookie = await gateCookie(env);
-    const headers = { "Cookie": cookie, "User-Agent": userAgent };
-
-    const asset = await handleRequest(new Request(`${origin}/`, { headers }), env);
-    const api = await handleRequest(new Request(`${origin}/v1/auth/refresh`, { method: "POST", headers: { ...headers, "Origin": origin } }), env);
-
-    expect(asset.status).toBe(200);
-    expect(await asset.text()).toBe("protected application");
+    const assertion = await token();
+    const asset = await handleRequest(request("/", { headers: { "Cf-Access-Jwt-Assertion": assertion } }), env);
+    const api = await handleRequest(request("/v1/tasks", { headers: { "Cf-Access-Jwt-Assertion": assertion } }), env);
+    expect(asset.status).toBe(200); expect(api.status).toBe(200);
     expect(asset.headers.get("Cache-Control")).toContain("no-store");
-    expect(api.status).toBe(200);
-    expect(counts().assetRequests).toBe(1);
+    expect(asset.headers.get("Content-Security-Policy")).toContain("default-src 'self'");
+    expect(api.headers.get("Cache-Control")).toContain("no-store");
+    expect(counts()).toEqual({ assetRequests: 1, apiRequests: 1 });
   });
 
-  it("rejects tampered, expired, and differently bound cookies", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-24T00:00:00Z"));
-    const { env } = environment(successfulApi);
-    const cookie = await gateCookie(env);
-    const tampered = `${cookie.slice(0, -1)}${cookie.endsWith("a") ? "b" : "a"}`;
-
-    expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": tampered, "User-Agent": userAgent } }), env)).status).toBe(401);
-    expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": cookie, "User-Agent": "another-browser" } }), env)).status).toBe(401);
-    vi.setSystemTime(new Date("2026-09-22T23:59:59Z"));
-    expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": cookie, "User-Agent": userAgent } }), env)).status).toBe(200);
-    vi.setSystemTime(new Date("2026-09-23T00:00:01Z"));
-    expect((await handleRequest(new Request(`${origin}/`, { headers: { "Cookie": cookie, "User-Agent": userAgent } }), env)).status).toBe(401);
-  });
-
-  it("clears the application gate during API logout", async () => {
-    const { env } = environment(successfulApi);
-    const cookie = await gateCookie(env);
-    const response = await handleRequest(new Request(`${origin}/v1/auth/logout`, {
-      method: "POST",
-      headers: { "Cookie": cookie, "Origin": origin, "User-Agent": userAgent },
-    }), env);
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Set-Cookie")).toContain("__Host-dst_manager_gate=; Path=/; Max-Age=0");
-  });
-
-  it("returns 503 and no content when production secrets are incomplete", async () => {
+  it("rejects wrong audience, issuer, time, identity, missing claim, algorithm, and signature", async () => {
+    const handleRequest = await loadHandler();
     const { env, counts } = environment();
-    (env as unknown as { MANAGEMENT_GATE_SECRET: string }).MANAGEMENT_GATE_SECRET = "short";
-    const response = await handleRequest(new Request(`${origin}/`), env);
+    const now = Math.floor(Date.now() / 1000);
+    const missingClaim = await new SignJWT({ sub: "cf-user-1" }).setProtectedHeader({ alg: "RS256" }).setIssuer(`https://${team}`).setAudience(audience).setIssuedAt(now).setExpirationTime(now + 300).sign(privateKey);
+    const otherPair = await generateKeyPair("RS256");
+    const values = await Promise.all([
+      token({ aud: "b".repeat(64) }), token({ issuer: "https://other.cloudflareaccess.com" }),
+      token({ exp: now - 10 }), token({ iat: now + 60 }), token({ email: "other@example.test" }), missingClaim,
+    ]);
+    const hsParts = (await token()).split(".");
+    hsParts[0] = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    values.push(hsParts.join("."));
+    const badSignatureParts = (await token()).split(".");
+    badSignatureParts[2] = `${badSignatureParts[2].startsWith("a") ? "b" : "a"}${badSignatureParts[2].slice(1)}`;
+    values.push(badSignatureParts.join("."));
+    values.push(await token({}, otherPair.privateKey));
+    const noneParts = (await token()).split(".");
+    noneParts[0] = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+    noneParts[2] = "";
+    values.push(noneParts.join("."));
+    for (const [index, assertion] of values.entries()) expect((await handleRequest(request("/", { headers: { "Cf-Access-Jwt-Assertion": assertion } }), env)).status, `invalid token case ${index}`).toBe(403);
+    expect((await handleRequest(request("/", { headers: { "Cf-Access-Jwt-Assertion": await token() } }), env)).status).toBe(200);
+    expect(counts()).toEqual({ assetRequests: 1, apiRequests: 0 });
+  });
 
-    expect(response.status).toBe(503);
-    expect(response.headers.get("X-DStationery-Gate")).toBe("misconfigured");
+  it("fails closed for invalid configuration and wrong host while allowing local loopback", async () => {
+    const handleRequest = await loadHandler();
+    for (const field of ["ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MANAGEMENT_HOST", "MANAGEMENT_ADMIN_EMAIL"]) {
+      const configured = environment();
+      (configured.env as unknown as Record<string, string>)[field] = "";
+      expect((await handleRequest(request("/"), configured.env)).status, field).toBe(503);
+    }
+    const publicEnv = environment();
+    (publicEnv.env as unknown as { ACCESS_REQUIRED: string }).ACCESS_REQUIRED = "false";
+    expect((await handleRequest(new Request("https://public.example.test/"), publicEnv.env)).status).toBe(503);
+    const wrongHost = new Request("https://other.example.test/", { headers: { "Cf-Access-Jwt-Assertion": await token() } });
+    expect((await handleRequest(wrongHost, environment().env)).status).toBe(404);
+    const local = environment();
+    (local.env as unknown as { ACCESS_REQUIRED: string }).ACCESS_REQUIRED = "false";
+    expect((await handleRequest(new Request("http://127.0.0.1/"), local.env)).status).toBe(200);
+  });
+
+  it("enforces origin rules and strips Access credentials while preserving API session headers", async () => {
+    const handleRequest = await loadHandler();
+    let forwarded: Headers | undefined;
+    const { env } = environment((request) => { forwarded = request.headers; return Response.json({ ok: true }); });
+    const assertion = await token();
+    const common = { "Cf-Access-Jwt-Assertion": assertion, "Cf-Access-Authenticated-User-Email": administrator, "Cf-Access-Client-Id": "id", "Cf-Access-Client-Secret": "secret", Cookie: "CF_Authorization=x; dst_refresh=r; __Host-dst_manager_gate=old", Authorization: "Bearer app-token", "X-CSRF-Token": "csrf", "CF-Connecting-IP": "192.0.2.1" };
+    expect((await handleRequest(request("/v1/auth/logout", { method: "POST", headers: { ...common, Origin: "https://attacker.example.test" } }), env)).status).toBe(403);
+    expect((await handleRequest(request("/v1/auth/logout", { method: "POST", headers: common }), env)).status).toBe(403);
+    expect((await handleRequest(request("/v1/auth/logout", { method: "POST", headers: { ...common, Origin: origin } }), env)).status).toBe(200);
+    expect(forwarded?.get("Authorization")).toBe("Bearer app-token");
+    expect(forwarded?.get("X-CSRF-Token")).toBe("csrf");
+    expect(forwarded?.get("CF-Connecting-IP")).toBe("192.0.2.1");
+    expect(forwarded?.get("Cf-Access-Jwt-Assertion")).toBeNull();
+    expect(forwarded?.get("Cf-Access-Authenticated-User-Email")).toBeNull();
+    expect(forwarded?.get("Cf-Access-Client-Id")).toBeNull();
+    expect(forwarded?.get("Cf-Access-Client-Secret")).toBeNull();
+    expect(forwarded?.get("Cookie")).toContain("dst_refresh=r");
+    expect(forwarded?.get("Cookie")).not.toContain("CF_Authorization");
+    expect(forwarded?.get("Cookie")).not.toContain("__Host-dst_manager_gate");
+  });
+
+  it("rejects when the Access JWKS cannot be fetched without touching bindings", async () => {
+    const handleRequest = await loadHandler(false);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("jwks unavailable"); }));
+    const { env, counts } = environment();
+    expect((await handleRequest(request("/", { headers: { "Cf-Access-Jwt-Assertion": await token() } }), env)).status).toBe(403);
     expect(counts()).toEqual({ assetRequests: 0, apiRequests: 0 });
   });
 });

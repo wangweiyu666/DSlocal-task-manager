@@ -13,9 +13,11 @@ type RequestOptions = RequestInit & { authenticated?: boolean; mutation?: boolea
 export class CloudApi {
   private session: SessionTokens | null = null;
   private refreshInFlight: Promise<SessionTokens> | null = null;
+  private accessGate = false;
 
   setSession(session: SessionTokens | null): void { this.session = session; }
   getSession(): SessionTokens | null { return this.session; }
+  requiresAccessLogout(): boolean { return this.accessGate; }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const headers = new Headers(options.headers);
@@ -27,6 +29,10 @@ export class CloudApi {
       response = await fetch(path, { ...options, headers, credentials: "include" });
     } catch (error) {
       throw new CloudApiError(0, "NETWORK_UNAVAILABLE", "当前无法连接服务器", true);
+    }
+    if (response.headers.get("X-DStationery-Gate") === "access") this.accessGate = true;
+    if (response.redirected || !response.headers.get("Content-Type")?.includes("application/json")) {
+      throw new CloudApiError(response.status, "WEB_ACCESS_REQUIRED", "网页访问验证可能已过期，请刷新页面重新验证。");
     }
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (response.status === 401 && options.authenticated && options.retry !== false) {

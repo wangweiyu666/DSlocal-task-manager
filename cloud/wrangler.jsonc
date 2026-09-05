@@ -46,7 +46,7 @@
       }],
       "vars": {
         "ENVIRONMENT": "staging",
-        "ALLOWED_ORIGIN": "https://staging.rochelimit.me",
+        "ALLOWED_ORIGIN": "https://test.rochelimit.me",
         "RESEND_FROM": "DStationery Staging <no-reply@staging.notify.rochelimit.me>"
       },
       "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY"] },

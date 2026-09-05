@@ -2,6 +2,14 @@
 
 日常按改动选择一组测试，通过后停止；只有出现新改动、失败或未覆盖风险才扩大范围。本方案针对同步修复的快速反馈，不代表所有产品功能已经验证。`npm test` 和 CI 仍运行各模块完整套件，发布继续遵循对应主指南。
 
+## Luna 测试分工
+
+简单测试的编写，以及测试命令的执行、等待和结果整理，默认交给 Luna（`gpt-5.6-luna`）。简单测试包括行为和预期结果已明确的单元测试、参数校验、错误响应以及已有故障的直接回归测试。主代理提供待验证行为、相关文件、允许修改的范围及验收条件，并审查新增断言是否能发现真实回归。
+
+涉及并发、跨端状态一致性、安全边界或数据库恢复等复杂测试，先由主代理确定测试设计，仍可由 Luna 执行确定后的方案。遵循最小测试原则，优先复用既有测试，避免重复或只照抄实现的断言。
+
+Luna 应报告实际运行命令、代码版本或相关工作区变更、通过/失败/跳过数量、关键失败原因和未覆盖范围。不得为获得通过结果而跳过失败用例或削弱断言；无法定位的问题及时交回主代理。模型不可用时明确说明，不能把其他模型的执行称为 Luna。完整 Android 测试通过后，继续按下文交付 Debug APK。
+
 ## 保留哪些测试
 
 | 故障或行为 | 最小覆盖位置 | 保留理由 |
@@ -42,6 +50,20 @@ adb version
 要求 JDK 17、Android SDK。上述是 JVM 单元测试，不要求启动模拟器。缓存受限或离线运行方式见[Windows 工具指南](windows-tooling.md#使用已缓存的-robolectric-运行离线单元测试)，其中 Gradle 任务也应替换为上面的筛选命令。
 
 TypeScript 生产代码修改后，额外运行对应端的 `npm --prefix cloud run typecheck` 或 `npm --prefix web run typecheck`。这些静态检查不计入测试条数。
+
+## Access 门禁与域名迁移的最小验证
+
+由主代理设计安全边界，Luna 编写并运行 `cloud-web/tests/gate.test.ts`：用临时真实 RSA 密钥与模拟 JWKS 覆盖合法身份、伪造/过期/跨环境令牌、缺配置、旁路主机、跨站请求和公钥获取失败；不模拟 `jwtVerify` 的成功结果。通过数据驱动分组保留约 6 条测试，不为每条路径重复建立测试。Web 的 `connected-api-access.test.ts` 补充 Access 登录 HTML 不能当成有效业务会话，以及正常响应和退出标记。
+
+```text
+npm --prefix cloud-web run check
+node cloud/scripts/guard-environment.mjs staging
+node cloud/scripts/guard-environment.mjs production
+npm --prefix web test
+npm --prefix web run build:all
+```
+
+远程部署后分别运行 `node cloud-web/scripts/verify-access.mjs test.rochelimit.me` 和 `node cloud-web/scripts/verify-access.mjs staging.rochelimit.me`，验证匿名访问页面、资源与代理 API 都跳转 Access。此检查只证明边缘拦截；还须记录管理员登录成功、非管理员拒绝、两个网站各自连接正确环境，以及直接 API 仍使用应用认证的结果。本次没有 Android 代码/地址修改，不因网页门禁重复本地完整 Android 测试；若 CI 执行完整 Android 测试，则仍按下节交付 APK。
 
 ## 完整 Android 测试后的 Debug APK
 

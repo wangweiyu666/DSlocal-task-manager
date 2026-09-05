@@ -430,6 +430,7 @@ export default function ConnectedApp() {
     try { await cloudApi.logout(); } catch { /* local purge is still explicit user intent */ }
     if (spaceId) await purgeSpace(spaceId);
     cloudApi.setSession(null); setBootstrap(null); setMembership(null); setAuthState("email");
+    if (cloudApi.requiresAccessLogout()) window.location.assign("/cdn-cgi/access/logout");
   };
 
   const settingsNavigation = <nav className="settings-tabs" aria-label="设置分类">

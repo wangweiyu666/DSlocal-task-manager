@@ -150,10 +150,12 @@ Worker 结构日志只允许 `timestamp`、`level`、`event`、`environment`、`
 | 环境 | API | Web | D1 |
 | --- | --- | --- | --- |
 | local | Wrangler 本地进程 | Wrangler 本地进程 | `dstationery-local` + `dstationery-deletion-ledger-local` |
-| staging | `api-staging.rochelimit.me` | `staging.rochelimit.me` | `dstationery-staging` + `dstationery-deletion-ledger-staging`（APAC） |
-| production | `api.rochelimit.me` | 受保护且不在公开仓库记录的管理员域名 | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
+| staging | `api-staging.rochelimit.me` | `test.rochelimit.me`（Access） | `dstationery-staging` + `dstationery-deletion-ledger-staging`（APAC） |
+| production | `api.rochelimit.me` | `staging.rochelimit.me`（Access，名称历史遗留） | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
 
-local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。生产 `ALLOWED_ORIGIN`、管理员域名、`MANAGEMENT_GATE_SECRET` 与 `MANAGEMENT_ADMIN_EMAIL` 只保存在 Cloudflare/GitHub 受保护配置中；公开仓库不记录实际值。生产门禁基于已有 Workers 服务绑定和 HMAC cookie，不使用 Cloudflare Zero Trust/Access，也不需要付款方式。`cloud/scripts/guard-environment.mjs` 在远程部署前验证两个绑定均非占位符、主库/账本库分离、环境间不复用、环境 cron 独立配置、生产门禁强制启用且管理端路由未被提交。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。
+此表是 Access 迁移后的目标配置，实际切换需按[生产运行手册](stage4-production-runbook.md#本次域名与-access-迁移顺序)完成云端配置与验收。local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。两个网页使用独立 Access 应用 audience，`ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`MANAGEMENT_ADMIN_EMAIL` 保存在 Worker secrets 中。Worker 验证签名、issuer、audience、有效期和精确邮箱；页面、资源和代理 API 均在验证之后返回。应用内邮箱登录、角色和敏感操作验证继续保留。直接 API 不加 Access，Android 地址、应用认证和限流保持不变。
+
+`cloud/scripts/guard-environment.mjs` 验证数据库隔离、环境 cron、限流命名空间、Access 开关、整站 Worker 检查、域名和 API 服务绑定，禁止 workers.dev/preview 旁路。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。旧 staging 域改作生产前，应先同步未上传的网页修改并关闭旧标签页；新测试源不能直接读取旧源的本地缓存，测试 D1 数据不会迁往生产。
 
 阶段 3 首次远程部署前必须完成：
 
