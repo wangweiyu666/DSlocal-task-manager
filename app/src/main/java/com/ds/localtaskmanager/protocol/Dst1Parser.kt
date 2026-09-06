@@ -446,16 +446,16 @@ class Dst1Parser {
                 }
                 ExecutionSpec.Timer(target)
             }
-            3 -> {
+            3, 4 -> {
                 val forbidden = listOf("a", "v").firstOrNull(execution::containsKey)
                 if (forbidden != null) {
                     invalid(
                         Dst1ErrorCode.CONFLICTING_FIELDS,
                         "$context.$forbidden",
-                        "信息告知任务不能包含 $context.$forbidden",
+                        "该执行类型不能包含 $context.$forbidden",
                     )
                 }
-                ExecutionSpec.Information
+                if (kind == 4) ExecutionSpec.Mood else ExecutionSpec.Information
             }
             else -> invalid(
                 Dst1ErrorCode.INVALID_VALUE,

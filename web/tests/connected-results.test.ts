@@ -60,6 +60,32 @@ describe("connected result presentation", () => {
     expect(JSON.stringify(value)).not.toContain("RESULT_SUBMITTED");
   });
 
+  it("presents mood rating, label, and text from a terminal mood result", () => {
+    const moodTask = entity("task", "CloudMoodTask0001", {
+      content: { v: 1, b: "CloudMoodBatch01", t: [{ i: "CloudMoodTask0001", n: "今天的心情怎么样", r: 1, u: { k: 4 } }] },
+    });
+    const moodResult = entity("execution_event", "mood-event-1", {
+      assignmentId: "assignment-1", occurrenceKey: "occurrence-1", taskRevision: 1,
+      eventType: "RESULT_SUBMITTED", occurredAt: "2026-08-23T12:34:00Z",
+      data: { status: "COMPLETED", executionKind: "MOOD", moodRating: 4, moodText: "今天状态不错" },
+    });
+
+    const value = presentExecutionResult(moodResult, [moodTask, occurrence, moodResult], "Asia/Hong_Kong");
+
+    expect(value).toMatchObject({ moodRating: 4, moodLabel: "不错", moodText: "今天状态不错" });
+  });
+
+  it("does not present mood data on an undo event", () => {
+    const moodUndo = entity("execution_event", "mood-undo-1", {
+      assignmentId: "assignment-1", occurrenceKey: "occurrence-1", taskRevision: 1,
+      eventType: "COMPLETION_UNDONE", occurredAt: "2026-08-23T12:34:00Z",
+      data: { status: "PENDING", executionKind: "MOOD", moodRating: 5, moodText: "不应回显" },
+    });
+    expect(presentExecutionResult(moodUndo, [task, occurrence, moodUndo], "Asia/Hong_Kong")).toMatchObject({
+      moodRating: null, moodLabel: null, moodText: null,
+    });
+  });
+
   it("translates legacy result and review codes without exposing internal keys", () => {
     const result = entity("execution_event", "event-2", {
       assignmentId: "assignment-1",

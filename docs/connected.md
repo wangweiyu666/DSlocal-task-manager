@@ -97,6 +97,7 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 - 每名执行者拥有独立 assignment。取消勾选会取消该成员分配，并在 Android 同步后移除对应云任务。
 - 执行事件不可变，绑定执行者实际看到的任务版本；旧修订或取消后的结果保留并标记待复核。
 - 信息告知正文使用独立不可变命令同步，并展示在管理员结果卡片。
+- 心情任务使用 `u: { k: 4 }`。已完成的 `EXECUTION_EVENT` 在 `data` 中携带 `executionKind: "MOOD"`、`status: "COMPLETED"`、`moodRating`（整数 1～5）和 `moodText`（可空字符串，最多 2000 个 Unicode 字符）。服务端按提交的任务版本和实例日期校验执行类型，包含单日覆盖；沿用事件权限、幂等和结果选择。草稿不上传，MISSED 与撤销事件不携带答案。管理员从所选事件展示心情，不从其他提交回填已撤销答案。
 - 同一分配的首个有效终态结果暂定生效，后到结果作为 duplicate 保留；管理员改选写入新审计事件。
 
 关键竞态结果：
@@ -165,12 +166,13 @@ Worker 结构日志只允许 `timestamp`、`level`、`event`、`environment`、`
 4. 先迁移主库，再迁移删除账本库，最后部署 Worker；
 5. 用非敏感 canary 演练“删除 → 主库 Time Travel 恢复 → 账本重放 → canary 仍不可用”。
 
-联网 Android 分为 staging 和 production。CI 验证两者的 Debug 变体，但不上传联网 Debug APK：
+联网 Android 分为 staging 和 production，两者共用联网源码及测试。默认 CI 在 connected 执行一次共用及联网单元测试，仍分别检查两者的 Lint 和 Debug 构建，但不上传联网 Debug APK：
 
 ```powershell
-.\gradlew.bat testConnectedDebugUnitTest lintConnectedDebug assembleConnectedDebug --no-daemon
-.\gradlew.bat testProductionDebugUnitTest lintProductionRelease assembleProductionRelease --no-daemon
+.\gradlew.bat testConnectedDebugUnitTest lintConnectedDebug assembleConnectedDebug lintProductionDebug assembleProductionDebug --no-daemon
 ```
+
+生产发布门禁继续按发布指南执行；需要生产变体单元测试时使用 `testProductionDebugUnitTest`。变体源码、环境或构建配置变更可在手动 Android CI 勾选 `full_android_matrix` 运行完整矩阵，见[最小测试方案](minimal-testing.md)。
 
 staging 为 `0.1.0-alpha.9-connected`（versionCode 10）、包名 `com.ds.localtaskmanager.connected`，固定连接 staging API。生产执行者为 `0.1.0-alpha.10-executor`（versionCode 11）、包名 `com.ds.localtaskmanager.connected.production`，固定连接 production API。两者因包名不同拥有独立 Android 沙箱、Room、outbox、会话和 Keystore；生产签名配置为 `local-task-manager-connected-production-signing.properties`，不得复用离线或 staging 密钥。
 

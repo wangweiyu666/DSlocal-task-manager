@@ -107,8 +107,8 @@ export function validateDst1Batch(value: unknown, validateSchema: SchemaValidato
     }
     if (task.u && typeof task.u === "object" && !Array.isArray(task.u)) {
       const execution = task.u as Record<string, unknown>;
-      if ((execution.k === 2 || execution.k === 3) && "a" in execution) fail("CONFLICTING_FIELDS", `${path}.u.a`, "该执行方式禁止字段 a");
-      if (execution.k === 3 && "v" in execution) fail("CONFLICTING_FIELDS", `${path}.u.v`, "信息告知任务禁止字段 v");
+      if ([2, 3, 4].includes(Number(execution.k)) && "a" in execution) fail("CONFLICTING_FIELDS", `${path}.u.a`, "该执行方式禁止字段 a");
+      if ([3, 4].includes(Number(execution.k)) && "v" in execution) fail("CONFLICTING_FIELDS", `${path}.u.v`, "该执行方式禁止字段 v");
     }
   }
   if (!candidate.d && !candidate.g?.length && !candidate.t?.length && !candidate.z?.length && !candidate.e?.length && candidate.d !== "") {

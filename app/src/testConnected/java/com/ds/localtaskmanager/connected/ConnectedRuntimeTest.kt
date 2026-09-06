@@ -1,6 +1,7 @@
 package com.ds.localtaskmanager.connected
 
 import com.ds.localtaskmanager.data.TaskInstanceEntity
+import com.ds.localtaskmanager.data.MoodSubmissionEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -94,6 +95,30 @@ class ConnectedRuntimeTest {
 
         val lateUndo = buildCompletionUndoData(instance.copy(deadline = "2026-08-23T12:00"), Instant.parse("2026-08-23T05:00:00Z").toEpochMilli(), "Asia/Hong_Kong")
         assertEquals("\"MISSED\"", lateUndo["status"].toString())
+    }
+
+    @Test
+    fun moodResultCarriesSubmittedAnswerOnlyForCompletedInstance() {
+        val instance = TaskInstanceEntity(
+            taskId = "CloudMoodTask0001", occurrenceKey = "once", name = "今天的心情怎么样", description = "",
+            taskDate = "2026-08-23", deadline = null, groupId = null, required = true, points = 2,
+            sortOrder = null, completionMessage = "已记录", status = "COMPLETED", completedAtEpochMillis = 1_777_000_000_000,
+            createdAtEpochMillis = 1_776_000_000_000, updatedAtEpochMillis = 1_777_000_000_000, executionKind = "MOOD",
+        )
+        val mood = MoodSubmissionEntity("CloudMoodTask0001", "once", 4, "今天状态不错", 1, 2, 2)
+
+        val completed = buildExecutionResultData(instance, null, mood)
+        assertEquals("4", completed["moodRating"]?.toString())
+        assertEquals("\"今天状态不错\"", completed["moodText"]?.toString())
+
+        val pending = buildExecutionResultData(instance.copy(status = "PENDING", completedAtEpochMillis = null), null, mood)
+        assertFalse(pending.containsKey("moodRating"))
+        assertFalse(pending.containsKey("moodText"))
+        val draft = buildExecutionResultData(instance, null, mood.copy(submittedAtEpochMillis = null))
+        assertFalse(draft.containsKey("moodRating"))
+        val undone = buildCompletionUndoData(instance, Instant.parse("2026-08-23T05:00:00Z").toEpochMilli(), "Asia/Hong_Kong")
+        assertFalse(undone.containsKey("moodRating"))
+        assertFalse(undone.containsKey("moodText"))
     }
 
     private fun notification(groupKey: String, notificationId: String) = ConnectedNotification(

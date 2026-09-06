@@ -316,6 +316,7 @@ class RoomInstanceGenerationService(
         )
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
+        "MOOD" -> ExecutionSpec.Mood
         else -> ExecutionSpec.Normal
     }
 
@@ -324,6 +325,7 @@ class RoomInstanceGenerationService(
         is ExecutionSpec.Counter -> "COUNTER"
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
+        ExecutionSpec.Mood -> "MOOD"
     }
 
     private fun ExecutionSpec.actionValue(): Int? = (this as? ExecutionSpec.Counter)?.action?.protocolValue

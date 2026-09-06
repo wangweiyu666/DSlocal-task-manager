@@ -77,6 +77,7 @@ data class TaskImportChange(
     val oldStatus: String? = null,
     val newStatus: String? = null,
     val historicalPointsMoved: Int = 0,
+    val executionKind: String? = null,
 )
 
 data class ImportPreview(
@@ -272,6 +273,7 @@ class RoomImportService(
                 oldStatus = oldInstance?.status,
                 newStatus = updatePlan.status.name,
                 historicalPointsMoved = historicalPointsMoved,
+                executionKind = task.execution.kindName(),
             )
         }.toMutableList()
         batch.cancelledTaskIds.forEach { id ->
@@ -316,6 +318,7 @@ class RoomImportService(
                 oldDeadline = instance?.deadline,
                 newDeadline = (exception.deadline as? Field.Value)?.value?.toString() ?: instance?.deadline,
                 oldStatus = instance?.status,
+                executionKind = exception.execution.valueOr(definition?.toExecutionSpec())?.kindName(),
             )
         }
         return ImportPreview(
@@ -670,6 +673,10 @@ class RoomImportService(
         )
         instanceDao.upsertInstances(listOf(updated))
 
+        if (existing.executionKind != updated.executionKind) {
+            executionDao.deleteMood(existing.taskId, existing.occurrenceKey)
+        }
+
         val resetSteps = clearing || exception.steps is Field.Value
         if (resetSteps) {
             val steps = if (clearing) {
@@ -731,6 +738,7 @@ class RoomImportService(
         )
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
+        "MOOD" -> ExecutionSpec.Mood
         else -> ExecutionSpec.Normal
     }
 
@@ -908,6 +916,7 @@ class RoomImportService(
             "\"counterValue\":${progress?.counterValue ?: "null"}," +
             "\"elapsedMillis\":${progress?.elapsedMillis ?: "null"}}"
         executionDao.deleteProgress(oldInstance.taskId, oldInstance.occurrenceKey)
+        executionDao.deleteMood(oldInstance.taskId, oldInstance.occurrenceKey)
         if (oldDefinition.executionKind == "INFORMATION" && task.execution.kindName() != "INFORMATION") {
             executionDao.deleteSubmission(oldInstance.taskId, oldInstance.occurrenceKey)
         }
@@ -1046,6 +1055,7 @@ class RoomImportService(
         is ExecutionSpec.Counter -> "COUNTER"
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
+        ExecutionSpec.Mood -> "MOOD"
     }
 
     private fun ExecutionSpec.actionValue(): Int? =

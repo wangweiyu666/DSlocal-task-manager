@@ -9,6 +9,9 @@ export interface ExecutionResultPresentation {
   occurredAt: string;
   taskRevision: number | null;
   informationContent: string | null;
+  moodRating: number | null;
+  moodText: string | null;
+  moodLabel: string | null;
   reviewMessage: string | null;
   duplicateMessage: string | null;
 }
@@ -92,10 +95,11 @@ export function presentExecutionResult(
     ? entities.filter((item) => item.entityType === "information_submission" && item.payload.occurrenceKey === occurrenceKey && item.payload.assignmentId === assignmentId)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
     : undefined;
-  const informationContent = eventType === "COMPLETION_UNDONE"
+  const informationContent = eventType === "COMPLETION_UNDONE" || data.executionKind === "MOOD"
     ? null
     : nonEmptyString(data.informationContent) ?? nonEmptyString(separateSubmission?.payload.content);
   const reviewReason = nonEmptyString(result.payload.reviewReason);
+  const moodRating = eventType !== "COMPLETION_UNDONE" && data.status === "COMPLETED" && data.executionKind === "MOOD" && Number.isInteger(data.moodRating) && Number(data.moodRating) >= 1 && Number(data.moodRating) <= 5 ? Number(data.moodRating) : null;
 
   return {
     taskName,
@@ -105,6 +109,9 @@ export function presentExecutionResult(
     occurredAt: dateTimeLabel(result.payload.occurredAt, timeZone),
     taskRevision: Number.isInteger(result.payload.taskRevision) ? Number(result.payload.taskRevision) : null,
     informationContent,
+    moodRating,
+    moodText: moodRating !== null && typeof data.moodText === "string" ? data.moodText : null,
+    moodLabel: moodRating === null ? null : ["很差", "较差", "一般", "不错", "很好"][moodRating - 1],
     reviewMessage: reviewReason ? reviewMessages[reviewReason] ?? "这条结果需要管理员核对后采用。" : null,
     duplicateMessage: nonEmptyString(result.payload.duplicateOf) ? "同一任务已有更早提交，本条作为候选结果保留。" : null,
   };

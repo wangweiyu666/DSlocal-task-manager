@@ -31,6 +31,7 @@ interface TaskExecutionService {
     suspend fun setCounter(key: TaskInstanceKey, value: Int): ExecutionState.Counter
     suspend fun addTimerElapsed(key: TaskInstanceKey, elapsedMillis: Long): ExecutionState.Timer
     suspend fun saveInformationDraft(key: TaskInstanceKey, content: String): ExecutionState.Information
+    suspend fun saveMoodDraft(key: TaskInstanceKey, rating: Int?, text: String): ExecutionState.Mood
     suspend fun complete(key: TaskInstanceKey)
     suspend fun undoCompletion(key: TaskInstanceKey)
     suspend fun reconcile(key: TaskInstanceKey): TaskInstanceEntity
@@ -185,6 +186,18 @@ class RoomTaskExecutionService(
         ExecutionState.Information(normalized, null)
     }
 
+    override suspend fun saveMoodDraft(key: TaskInstanceKey, rating: Int?, text: String): ExecutionState.Mood = database.withTransaction {
+        val instance = requirePending(key)
+        if (instance.executionKind != "MOOD") fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "任务不是心情任务")
+        if (rating != null && rating !in 1..5) fail(TaskOperationCode.MOOD_OUT_OF_RANGE, "请选择五档心情之一")
+        if (text.codePointCount(0, text.length) > 2000) fail(TaskOperationCode.MOOD_TEXT_TOO_LONG, "感受不能超过 2000 个字符")
+        val old = executionDao.getMood(key.taskId, key.occurrenceKey)
+        val now = clock.millis()
+        executionDao.upsertMood(MoodSubmissionEntity(key.taskId, key.occurrenceKey, rating, text,
+            old?.createdAtEpochMillis ?: now, now, null))
+        ExecutionState.Mood(rating, text, null)
+    }
+
     override suspend fun complete(key: TaskInstanceKey) = database.withTransaction {
         val original = requireInstance(key)
         val before = resultService.capture(listOf(original.taskDate))
@@ -201,6 +214,10 @@ class RoomTaskExecutionService(
             val submission = executionDao.getSubmission(key.taskId, key.occurrenceKey)
                 ?: fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "告知正文尚未填写")
             executionDao.upsertSubmission(submission.copy(submittedAtEpochMillis = now, updatedAtEpochMillis = now))
+        }
+        if (instance.executionKind == "MOOD") {
+            val mood = requireNotNull(executionDao.getMood(key.taskId, key.occurrenceKey))
+            executionDao.upsertMood(mood.copy(submittedAtEpochMillis = now, updatedAtEpochMillis = now))
         }
         instanceDao.upsertInstances(
             listOf(
@@ -267,6 +284,9 @@ class RoomTaskExecutionService(
                 createdAtEpochMillis = now,
             ),
         )
+        executionDao.getMood(key.taskId, key.occurrenceKey)?.let {
+            executionDao.upsertMood(it.copy(submittedAtEpochMillis = null, updatedAtEpochMillis = now))
+        }
         log(instance, "COMPLETION_UNDONE", null)
         resultService.writeChanges(
             before,
@@ -301,6 +321,9 @@ class RoomTaskExecutionService(
     private suspend fun isExecutionTargetReached(instance: TaskInstanceEntity): Boolean {
         val key = TaskInstanceKey(instance.taskId, instance.occurrenceKey)
         return when (instance.executionKind) {
+            "MOOD" -> executionDao.getMood(key.taskId, key.occurrenceKey)?.let {
+                it.rating in 1..5 && it.text.codePointCount(0, it.text.length) <= 2000
+            } ?: false
             "NORMAL" -> true
             "COUNTER" -> (executionDao.getProgress(key.taskId, key.occurrenceKey)?.counterValue ?: 0) >=
                 instance.requireTarget()
@@ -316,6 +339,9 @@ class RoomTaskExecutionService(
 
     private suspend fun executionState(instance: TaskInstanceEntity): ExecutionState =
         when (instance.executionKind) {
+            "MOOD" -> executionDao.getMood(instance.taskId, instance.occurrenceKey).let {
+                ExecutionState.Mood(it?.rating, it?.text.orEmpty(), it?.submittedAtEpochMillis)
+            }
             "NORMAL" -> ExecutionState.Normal
             "COUNTER" -> counterState(
                 instance,

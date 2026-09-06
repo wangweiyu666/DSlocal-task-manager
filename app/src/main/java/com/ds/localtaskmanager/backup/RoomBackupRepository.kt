@@ -45,6 +45,7 @@ class RoomBackupRepository(
             instanceSteps = dao.instanceSteps().map { it.toBackup() },
             progress = dao.progress().map { it.toBackup() },
             information = dao.information().map { it.toBackup() },
+            moods = dao.moods().map { it.toBackup() },
             notes = dao.notes().map { it.toBackup() },
             ledger = dao.ledger().map { it.toBackup() },
             actionLogs = dao.actionLogs().map { it.toBackup() },
@@ -69,6 +70,7 @@ class RoomBackupRepository(
         dao.clearLedger()
         dao.clearNotes()
         dao.clearInformation()
+        dao.clearMoods()
         dao.clearProgress()
         dao.clearInstanceSteps()
         dao.clearInstances()
@@ -89,6 +91,7 @@ class RoomBackupRepository(
         dao.upsertInstanceSteps(payload.instanceSteps.map { it.toEntity() })
         dao.upsertProgress(payload.progress.map { it.toEntity() })
         dao.upsertInformation(payload.information.map { it.toEntity() })
+        dao.upsertMoods(payload.moods.map { it.toEntity() })
         dao.upsertNotes(payload.notes.map { it.toEntity() })
         dao.upsertLedger(payload.ledger.map { it.toEntity() })
         dao.upsertActionLogs(payload.actionLogs.map { it.toEntity() })
@@ -144,6 +147,24 @@ internal object BackupMerger {
             local.information, backup.information, { "${it.taskId}|${it.occurrenceKey}" }, InformationBackup::updatedAtEpochMillis,
             "information", "告知正文", { it.taskId }, InformationBackup::content, state,
         )
+        val draftMoodKeys = instances.filter { it.executionKind == "MOOD" && it.status != "COMPLETED" }
+            .mapTo(hashSetOf()) { it.taskId to it.occurrenceKey }
+        val moodCandidates = updated(
+            local.moods.filter { (it.taskId to it.occurrenceKey) in draftMoodKeys },
+            backup.moods.filter { (it.taskId to it.occurrenceKey) in draftMoodKeys },
+            { "${it.taskId}|${it.occurrenceKey}" }, MoodBackup::updatedAtEpochMillis,
+            "mood", "心情记录", { it.taskId }, { "${it.rating ?: "未选择"}：${it.text}" }, state,
+        )
+        // Completed answers belong to the selected instance snapshot, not to a newer draft.
+        val moods = instances.filter { it.executionKind == "MOOD" }.mapNotNull { instance ->
+            val key = instance.taskId to instance.occurrenceKey
+            val source = if (instance.status == "COMPLETED") {
+                if (local.instances.any { it == instance }) local.moods else backup.moods
+            } else moodCandidates
+            source.firstOrNull { (it.taskId to it.occurrenceKey) == key }?.let {
+                if (instance.status == "COMPLETED") it else it.copy(submittedAtEpochMillis = null)
+            }
+        }
         val notes = updated(
             local.notes, backup.notes, { "${it.taskId}|${it.occurrenceKey}" }, NoteBackup::updatedAtEpochMillis,
             "note", "任务备注", { it.taskId }, NoteBackup::content, state,
@@ -166,6 +187,7 @@ internal object BackupMerger {
                 instanceSteps = instanceSteps.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey }, { it.position })),
                 progress = progress.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 information = information.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
+                moods = moods.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 notes = notes.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 ledger = ledger.sortedBy { it.ledgerId },
                 actionLogs = actionLogs.sortedBy { it.eventId },

@@ -300,6 +300,26 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
     .bind(spaceId, assignmentId, storedOccurrenceKey).first<{ execution_event_id: string; selected_by_membership_id: string; event_type: string; occurred_at: string }>();
   const terminal = new Set(["COMPLETED", "RESULT_SUBMITTED", "CORRECTION"]).has(eventType);
   const undo = eventType === "COMPLETION_UNDONE";
+  const eventData = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data as Record<string, unknown> : {};
+  const hasMood = "moodRating" in eventData || "moodText" in eventData;
+  if (terminal || hasMood || eventData.executionKind === "MOOD") {
+    const revision = await env.DB.prepare("SELECT r.content_json,o.local_date FROM task_revisions r JOIN task_occurrences o ON o.task_id=r.task_id AND o.space_id=r.space_id WHERE o.space_id=? AND o.assignment_id=? AND o.occurrence_key=? AND r.revision=?")
+      .bind(spaceId, assignmentId, storedOccurrenceKey, taskRevision).first<{ content_json: string; local_date: string }>();
+    if (!revision) throw new ApiError(400, "INVALID_REQUEST", "任务版本不存在");
+    const content = parseJson(revision.content_json);
+    const task = singleDstTask(content);
+    const exception = Array.isArray(content.e) ? content.e.find((value: Record<string, unknown>) => value.i === task.i && value.y === revision.local_date) as Record<string, unknown> | undefined : undefined;
+    const execution = exception && "u" in exception ? exception.u : task.u;
+    const isMood = execution !== null && typeof execution === "object" && (execution as Record<string, unknown>).k === 4;
+    if (isMood && terminal && !["COMPLETED", "MISSED"].includes(String(eventData.status))) throw new ApiError(400, "INVALID_REQUEST", "心情结果状态无效");
+    if (hasMood && (!isMood || !terminal || eventData.status !== "COMPLETED")) throw new ApiError(400, "INVALID_REQUEST", "只有已完成的心情任务可以提交心情答案");
+    if (eventData.executionKind === "MOOD" && !isMood) throw new ApiError(400, "INVALID_REQUEST", "心情执行类型与任务版本不一致");
+    if (isMood && terminal && (eventData.status === "COMPLETED" || eventType === "COMPLETED")) {
+      if (eventData.executionKind !== "MOOD" || !Number.isInteger(eventData.moodRating) || Number(eventData.moodRating) < 1 || Number(eventData.moodRating) > 5 || typeof eventData.moodText !== "string" || Array.from(eventData.moodText).length > 2000) {
+        throw new ApiError(400, "INVALID_REQUEST", "心情答案必须为 1～5 档，感受最多 2000 个字符");
+      }
+    }
+  }
   if (undo) {
     const data = strictObject(payload.data, ["status", "localOccurrenceKey", "taskName", "taskDate", "executionKind"], "data");
     if (!["PENDING", "NOT_STARTED", "MISSED"].includes(String(data.status))) throw new ApiError(400, "INVALID_REQUEST", "撤销完成后的状态无效");

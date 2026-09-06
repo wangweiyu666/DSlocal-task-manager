@@ -5,6 +5,7 @@ import com.ds.localtaskmanager.data.AppProfileEntity
 import com.ds.localtaskmanager.data.ExecutionProgressEntity
 import com.ds.localtaskmanager.data.ImportBatchEntity
 import com.ds.localtaskmanager.data.InformationSubmissionEntity
+import com.ds.localtaskmanager.data.MoodSubmissionEntity
 import com.ds.localtaskmanager.data.InstanceStepEntity
 import com.ds.localtaskmanager.data.PointsLedgerEntity
 import com.ds.localtaskmanager.data.RecurrenceExceptionEntity
@@ -18,7 +19,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class BackupPayload(
-    val schemaVersion: Int = 2,
+    val schemaVersion: Int = 3,
     val settings: PortableSettings = PortableSettings(),
     val profiles: List<ProfileBackup> = emptyList(),
     val importBatches: List<ImportBatchBackup> = emptyList(),
@@ -30,6 +31,7 @@ data class BackupPayload(
     val instanceSteps: List<InstanceStepBackup> = emptyList(),
     val progress: List<ProgressBackup> = emptyList(),
     val information: List<InformationBackup> = emptyList(),
+    val moods: List<MoodBackup> = emptyList(),
     val notes: List<NoteBackup> = emptyList(),
     val ledger: List<LedgerBackup> = emptyList(),
     val actionLogs: List<ActionLogBackup> = emptyList(),
@@ -48,7 +50,7 @@ data class BackupMetadata(
     val createdAtEpochMillis: Long,
     val appVersion: String,
     val sourceTimeZone: String,
-    val payloadSchemaVersion: Int = 2,
+    val payloadSchemaVersion: Int = 3,
     val counts: BackupCounts,
 )
 
@@ -159,6 +161,19 @@ data class InstanceBackup(
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
 )
+
+@Serializable data class MoodBackup(
+    val taskId: String,
+    val occurrenceKey: String,
+    val rating: Int?,
+    val text: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+    val submittedAtEpochMillis: Long?,
+)
+
+internal fun MoodSubmissionEntity.toBackup() = MoodBackup(taskId, occurrenceKey, rating, text, createdAtEpochMillis, updatedAtEpochMillis, submittedAtEpochMillis)
+internal fun MoodBackup.toEntity() = MoodSubmissionEntity(taskId, occurrenceKey, rating, text, createdAtEpochMillis, updatedAtEpochMillis, submittedAtEpochMillis)
 
 @Serializable data class InformationBackup(
     val taskId: String,

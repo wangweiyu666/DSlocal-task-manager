@@ -17,7 +17,7 @@ function compactRecurrence(value: Dst1Recurrence): Dst1Recurrence {
 function compactExecution(value: Dst1Execution): Dst1Execution {
   if (value.k === 1) return { k: 1, a: value.a, v: value.v };
   if (value.k === 2) return { k: 2, v: value.v };
-  return { k: 3 };
+  return value.k === 4 ? { k: 4 } : { k: 3 };
 }
 
 export function compactTask(task: Dst1Task): Dst1Task {

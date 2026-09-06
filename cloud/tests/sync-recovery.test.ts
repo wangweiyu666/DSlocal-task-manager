@@ -82,27 +82,47 @@ describe("session rotation", () => {
 });
 
 describe("completion undo", () => {
-  it("syncs a completed → pending → completed transition and ignores a delayed old undo", async () => {
-    const published = await submit(command("TASK_PUBLISH", undefined, { content }));
+  it("accepts valid mood completion data and rejects invalid rating, text, and task type", async () => {
+    const moodContent = { v: 1, b: "CloudMoodBatch01", t: [{ i: "CloudTask0000001", n: "今天的心情怎么样", r: 1, u: { k: 4 } }] };
+    const published = await submit(command("TASK_PUBLISH", undefined, { content: moodContent }));
     const assignmentId = published.details!.assignmentId as string;
     const occurrenceKey = "CloudTask0000001:1:1:2026-09-05T00:00";
     expect(await submit(command("OCCURRENCE_UPSERT", occurrenceKey, { taskId: "CloudTask0000001", assignmentId, occurrenceKey, taskRevision: 1, timeZoneVersion: 1, localDate: "2026-09-05", scheduledAt: "2026-09-04T16:00:00Z" }), "EXECUTOR")).toMatchObject({ status: "accepted" });
-    const event = (eventType: string, status: string, occurredAt: string) => command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType, data: { status }, occurredAt });
-    const complete = event("RESULT_SUBMITTED", "COMPLETED", "2026-09-05T01:00:00Z");
-    const undo = event("COMPLETION_UNDONE", "PENDING", "2026-09-05T01:01:00Z");
-    const redo = event("RESULT_SUBMITTED", "COMPLETED", "2026-09-05T01:02:00Z");
+    const event = (data: Record<string, unknown>) => command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType: "RESULT_SUBMITTED", data, occurredAt: "2026-09-05T01:00:00Z" });
+
+    expect(await submit(event({ status: "COMPLETED", executionKind: "MOOD", moodRating: 4, moodText: "很好" }), "EXECUTOR")).toMatchObject({ status: "accepted" });
+    expect(await submit(event({ status: "COMPLETED", executionKind: "MOOD" }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    expect(await submit(event({ status: "COMPLETED", executionKind: "MOOD", moodRating: 0, moodText: "无效" }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    expect(await submit(event({ status: "COMPLETED", executionKind: "MOOD", moodRating: 6, moodText: "无效" }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    expect(await submit(event({ status: "COMPLETED", executionKind: "MOOD", moodRating: 4, moodText: "😀".repeat(2001) }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    expect(await submit(event({ status: "COMPLETED", executionKind: "NORMAL", moodRating: 4, moodText: "错误类型" }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    expect(await submit(command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType: "COMPLETION_UNDONE", data: { status: "PENDING", executionKind: "MOOD", moodRating: 4, moodText: "撤销不应携带答案" }, occurredAt: "2026-09-05T01:01:00Z" }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+  });
+
+  it("syncs a completed → pending → completed transition and ignores a delayed old undo", async () => {
+    const moodContent = { v: 1, b: "CloudMoodBatch02", t: [{ i: "CloudTask0000001", n: "今天的心情怎么样", r: 1, u: { k: 4 } }] };
+    const published = await submit(command("TASK_PUBLISH", undefined, { content: moodContent }));
+    const assignmentId = published.details!.assignmentId as string;
+    const occurrenceKey = "CloudTask0000001:1:1:2026-09-05T00:00";
+    expect(await submit(command("OCCURRENCE_UPSERT", occurrenceKey, { taskId: "CloudTask0000001", assignmentId, occurrenceKey, taskRevision: 1, timeZoneVersion: 1, localDate: "2026-09-05", scheduledAt: "2026-09-04T16:00:00Z" }), "EXECUTOR")).toMatchObject({ status: "accepted" });
+    const event = (eventType: string, data: Record<string, unknown>, occurredAt: string) => command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType, data, occurredAt });
+    const complete = event("RESULT_SUBMITTED", { status: "COMPLETED", executionKind: "MOOD", moodRating: 1, moodText: "低落" }, "2026-09-05T01:00:00Z");
+    const undo = event("COMPLETION_UNDONE", { status: "PENDING", executionKind: "MOOD" }, "2026-09-05T01:01:00Z");
+    const redo = event("RESULT_SUBMITTED", { status: "COMPLETED", executionKind: "MOOD", moodRating: 5, moodText: "很好" }, "2026-09-05T01:02:00Z");
     for (const value of [complete, undo, redo]) {
       expect(await submit(value, "EXECUTOR")).toMatchObject({ status: "accepted" });
+      const stored = row("SELECT payload_json FROM execution_events WHERE id='" + value.entityId + "'");
+      expect(JSON.parse(String(stored.payload_json))).toEqual(value.payload.data);
       const selected = row("SELECT execution_event_id FROM result_selections ORDER BY created_at DESC,rowid DESC LIMIT 1");
       expect(selected!.execution_event_id).toBe(value.entityId);
       const projection = row("SELECT payload_json FROM space_entities WHERE entity_type='result_selection' ORDER BY change_sequence DESC LIMIT 1");
       expect(JSON.parse(String(projection!.payload_json)).executionEventId).toBe(value.entityId);
     }
     expect(await submit(undo, "EXECUTOR")).toMatchObject({ status: "duplicate" });
-    await submit(event("COMPLETION_UNDONE", "PENDING", "2026-09-05T01:01:00Z"), "EXECUTOR");
+    await submit(event("COMPLETION_UNDONE", { status: "PENDING", executionKind: "MOOD" }, "2026-09-05T01:01:00Z"), "EXECUTOR");
     expect(row("SELECT execution_event_id FROM result_selections ORDER BY created_at DESC,rowid DESC LIMIT 1")!.execution_event_id).toBe(redo.entityId);
     expect(await submit(command("RESULT_SELECT", uuidV7(), { assignmentId, occurrenceKey, executionEventId: undo.entityId, reason: "管理员确认撤销" }))).toMatchObject({ status: "accepted" });
-    await submit(event("RESULT_SUBMITTED", "COMPLETED", "2026-09-05T01:03:00Z"), "EXECUTOR");
+    await submit(event("RESULT_SUBMITTED", { status: "COMPLETED", executionKind: "MOOD", moodRating: 5, moodText: "很好" }, "2026-09-05T01:03:00Z"), "EXECUTOR");
     expect(row("SELECT execution_event_id FROM result_selections ORDER BY created_at DESC,rowid DESC LIMIT 1")!.execution_event_id).toBe(undo.entityId);
   });
 });

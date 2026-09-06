@@ -94,6 +94,46 @@ class DstbCodecTest {
         assertTrue(decodedV1.payload.recurrenceExceptions.isEmpty())
     }
 
+    @Test
+    fun `business schema 3 round trips mood submissions`() {
+        val created = 1_700_000_000_000
+        val mood = MoodBackup(
+            taskId = "task-mood",
+            occurrenceKey = "2026-08-05",
+            rating = 4,
+            text = "今天状态不错 😀",
+            createdAtEpochMillis = created,
+            updatedAtEpochMillis = created + 2,
+            submittedAtEpochMillis = created + 1,
+        )
+        val instance = InstanceBackup(
+            taskId = "task-mood", occurrenceKey = "2026-08-05", name = "今天的心情怎么样", description = "",
+            taskDate = "2026-08-05", deadline = null, groupId = null, required = true, points = 1,
+            sortOrder = null, completionMessage = "完成", status = "COMPLETED", completedAtEpochMillis = created + 1,
+            createdAtEpochMillis = created, updatedAtEpochMillis = created + 2, category = "TEMPORARY",
+            executionKind = "MOOD", executionAction = null, executionTarget = null, reminderMinutesJson = null,
+            publishedAtEpochMillis = created, groupNameSnapshot = null,
+        )
+        val definition = DefinitionBackup(
+            taskId = "task-mood", name = "今天的心情怎么样", description = "", groupId = null, required = true,
+            taskDate = "2026-08-05", deadline = null, points = 1, sortOrder = null, completionMessage = "完成",
+            stepsFingerprint = "", cancelled = false, createdAtEpochMillis = created, updatedAtEpochMillis = created,
+            executionKind = "MOOD",
+        )
+        val payload = BackupPayload(schemaVersion = 3, definitions = listOf(definition), instances = listOf(instance), moods = listOf(mood))
+        val metadata = metadata().copy(payloadSchemaVersion = 3, counts = BackupCounts(0, 1, 1, 0, 0, 0))
+
+        val decoded = DstbCodec.decode(DstbCodec.encode(metadata, payload))
+
+        BackupValidator.validate(decoded)
+        assertEquals(3, decoded.payload.schemaVersion)
+        assertEquals(listOf(mood), decoded.payload.moods)
+        val mismatchedSubmission = decoded.copy(
+            payload = decoded.payload.copy(moods = listOf(mood.copy(submittedAtEpochMillis = created))),
+        )
+        assertTrue(runCatching { BackupValidator.validate(mismatchedSubmission) }.isFailure)
+    }
+
     private fun rewriteCrc(bytes: ByteArray) {
         val crc = CRC32().apply { update(bytes, 0, bytes.size - 4) }.value
         repeat(4) { index -> bytes[bytes.size - 4 + index] = ((crc ushr (index * 8)) and 0xff).toByte() }

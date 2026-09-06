@@ -86,6 +86,49 @@ class W22ExecutionViewModelTest {
         assertEquals(2, synchronizationRequests)
     }
 
+    @Test
+    fun `mood text is debounced and latest edit is flushed before completion`() = runTest(dispatcher) {
+        val execution = FakeExecutionService(ExecutionState.Mood(null, "", null))
+        val viewModel = ExecutionViewModel(KEY, execution, FakeRepository(MOOD_INSTANCE), FakeNoteService())
+        runCurrent()
+
+        viewModel.updateMoodRating(4)
+        runCurrent()
+        assertEquals(listOf(4 to ""), execution.moodSaved)
+        viewModel.updateMoodText("first")
+        advanceTimeBy(250)
+        runCurrent()
+        viewModel.updateMoodText("last")
+        advanceTimeBy(499)
+        runCurrent()
+        assertEquals(listOf(4 to ""), execution.moodSaved)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf(4 to "", 4 to "last"), execution.moodSaved)
+
+        var flushed = false
+        viewModel.updateMoodText("before complete")
+        viewModel.flushNote { flushed = true }
+        runCurrent()
+        assertEquals(true, flushed)
+        assertEquals(listOf(4 to "", 4 to "last", 4 to "before complete"), execution.moodSaved)
+    }
+
+    @Test
+    fun `mood save failure prevents completion and exposes error state`() = runTest(dispatcher) {
+        val execution = FakeExecutionService(ExecutionState.Mood(null, "", null), failMoodSave = true)
+        val viewModel = ExecutionViewModel(KEY, execution, FakeRepository(MOOD_INSTANCE), FakeNoteService())
+        runCurrent()
+
+        viewModel.updateMoodRating(3)
+        viewModel.updateMoodText("will fail")
+        viewModel.complete()
+        runCurrent()
+
+        assertEquals(emptyList<TaskInstanceKey>(), execution.completed)
+        assertEquals(NoteSaveState.ERROR, viewModel.state.value.moodSaveState)
+    }
+
     private class FakeNoteService : TaskNoteService {
         val saved = mutableListOf<String>()
         override suspend fun getNote(key: TaskInstanceKey): String = ""
@@ -94,23 +137,33 @@ class W22ExecutionViewModelTest {
         }
     }
 
-    private class FakeExecutionService : TaskExecutionService {
-        override suspend fun getExecutionState(key: TaskInstanceKey) = ExecutionState.Normal
+    private class FakeExecutionService(
+        private val executionState: ExecutionState = ExecutionState.Normal,
+        private val failMoodSave: Boolean = false,
+    ) : TaskExecutionService {
+        val moodSaved = mutableListOf<Pair<Int?, String>>()
+        val completed = mutableListOf<TaskInstanceKey>()
+        override suspend fun getExecutionState(key: TaskInstanceKey) = executionState
         override suspend fun getCompletionReadiness(key: TaskInstanceKey) =
             CompletionReadiness(true, true, true)
         override suspend fun setStep(key: TaskInstanceKey, position: Int, completed: Boolean) = Unit
         override suspend fun setCounter(key: TaskInstanceKey, value: Int): ExecutionState.Counter = error("unused")
         override suspend fun addTimerElapsed(key: TaskInstanceKey, elapsedMillis: Long): ExecutionState.Timer = error("unused")
         override suspend fun saveInformationDraft(key: TaskInstanceKey, content: String): ExecutionState.Information = error("unused")
-        override suspend fun complete(key: TaskInstanceKey) = Unit
+        override suspend fun saveMoodDraft(key: TaskInstanceKey, rating: Int?, text: String): ExecutionState.Mood {
+            if (failMoodSave) error("mood save failed")
+            moodSaved += rating to text
+            return ExecutionState.Mood(rating, text, null)
+        }
+        override suspend fun complete(key: TaskInstanceKey) { completed += key }
         override suspend fun undoCompletion(key: TaskInstanceKey) = Unit
         override suspend fun reconcile(key: TaskInstanceKey): TaskInstanceEntity = INSTANCE
     }
 
-    private class FakeRepository : TaskRepository {
-        override fun observeTasks(taskDate: String): Flow<List<TaskInstanceEntity>> = flowOf(listOf(INSTANCE))
-        override fun observeTodayTasks(taskDate: String): Flow<List<TodayTask>> = flowOf(listOf(TodayTask(INSTANCE, null, null)))
-        override suspend fun getTask(key: TaskInstanceKey): TaskInstanceEntity = INSTANCE
+    private class FakeRepository(private val instance: TaskInstanceEntity = INSTANCE) : TaskRepository {
+        override fun observeTasks(taskDate: String): Flow<List<TaskInstanceEntity>> = flowOf(listOf(instance))
+        override fun observeTodayTasks(taskDate: String): Flow<List<TodayTask>> = flowOf(listOf(TodayTask(instance, null, null)))
+        override suspend fun getTask(key: TaskInstanceKey): TaskInstanceEntity = instance
         override suspend fun getSteps(key: TaskInstanceKey): List<InstanceStepEntity> = emptyList()
         override suspend fun queryHistory(groupId: String?, status: String?): List<TaskInstanceEntity> = emptyList()
         override suspend fun logs(key: TaskInstanceKey): List<ActionLogEntity> = emptyList()
@@ -136,5 +189,6 @@ class W22ExecutionViewModelTest {
             createdAtEpochMillis = 1,
             updatedAtEpochMillis = 1,
         )
+        val MOOD_INSTANCE = INSTANCE.copy(executionKind = "MOOD")
     }
 }

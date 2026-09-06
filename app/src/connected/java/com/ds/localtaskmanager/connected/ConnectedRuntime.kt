@@ -689,6 +689,14 @@ class ConnectedRuntime(
 
     private suspend fun enqueueResult(spaceId: String, assignmentId: String, occurrenceKey: String, revision: Int, instance: TaskInstanceEntity) {
         val semantic = "result:${instance.taskId}:${instance.occurrenceKey}:${instance.updatedAtEpochMillis}"
+        val mood = if (instance.executionKind == "MOOD" && instance.status == "COMPLETED") {
+            application.database.withTransaction {
+                val current = application.database.instanceDao().getInstance(instance.taskId, instance.occurrenceKey)
+                if (current != instance) return@withTransaction null
+                application.database.executionDao().getMood(instance.taskId, instance.occurrenceKey)
+                    ?.takeIf { it.submittedAtEpochMillis != null && it.submittedAtEpochMillis == instance.completedAtEpochMillis }
+            } ?: return // A newer local transition will be scanned on the next sync.
+        } else null
         val informationContent = if (instance.executionKind == "INFORMATION") {
             application.database.executionDao().getSubmission(instance.taskId, instance.occurrenceKey)
                 ?.takeIf { it.submittedAtEpochMillis != null }
@@ -719,7 +727,7 @@ class ConnectedRuntime(
                 payload = buildJsonObject {
                     put("assignmentId", assignmentId); put("occurrenceKey", occurrenceKey); put("taskRevision", revision)
                     put("eventType", "RESULT_SUBMITTED"); put("occurredAt", Instant.ofEpochMilli(instance.updatedAtEpochMillis).toString())
-                    put("data", buildExecutionResultData(instance, informationContent?.content))
+                    put("data", buildExecutionResultData(instance, informationContent?.content, mood))
                 },
             ),
         )
@@ -821,12 +829,17 @@ internal fun hasNewNotificationIds(
 internal fun buildExecutionResultData(
     instance: TaskInstanceEntity,
     informationContent: String?,
+    mood: com.ds.localtaskmanager.data.MoodSubmissionEntity? = null,
 ): JsonObject = buildJsonObject {
     put("status", instance.status)
     put("localOccurrenceKey", instance.occurrenceKey)
     put("taskName", instance.name)
     put("taskDate", instance.taskDate)
     put("executionKind", instance.executionKind)
+    if (instance.executionKind == "MOOD" && instance.status == "COMPLETED" && mood?.submittedAtEpochMillis != null) {
+        put("moodRating", requireNotNull(mood.rating))
+        put("moodText", mood.text)
+    }
     instance.completedAtEpochMillis?.let { put("completedAt", Instant.ofEpochMilli(it).toString()) }
     informationContent?.takeIf { it.isNotBlank() }?.let { put("informationContent", it) }
 }

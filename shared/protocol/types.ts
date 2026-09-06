@@ -8,7 +8,8 @@ export interface Dst1Step {
 export type Dst1Execution =
   | { k: 1; a: 1 | 2; v: number }
   | { k: 2; v: number }
-  | { k: 3 };
+  | { k: 3 }
+  | { k: 4 };
 
 export interface Dst1Recurrence {
   f: 1 | 2;

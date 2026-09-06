@@ -126,11 +126,13 @@ if (-not $projectRobolectricJar) { throw '缺少当前 Robolectric Android 15 �
 $projectPreviousJavaOptions = $env:JAVA_TOOL_OPTIONS
 try {
   $env:JAVA_TOOL_OPTIONS = "$projectPreviousJavaOptions -Drobolectric.offline=true `"-Drobolectric.dependency.dir=$($projectRobolectricJar.DirectoryName)`""
-  .\gradlew.bat testOfflineDebugUnitTest testConnectedDebugUnitTest testProductionDebugUnitTest --offline --no-daemon
+  .\gradlew.bat testConnectedDebugUnitTest --offline --no-daemon
 } finally {
   $env:JAVA_TOOL_OPTIONS = $projectPreviousJavaOptions
 }
 ```
+
+默认共用业务测试只在 connected 变体执行一次；日常按影响范围增加 `--tests` 筛选。需要验证变体差异时才增加 offline／production 测试，见[最小测试方案](minimal-testing.md)。
 
 Java 进程必须有权限读取该 JAR。受限环境拒绝访问缓存时，Robolectric 可能退回 Android stub 类并报 `NoSuchFieldError: noncompatWidthPixels`；应先检查缓存可读性，再判断是否为应用测试失败。
 

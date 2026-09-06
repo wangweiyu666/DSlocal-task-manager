@@ -13,7 +13,10 @@ object BackupValidator {
     fun validate(decoded: DecodedBackup) {
         if (decoded.metadata.createdAtEpochMillis < 0) throw DstbException("备份创建时间无效")
         val payload = decoded.payload
-        if (payload.schemaVersion !in 1..2) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion !in 1..3) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion < 3 && (payload.moods.isNotEmpty() || payload.definitions.any { it.executionKind == "MOOD" } || payload.instances.any { it.executionKind == "MOOD" })) {
+            throw DstbException("心情记录需要备份数据 v3")
+        }
         if (payload.schemaVersion == 1 &&
             (payload.recurrenceExceptions.isNotEmpty() || payload.instances.any { it.singleDayAdjusted })
         ) throw DstbException("备份数据 v1 不能包含单日例外")
@@ -32,6 +35,7 @@ object BackupValidator {
         unique(payload.instanceSteps, { "${it.taskId}|${it.occurrenceKey}|${it.position}" }, "实例步骤")
         unique(payload.progress, { "${it.taskId}|${it.occurrenceKey}" }, "任务进度")
         unique(payload.information, { "${it.taskId}|${it.occurrenceKey}" }, "告知正文")
+        unique(payload.moods, { "${it.taskId}|${it.occurrenceKey}" }, "心情记录")
         unique(payload.notes, { "${it.taskId}|${it.occurrenceKey}" }, "任务备注")
         unique(payload.ledger, { it.ledgerId }, "积分流水")
         unique(payload.actionLogs, { it.eventId }, "操作记录")
@@ -119,6 +123,18 @@ object BackupValidator {
             requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "告知正文")
             if (it.submittedAtEpochMillis != null && it.submittedAtEpochMillis > snapshotLimit) throw DstbException("告知提交时间晚于备份时间")
         }
+        payload.moods.forEach {
+            requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "心情记录")
+            requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "心情记录")
+            val instance = payload.instances.first { item -> item.taskId == it.taskId && item.occurrenceKey == it.occurrenceKey }
+            if (instance.executionKind != "MOOD" || (it.rating != null && it.rating !in 1..5) || it.text.codePointCount(0, it.text.length) > 2000) throw DstbException("心情记录内容无效")
+            if (it.submittedAtEpochMillis != null && (it.submittedAtEpochMillis !in it.createdAtEpochMillis..it.updatedAtEpochMillis || it.rating == null)) throw DstbException("心情提交时间或答案无效")
+            if ((instance.status == "COMPLETED") != (it.submittedAtEpochMillis != null)) throw DstbException("心情记录与完成状态不一致")
+            if (instance.status == "COMPLETED" && it.submittedAtEpochMillis != instance.completedAtEpochMillis) throw DstbException("心情答案与实例完成时间不一致")
+        }
+        payload.instances.filter { it.executionKind == "MOOD" && it.status == "COMPLETED" }.forEach { instance ->
+            if (payload.moods.none { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }) throw DstbException("已完成的心情任务缺少答案")
+        }
         payload.notes.forEach {
             requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "任务备注")
             requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "任务备注")
@@ -184,7 +200,7 @@ object BackupValidator {
     }
 
     private val TASK_STATUSES = TaskStatus.entries.mapTo(hashSetOf()) { it.name }
-    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION")
+    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION", "MOOD")
     private val INSTANCE_CATEGORIES = setOf("DAILY", "WEEKLY", "TEMPORARY")
     private val RESULT_SCOPES = setOf("GLOBAL", "GROUP")
 }

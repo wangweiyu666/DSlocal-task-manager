@@ -123,7 +123,11 @@ class RoomHistoryRepository(private val database: AppDatabase) : HistoryReposito
         HistoryDetail(
             instance = instance,
             steps = database.instanceDao().getInstanceSteps(key.taskId, key.occurrenceKey),
-            execution = executionState(instance, progress?.counterValue, progress?.elapsedMillis, submission?.content),
+            execution = if (instance.executionKind == "MOOD") {
+                database.executionDao().getMood(key.taskId, key.occurrenceKey).let {
+                    ExecutionState.Mood(it?.rating, it?.text.orEmpty(), it?.submittedAtEpochMillis)
+                }
+            } else executionState(instance, progress?.counterValue, progress?.elapsedMillis, submission?.content),
             note = database.executionDao().getNote(key.taskId, key.occurrenceKey)?.content.orEmpty(),
             logs = database.auditDao().getLogs(key.taskId, key.occurrenceKey),
             revisions = revisions,

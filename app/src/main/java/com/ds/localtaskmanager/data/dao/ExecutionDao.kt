@@ -4,12 +4,22 @@ import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Query
 import androidx.room.Upsert
+import com.ds.localtaskmanager.data.MoodSubmissionEntity
 import com.ds.localtaskmanager.data.ExecutionProgressEntity
 import com.ds.localtaskmanager.data.InformationSubmissionEntity
 import com.ds.localtaskmanager.data.TaskNoteEntity
 
 @Dao
 interface ExecutionDao {
+    @Query("SELECT * FROM mood_submission WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
+    suspend fun getMood(taskId: String, occurrenceKey: String): MoodSubmissionEntity?
+
+    @Upsert
+    suspend fun upsertMood(mood: MoodSubmissionEntity)
+
+    @Query("DELETE FROM mood_submission WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
+    suspend fun deleteMood(taskId: String, occurrenceKey: String)
+
     @Query("SELECT * FROM execution_progress WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getProgress(taskId: String, occurrenceKey: String): ExecutionProgressEntity?
 

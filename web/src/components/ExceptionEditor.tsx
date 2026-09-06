@@ -75,6 +75,7 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       if (executionKind === 1) execution = { k: 1, a: executionAction, v: executionTarget };
       else if (executionKind === 2) execution = { k: 2, v: executionTarget };
       else if (executionKind === 3) execution = { k: 3 };
+      else if (executionKind === 4) execution = { k: 4 };
       value.u = execution;
     }
     onSave(value);
@@ -97,8 +98,9 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       {selected.has("s") && <label className="field"><span>当天步骤（每行一个；可写 0:选做步骤）</span><textarea rows={5} value={stepsText} onChange={(event) => setStepsText(event.target.value)} /></label>}
       {selected.has("m") && <div className="form-grid"><label className="field"><span>完成提示方式</span><select value={messageMode} onChange={(event) => setMessageMode(event.target.value as "value" | "default")}><option value="value">指定提示</option><option value="default">系统默认</option></select></label>{messageMode === "value" && <label className="field"><span>完成提示</span><input maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} /></label>}</div>}
       {selected.has("h") && <label className="field"><span>提醒分钟数（逗号分隔，留空清除）</span><input value={remindersText} onChange={(event) => setRemindersText(event.target.value)} /></label>}
-      {selected.has("u") && <div className="form-grid"><label className="field"><span>执行方式</span><select value={executionKind} onChange={(event) => setExecutionKind(Number(event.target.value))}><option value={0}>普通完成</option><option value={1}>计数</option><option value={2}>计时</option><option value={3}>信息告知</option></select></label>{executionKind === 1 && <label className="field"><span>计数方式</span><select value={executionAction} onChange={(event) => setExecutionAction(Number(event.target.value) as 1 | 2)}><option value={1}>拖动</option><option value={2}>点击</option></select></label>}{(executionKind === 1 || executionKind === 2) && <label className="field"><span>目标值</span><input type="number" value={executionTarget} onChange={(event) => setExecutionTarget(Number(event.target.value))} /></label>}</div>}
+      {selected.has("u") && <div className="form-grid"><label className="field"><span>执行方式</span><select value={executionKind} onChange={(event) => setExecutionKind(Number(event.target.value))}><option value={0}>普通完成</option><option value={1}>计数</option><option value={2}>计时</option><option value={3}>信息告知</option><option value={4}>心情记录</option></select></label>{executionKind === 1 && <label className="field"><span>计数方式</span><select value={executionAction} onChange={(event) => setExecutionAction(Number(event.target.value) as 1 | 2)}><option value={1}>拖动</option><option value={2}>点击</option></select></label>}{(executionKind === 1 || executionKind === 2) && <label className="field"><span>目标值</span><input type="number" value={executionTarget} onChange={(event) => setExecutionTarget(Number(event.target.value))} /></label>}</div>}
     </>}
+    {selected.has("u") && executionKind === 4 && !cancelled && <p className="supporting">需要更新到支持心情记录的 Android 版本。</p>}
     {error && <div className="validation-box">{error}</div>}
     <div className="modal-actions"><button className="button text" onClick={onCancel}>取消</button><button className="button primary" onClick={save}>保存并加入草稿</button></div>
   </div>;

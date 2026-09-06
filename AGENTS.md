@@ -25,6 +25,7 @@
 
 # Test delegation
 
+- Default Android CI runs the shared and connected unit suites once with `testConnectedDebugUnitTest`, while retaining all three variants' builds, lint, and the offline connectivity boundary check. Do not repeat the shared unit suite on offline and production for ordinary shared-code changes. Use focused tests during development; run the full three-variant matrix only when explicitly requested or needed for flavor-specific code, source-set, environment, signing, or build-configuration changes. Manual Android CI exposes `full_android_matrix` for that purpose.
 - Delegate writing simple tests and running tests to Luna (`gpt-5.6-luna`) by default when available. Simple tests have clear behavior and expected results, such as focused unit tests, validation/error cases, and direct regressions.
 - The primary agent defines the scope and acceptance criteria and reviews assertions. For complex concurrency, cross-client consistency, security, or recovery testing, the primary agent designs the scenarios; Luna can execute the agreed plan.
 - Follow `docs/minimal-testing.md`: reuse existing coverage, run the smallest relevant suite, and avoid repeating passing checks without a new reason. Report actual commands, tested source state, passed/failed/skipped counts, failures and coverage limits.

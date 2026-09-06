@@ -24,24 +24,26 @@ CRC32 覆盖从魔数开始到 zlib 数据末尾的全部字节，不包含末�
 - `createdAtEpochMillis`：快照创建时间；
 - `appVersion`：来源应用版本；
 - `sourceTimeZone`：来源 IANA 时区；
-- `payloadSchemaVersion`：业务 JSON 版本，当前为 `2`；读取端继续接受 `1`；
+- `payloadSchemaVersion`：业务 JSON 版本，当前为 `3`；读取端继续接受 `1`、`2`；
 - `counts`：积分组、任务定义、实例、积分流水、操作记录和结果版本数量。
 
 元数据不得包含设备名称、型号、账号、文件名或外部路径。数量摘要必须与解压后的实际集合一致。
 
-## 业务 JSON v2
+## 业务 JSON v3
 
 顶层字段顺序为：
 
 ```text
 schemaVersion, settings, profiles, importBatches, groups,
 definitions, definitionSteps, recurrenceExceptions, instances, instanceSteps,
-progress, information, notes, ledger, actionLogs, resultRevisions
+progress, information, moods, notes, ledger, actionLogs, resultRevisions
 ```
 
 集合按各自主键排序。JSON 使用显式默认值和 `null`，不写入无意义空白。格式 DTO 与 Room 实体分离；新增 Room 字段不能在未提升业务 JSON 版本时自动进入文件。
 
 `settings` 只允许 `themeMode`、`reduceMotion` 和 `lastStatisticsPeriod`。`recurrenceExceptions` 保存重复任务单日例外；`instances.singleDayAdjusted` 保存已生成实例的来源快照。系统提醒记录不属于业务 JSON。业务 JSON v1 迁移时这两个字段按空列表和 `false` 处理。
+
+`moods` 按任务 ID、实例键保存 `rating`（草稿可为 null，否则 1～5）、`text`（最多 2000 个 Unicode 字符）、创建／更新时间和可空提交时间。旧 v1/v2 读取时补空集合，旧版本不得声明 MOOD 或包含心情记录。已完成 MOOD 实例必须有已提交答案；其他状态不得标记已提交。合并恢复时，已完成答案跟随所选实例快照，其他心情内容使用更新时间较新的记录；替换恢复完整还原。
 
 ## 压缩与限制
 

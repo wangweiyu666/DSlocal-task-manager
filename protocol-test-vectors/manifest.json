@@ -8,6 +8,7 @@
     {"id":"counter","source":{"kind":"json","path":"valid/counter.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
     {"id":"timer","source":{"kind":"json","path":"valid/timer.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
     {"id":"information","source":{"kind":"json","path":"valid/information.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
+    {"id":"mood","source":{"kind":"json","path":"valid/mood.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
     {"id":"daily-recurrence","source":{"kind":"json","path":"valid/daily-recurrence.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
     {"id":"weekly-recurrence","source":{"kind":"json","path":"valid/weekly-recurrence.json"},"spec":{"result":"VALID"},"android":{"result":"VALID"}},
 
@@ -32,6 +33,7 @@
     {"id":"reminder-order","source":{"kind":"json","path":"invalid/reminder-order.json"},"spec":{"result":"ERROR","code":"DUPLICATE_VALUE","path":"t[0].h"},"android":{"result":"ERROR","code":"DUPLICATE_VALUE","path":"t[0].h"}},
     {"id":"reminder-without-deadline","source":{"kind":"json","path":"invalid/reminder-without-deadline.json"},"spec":{"result":"ERROR","code":"CONFLICTING_FIELDS","path":"t[0].h"},"android":{"result":"ERROR","code":"CONFLICTING_FIELDS","path":"t[0].h"}},
     {"id":"execution-combination","source":{"kind":"json","path":"invalid/execution-combination.json"},"spec":{"result":"ERROR","code":"CONFLICTING_FIELDS","path":"t[0].u.a"},"android":{"result":"ERROR","code":"CONFLICTING_FIELDS","path":"t[0].u.a"}},
+    {"id":"mood-with-parameters","source":{"kind":"json","path":"invalid/mood-with-parameters.json"},"spec":{"result":"ERROR","code":"CONFLICTING_FIELDS","path":"t[0].u.a"},"android":{"result":"ERROR","code":"CONFLICTING_FIELDS","path":"t[0].u.a"}},
 
     {"id":"invalid-envelope","source":{"kind":"generator","type":"invalid-envelope"},"spec":{"result":"ERROR","code":"INVALID_ENVELOPE","path":"$"},"android":{"result":"ERROR","code":"INVALID_ENVELOPE","path":"$"}},
     {"id":"invalid-checksum-format","source":{"kind":"generator","type":"invalid-checksum-format"},"spec":{"result":"ERROR","code":"INVALID_CHECKSUM_FORMAT","path":"$.checksum"},"android":{"result":"ERROR","code":"INVALID_CHECKSUM_FORMAT","path":"$.checksum"}},

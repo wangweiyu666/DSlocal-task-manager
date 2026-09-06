@@ -19,8 +19,8 @@ android {
         applicationId = "com.ds.localtaskmanager"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.1.0-alpha.6"
+        versionCode = 8
+        versionName = "0.1.0-alpha.7"
         manifestPlaceholders["appLabel"] = "@string/app_name"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -88,8 +88,8 @@ android {
         create("connected") {
             dimension = "connectivity"
             applicationIdSuffix = ".connected"
-            versionCode = 10
-            versionName = "0.1.0-alpha.9"
+            versionCode = 11
+            versionName = "0.1.0-alpha.10"
             versionNameSuffix = "-connected"
             manifestPlaceholders["appLabel"] = "@string/app_name"
             buildConfigField("boolean", "CONNECTED_BUILD", "true")
@@ -100,8 +100,8 @@ android {
         create("production") {
             dimension = "connectivity"
             applicationIdSuffix = ".connected.production"
-            versionCode = 11
-            versionName = "0.1.0-alpha.10"
+            versionCode = 12
+            versionName = "0.1.0-alpha.11"
             versionNameSuffix = "-executor"
             manifestPlaceholders["appLabel"] = "@string/app_name"
             buildConfigField("boolean", "CONNECTED_BUILD", "true")

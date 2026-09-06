@@ -3,6 +3,7 @@ package com.ds.localtaskmanager.data.dao
 import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Upsert
+import com.ds.localtaskmanager.data.MoodSubmissionEntity
 import com.ds.localtaskmanager.data.ActionLogEntity
 import com.ds.localtaskmanager.data.AppProfileEntity
 import com.ds.localtaskmanager.data.ExecutionProgressEntity
@@ -20,6 +21,11 @@ import com.ds.localtaskmanager.data.TaskStepDefinitionEntity
 
 @Dao
 interface BackupDao {
+    @Query("SELECT * FROM mood_submission ORDER BY taskId, occurrenceKey")
+    suspend fun moods(): List<MoodSubmissionEntity>
+    @Upsert suspend fun upsertMoods(values: List<MoodSubmissionEntity>)
+    @Query("DELETE FROM mood_submission") suspend fun clearMoods()
+
     @Query("SELECT * FROM app_profile ORDER BY id")
     suspend fun profiles(): List<AppProfileEntity>
 

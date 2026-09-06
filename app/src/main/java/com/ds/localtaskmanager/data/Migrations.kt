@@ -183,6 +183,13 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `mood_submission` (`taskId` TEXT NOT NULL, `occurrenceKey` TEXT NOT NULL, `rating` INTEGER, `text` TEXT NOT NULL, `createdAtEpochMillis` INTEGER NOT NULL, `updatedAtEpochMillis` INTEGER NOT NULL, `submittedAtEpochMillis` INTEGER, PRIMARY KEY(`taskId`, `occurrenceKey`), FOREIGN KEY(`taskId`, `occurrenceKey`) REFERENCES `task_instance`(`taskId`, `occurrenceKey`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_mood_submission_taskId_occurrenceKey` ON `mood_submission` (`taskId`, `occurrenceKey`)")
+    }
+}
+
 private fun SupportSQLiteDatabase.execAll(statements: List<String>) {
     statements.forEach(::execSQL)
 }

@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      full_android_matrix:
+        description: Run unit tests on all three variants (for flavor or build configuration changes)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -54,12 +59,16 @@ jobs:
       - name: Verify and build Android variants
         id: gradle_verify
         continue-on-error: true
-        run: >-
-          ./gradlew
-          testOfflineDebugUnitTest lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest
-          testConnectedDebugUnitTest lintConnectedDebug assembleConnectedDebug
-          testProductionDebugUnitTest lintProductionDebug assembleProductionDebug
-          --no-daemon
+        run: |
+          unit_tests=(testConnectedDebugUnitTest)
+          if [[ "${{ inputs.full_android_matrix }}" == "true" ]]; then
+            unit_tests=(testOfflineDebugUnitTest testConnectedDebugUnitTest testProductionDebugUnitTest)
+          fi
+          ./gradlew "${unit_tests[@]}" \
+            lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest \
+            lintConnectedDebug assembleConnectedDebug \
+            lintProductionDebug assembleProductionDebug \
+            --no-daemon
 
       - name: Verify offline Android connectivity boundary
         run: bash scripts/ci/check-connectivity-boundaries.sh

@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class NoteSaveState {
     SAVED,
@@ -36,6 +39,9 @@ data class ExecutionUiState(
     val executionTargetReached: Boolean = false,
     val canComplete: Boolean = false,
     val informationDraft: String = "",
+    val moodRating: Int? = null,
+    val moodText: String = "",
+    val moodSaveState: NoteSaveState = NoteSaveState.SAVED,
     val noteDraft: String = "",
     val noteSaveState: NoteSaveState = NoteSaveState.SAVED,
     val timerRunning: Boolean = false,
@@ -61,6 +67,11 @@ class ExecutionViewModel(
     private var savedNote = ""
     private var timerBase: ExecutionState.Timer? = null
     private var informationDirty = false
+    private var moodDirty = false
+    private var moodRevision = 0L
+    private var moodSaveJob: Job? = null
+    private val moodSaveMutex = Mutex()
+    private var completing = false
 
     init {
         refresh(loadNote = true)
@@ -114,6 +125,70 @@ class ExecutionViewModel(
         }
     }
 
+    fun updateMoodRating(rating: Int) {
+        if (rating !in 1..5 || !canEditMood()) return
+        mutableState.value = mutableState.value.copy(moodRating = rating)
+        scheduleMoodSave(0)
+    }
+
+    fun updateMoodText(text: String) {
+        if (!canEditMood()) return
+        mutableState.value = mutableState.value.copy(moodText = text)
+        scheduleMoodSave(500)
+    }
+
+    private fun canEditMood() = mutableState.value.instance?.executionKind == "MOOD" &&
+        mutableState.value.instance?.status == "PENDING" && !mutableState.value.working && !completing
+
+    private fun scheduleMoodSave(delayMillis: Long) {
+        moodDirty = true
+        moodRevision++
+        mutableState.value = mutableState.value.copy(moodSaveState = NoteSaveState.SAVING, errorMessage = null)
+        updateMoodReadiness()
+        moodSaveJob?.cancel()
+        moodSaveJob = viewModelScope.launch {
+            delay(delayMillis)
+            saveMoodNow()
+        }
+    }
+
+    private fun updateMoodReadiness() {
+        val state = mutableState.value
+        if (state.instance?.executionKind != "MOOD") return
+        val valid = state.moodRating in 1..5 && state.moodText.codePointCount(0, state.moodText.length) <= 2000
+        mutableState.value = state.copy(executionTargetReached = valid,
+            canComplete = state.instance.status == "PENDING" && state.requiredStepsComplete && valid)
+    }
+
+    private suspend fun saveMoodNow(): Boolean = moodSaveMutex.withLock {
+        // Back/background flushes may overlap another edit; only finish once the latest draft is saved.
+        while (moodDirty) {
+            val revision = moodRevision
+            val snapshot = mutableState.value
+            mutableState.value = mutableState.value.copy(moodSaveState = NoteSaveState.SAVING)
+            try {
+                service.saveMoodDraft(key, snapshot.moodRating, snapshot.moodText)
+                if (revision == moodRevision) {
+                    moodDirty = false
+                    mutableState.value = mutableState.value.copy(moodSaveState = NoteSaveState.SAVED)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (revision == moodRevision) mutableState.value = mutableState.value.copy(
+                    moodSaveState = NoteSaveState.ERROR, errorMessage = error.message ?: "心情保存失败，请重试",
+                )
+                return@withLock false
+            }
+        }
+        true
+    }
+
+    fun retryMoodSave() {
+        moodSaveJob?.cancel()
+        moodSaveJob = viewModelScope.launch { saveMoodNow() }
+    }
+
     fun startTimer() {
         if (mutableState.value.timerRunning) return
         viewModelScope.launch {
@@ -148,24 +223,34 @@ class ExecutionViewModel(
 
     fun onForegroundLost() {
         if (timer.isRunning) pauseTimer()
+        if (moodDirty) retryMoodSave()
     }
 
     fun complete() {
+        if (mutableState.value.working || completing) return
+        completing = true
+        mutableState.value = mutableState.value.copy(working = true, errorMessage = null)
+        moodSaveJob?.cancel()
         viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(working = true, errorMessage = null)
-            runCatching {
-                timerTickerJob?.cancel()
-                timer.pause()
-                timerBase = null
-                service.complete(key)
-                reminderReconciler?.reconcileAll()
-            }.onSuccess {
-                val message = mutableState.value.instance?.completionMessage.orEmpty()
-                    .ifBlank { "任务已完成" }
-                refreshNow()
-                mutableState.value = mutableState.value.copy(completionFeedback = message)
-                onCompletionCommitted()
-            }.onFailure(::showError)
+            try {
+                runCatching {
+                    timerTickerJob?.cancel()
+                    timer.pause()
+                    timerBase = null
+                    if (!saveMoodNow()) return@launch
+                    service.complete(key)
+                    reminderReconciler?.reconcileAll()
+                }.onSuccess {
+                    val message = mutableState.value.instance?.completionMessage.orEmpty()
+                        .ifBlank { "任务已完成" }
+                    refreshNow()
+                    mutableState.value = mutableState.value.copy(completionFeedback = message)
+                    onCompletionCommitted()
+                }.onFailure(::showError)
+            } finally {
+                completing = false
+                mutableState.value = mutableState.value.copy(working = false)
+            }
         }
     }
 
@@ -200,12 +285,9 @@ class ExecutionViewModel(
     fun flushNote(onSaved: () -> Unit) {
         noteSaveJob?.cancel()
         noteSaveJob = null
-        if (mutableState.value.noteDraft == savedNote) {
-            onSaved()
-            return
-        }
+        moodSaveJob?.cancel()
         viewModelScope.launch {
-            if (saveNoteNow()) onSaved()
+            if (saveMoodNow() && (mutableState.value.noteDraft == savedNote || saveNoteNow())) onSaved()
         }
     }
 
@@ -219,6 +301,8 @@ class ExecutionViewModel(
     }
 
     private suspend fun refreshNow(loadNote: Boolean = false) {
+        val refreshMoodRevision = moodRevision
+        val refreshMoodWasDirty = moodDirty
         runCatching {
             val readiness = service.getCompletionReadiness(key)
             val execution = service.getExecutionState(key)
@@ -230,7 +314,7 @@ class ExecutionViewModel(
             if (result.note != null) savedNote = result.note
             mutableState.value = mutableState.value.copy(
                 loading = false,
-                working = false,
+                working = completing,
                 instance = result.instance,
                 steps = result.steps,
                 execution = result.execution,
@@ -243,12 +327,15 @@ class ExecutionViewModel(
                     (result.execution as? ExecutionState.Information)?.content
                         ?: mutableState.value.informationDraft
                 },
+                moodRating = if (moodDirty || refreshMoodWasDirty || refreshMoodRevision != moodRevision) mutableState.value.moodRating else (result.execution as? ExecutionState.Mood)?.rating,
+                moodText = if (moodDirty || refreshMoodWasDirty || refreshMoodRevision != moodRevision) mutableState.value.moodText else (result.execution as? ExecutionState.Mood)?.text.orEmpty(),
                 noteDraft = result.note ?: mutableState.value.noteDraft,
                 noteSaveState = if (result.note != null) NoteSaveState.SAVED else mutableState.value.noteSaveState,
                 timerRunning = timer.isRunning,
                 errorCode = null,
                 errorMessage = null,
             )
+            updateMoodReadiness()
         }.onFailure(::showError)
     }
 
@@ -343,6 +430,8 @@ private fun operationMessage(code: TaskOperationCode?): String? = when (code) {
     TaskOperationCode.EXECUTION_TARGET_NOT_REACHED -> "请先达成执行目标"
     TaskOperationCode.INFORMATION_EMPTY -> "告知正文不能为空"
     TaskOperationCode.INFORMATION_TOO_LONG -> "告知正文不能超过 2000 个字符"
+    TaskOperationCode.MOOD_OUT_OF_RANGE -> "请选择五档心情之一"
+    TaskOperationCode.MOOD_TEXT_TOO_LONG -> "感受不能超过 2000 个字符"
     TaskOperationCode.INSTANCE_NOT_PENDING -> "当前状态不能修改执行数据"
     TaskOperationCode.INSTANCE_NOT_COMPLETED -> "当前任务尚未完成"
     TaskOperationCode.INSTANCE_NOT_FOUND -> "任务不存在"

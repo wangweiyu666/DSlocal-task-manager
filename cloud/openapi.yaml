@@ -245,6 +245,12 @@ paths:
   /spaces/{spaceId}/commands:
     post:
       operationId: submitOfflineCommands
+      description: >-
+        Completed mood tasks (DST1 u.k=4) use EXECUTION_EVENT with data.status=COMPLETED,
+        data.executionKind=MOOD, moodRating as an integer from 1 to 5, and moodText as
+        a string of at most 2000 Unicode code points (empty allowed). The task revision
+        and any occurrence-date execution override must match. Mood drafts remain local;
+        missed results and COMPLETION_UNDONE events must not include mood answer fields.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/SpaceId" }]
       requestBody:

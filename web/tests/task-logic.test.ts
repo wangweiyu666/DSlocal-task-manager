@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDraft, createRecurringDraftTask, createTemporaryDraftTask } from "../src/model/defaults";
 import { buildBatch, taskRecordFromDraft } from "../src/protocol/builder";
+import { compactTask } from "../src/protocol/compact";
 
 describe("temporary and recurring task creation", () => {
   it("creates a temporary task without an x rule", () => {
@@ -44,5 +45,16 @@ describe("temporary and recurring task creation", () => {
     expect(saved.deadlineMode).toBe("default");
     expect(saved.deadline).toBe("");
     expect(saved.reminders).toEqual([]);
+  });
+
+  it("preserves mood execution and default name in the protocol", () => {
+    const task = createTemporaryDraftTask();
+    task.name = "今天的心情怎么样";
+    task.execution = { k: 4 };
+    const draft = createDraft();
+    draft.tasks = [task];
+
+    expect(buildBatch(draft, []).t?.[0].u).toEqual({ k: 4 });
+    expect(compactTask({ i: task.taskId, n: task.name, r: 1, u: { k: 4 } }).u).toEqual({ k: 4 });
   });
 });

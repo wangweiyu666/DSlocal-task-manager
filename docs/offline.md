@@ -34,10 +34,10 @@
 
 ## 本地数据与兼容
 
-Room 数据库当前 schema version 为 6，历史迁移必须保持连续且禁止破坏性回退。核心表族包括：
+Room 数据库当前 schema version 为 7，历史迁移必须保持连续且禁止破坏性回退。6→7 新增按任务 ID 和实例键关联的 `mood_submission`，实例删除时级联删除心情记录。核心表族包括：
 
 - 导入批次、任务定义、步骤、重复例外和任务实例；
-- 执行进度、信息告知、备注、操作日志和结果修订；
+- 执行进度、信息告知、心情记录、备注、操作日志和结果修订；
 - 积分组、积分流水、提醒记录、设置和统计索引。
 
 任务实例保存定义快照，已发生的执行结果不能因后来编辑任务而被静默改写。结构变更必须同时提交 migration、导出 Room Schema、数据保留测试，并更新本文或机器契约。
@@ -53,14 +53,14 @@ DST1 是任务传输协议，不携带账号和同步语义。DSTB1 是本地备
 离线 Android 由 GitHub Actions 构建，不把本机产物作为交付依据。推送到 `main` 后，`Android CI` 执行：
 
 ```text
-testOfflineDebugUnitTest
+testConnectedDebugUnitTest（共用及联网业务测试统一执行一次）
 lintOfflineRelease
 assembleOfflineDebug
 assembleOfflineDebugAndroidTest
 validateOfflineDebugScreenshotTest
 ```
 
-Ubuntu job 还检查离线 Manifest 和运行时依赖边界，并将 `app-offline-debug.apk` 与 SHA-256 文件上传为 `DStationery-offline-debug` artifact。Windows job验证固定环境下的截图基线。
+Ubuntu job 还检查离线 Manifest 和运行时依赖边界，并将 `app-offline-debug.apk` 与 SHA-256 文件上传为 `DStationery-offline-debug` artifact。Windows job验证固定环境下的截图基线。日常 CI 不在三个变体重复执行同一套单元测试；需要检查离线专属实现或构建差异时，可定向执行 offline 测试，或在手动 CI 中勾选 `full_android_matrix`。
 
 离线 Web 由 `Dom Web Pages` 执行测试、边界检查和 `build:offline`，部署目录固定为 `web/dist-offline`。
 

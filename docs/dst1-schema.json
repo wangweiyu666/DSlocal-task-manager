@@ -176,7 +176,7 @@
           "additionalProperties": false,
           "required": ["k"],
           "properties": {
-            "k": { "const": 3 }
+            "k": { "enum": [3, 4] }
           }
         }
       ]

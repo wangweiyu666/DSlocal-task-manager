@@ -11,6 +11,7 @@ sealed interface ExecutionSpec {
     data class Timer(val targetSeconds: Int) : ExecutionSpec
 
     data object Information : ExecutionSpec
+    data object Mood : ExecutionSpec
 }
 
 enum class CounterAction(val protocolValue: Int) {
@@ -24,6 +25,12 @@ data class TaskInstanceKey(
 )
 
 sealed interface ExecutionState {
+    data class Mood(
+        val rating: Int?,
+        val text: String,
+        val submittedAtEpochMillis: Long?,
+    ) : ExecutionState
+
     data object Normal : ExecutionState
 
     data class Counter(
@@ -59,6 +66,8 @@ enum class TaskOperationCode {
     TIMER_OUT_OF_RANGE,
     INFORMATION_EMPTY,
     INFORMATION_TOO_LONG,
+    MOOD_OUT_OF_RANGE,
+    MOOD_TEXT_TOO_LONG,
     EXECUTION_TARGET_NOT_REACHED,
     COMPLETION_LEDGER_MISSING,
     INSTANCE_NOT_COMPLETED,

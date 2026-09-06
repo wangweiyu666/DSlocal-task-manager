@@ -254,6 +254,8 @@ class HistoryDetailViewModel(
                         steps = result.steps,
                         execution = result.execution,
                         informationDraft = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Information)?.content.orEmpty(),
+                        moodRating = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Mood)?.rating,
+                        moodText = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Mood)?.text.orEmpty(),
                         noteDraft = result.note,
                         noteSaveState = NoteSaveState.SAVED,
                     ),

@@ -37,7 +37,7 @@ fun ImportDialog(
                 } else {
                     Text(state.preview.summary)
                     state.preview.taskChanges.forEach { change ->
-                        Text("${change.name}：${change.types.joinToString()}")
+                        Text("${change.name}${if (change.executionKind == "MOOD") " · 心情记录" else ""}：${change.types.joinToString()}")
                     }
                 }
                 state.error?.let { error ->

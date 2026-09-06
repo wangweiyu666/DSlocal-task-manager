@@ -118,6 +118,9 @@ fun TaskDetailRoute(
         onInformationChange = viewModel::updateInformationDraft,
         onInformationSave = viewModel::saveInformationDraft,
         onNoteChange = viewModel::updateNoteDraft,
+        onMoodRatingChange = viewModel::updateMoodRating,
+        onMoodTextChange = viewModel::updateMoodText,
+        onMoodRetry = viewModel::retryMoodSave,
         onComplete = viewModel::complete,
         onUndo = viewModel::undoCompletion,
         onDismissCompletion = viewModel::clearCompletionFeedback,
@@ -171,6 +174,9 @@ fun TaskDetailScreen(
     onDismissError: () -> Unit,
     onCopyInformation: () -> Unit = {},
     onShareInformation: () -> Unit = {},
+    onMoodRatingChange: (Int) -> Unit = {},
+    onMoodTextChange: (String) -> Unit = {},
+    onMoodRetry: () -> Unit = {},
     readOnly: Boolean = false,
     title: String = "任务详情",
     timeline: List<TaskDetailTimelineItem> = emptyList(),
@@ -233,6 +239,9 @@ fun TaskDetailScreen(
                 onCopyInformation = onCopyInformation,
                 onShareInformation = onShareInformation,
                 onNoteChange = onNoteChange,
+                onMoodRatingChange = onMoodRatingChange,
+                onMoodTextChange = onMoodTextChange,
+                onMoodRetry = onMoodRetry,
                 readOnly = readOnly,
                 timeline = timeline,
             )
@@ -286,6 +295,9 @@ private fun TaskDetailContent(
     onCopyInformation: () -> Unit,
     onShareInformation: () -> Unit,
     onNoteChange: (String) -> Unit,
+    onMoodRatingChange: (Int) -> Unit,
+    onMoodTextChange: (String) -> Unit,
+    onMoodRetry: () -> Unit,
     readOnly: Boolean,
     timeline: List<TaskDetailTimelineItem>,
 ) {
@@ -313,6 +325,10 @@ private fun TaskDetailContent(
                 }
             }
         }
+        if (state.execution is ExecutionState.Mood) {
+            MoodSection(state.moodRating, state.moodText, editable, state.working, state.moodSaveState,
+                onMoodRatingChange, onMoodTextChange, onMoodRetry)
+        }
         ExecutionSection(
             execution = state.execution,
             editable = editable,
@@ -326,7 +342,12 @@ private fun TaskDetailContent(
             onCopyInformation = onCopyInformation,
             onShareInformation = onShareInformation,
         )
-        DetailCard("普通备注") {
+        var privateNoteExpanded by remember(instance.taskId, instance.occurrenceKey) { mutableStateOf(false) }
+        val moodTask = instance.executionKind == "MOOD"
+        if (moodTask) TextButton(onClick = { privateNoteExpanded = !privateNoteExpanded }) {
+            Text("${if (privateNoteExpanded) "▾" else "▸"} 私人备注 · 仅本机保存")
+        }
+        if (!moodTask || privateNoteExpanded) DetailCard(if (moodTask) "私人备注" else "普通备注") {
             OutlinedTextField(
                 value = state.noteDraft,
                 onValueChange = onNoteChange,
@@ -521,7 +542,7 @@ private fun ExecutionSection(
                 Text("完成后正文已锁定", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             }
         }
-        ExecutionState.Normal, null -> Unit
+        is ExecutionState.Mood, ExecutionState.Normal, null -> Unit
     }
 }
 
@@ -546,6 +567,9 @@ private fun ErrorContent(onRetry: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 private fun completionHint(state: ExecutionUiState): String = when {
+    state.instance?.executionKind == "MOOD" && state.moodRating == null ->
+        if (!state.requiredStepsComplete) "请选择今天的心情，并完成所有必需步骤。" else "请选择今天的心情。"
+    state.instance?.executionKind == "MOOD" && state.moodText.codePointCount(0, state.moodText.length) > 2000 -> "感受不能超过 2000 个字符。"
     !state.requiredStepsComplete && !state.executionTargetReached -> "完成所有必需步骤并达成执行目标后，才能完成任务。"
     !state.requiredStepsComplete -> "完成所有必需步骤后，才能完成任务。"
     !state.executionTargetReached -> "达成执行目标后，才能完成任务。"

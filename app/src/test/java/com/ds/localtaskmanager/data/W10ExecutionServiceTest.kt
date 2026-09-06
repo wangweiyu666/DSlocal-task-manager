@@ -195,6 +195,49 @@ class W10ExecutionServiceTest {
         }
     }
 
+    @Test
+    fun `mood requires a rating and preserves nullable text through completion and undo`() = runTest {
+        importJson(moodJson("MoodBatch0000001"))
+
+        assertThrows(TaskOperationException::class.java) {
+            runBlocking { executionService.complete(MOOD_KEY) }
+        }
+        assertEquals(false, executionService.getCompletionReadiness(MOOD_KEY).canComplete)
+
+        val draft = executionService.saveMoodDraft(MOOD_KEY, 4, "今天状态不错 😀")
+        assertEquals(4, (draft as ExecutionState.Mood).rating)
+        assertEquals("今天状态不错 😀", draft.text)
+        assertEquals(true, executionService.getCompletionReadiness(MOOD_KEY).canComplete)
+
+        executionService.complete(MOOD_KEY)
+        executionService.undoCompletion(MOOD_KEY)
+
+        val restored = executionService.getExecutionState(MOOD_KEY) as ExecutionState.Mood
+        assertEquals(4, restored.rating)
+        assertEquals("今天状态不错 😀", restored.text)
+        assertEquals(null, restored.submittedAtEpochMillis)
+    }
+
+    @Test
+    fun `mood accepts ratings one through five and rejects out of range`() = runTest {
+        importJson(moodJson("MoodBatch0000002"))
+
+        for (rating in 1..5) {
+            val state = executionService.saveMoodDraft(MOOD_KEY, rating, "") as ExecutionState.Mood
+            assertEquals(rating, state.rating)
+        }
+        assertThrows(TaskOperationException::class.java) {
+            runBlocking { executionService.saveMoodDraft(MOOD_KEY, 0, "") }
+        }
+        assertThrows(TaskOperationException::class.java) {
+            runBlocking { executionService.saveMoodDraft(MOOD_KEY, 6, "") }
+        }
+        executionService.saveMoodDraft(MOOD_KEY, 3, "😀".repeat(2_000))
+        assertThrows(TaskOperationException::class.java) {
+            runBlocking { executionService.saveMoodDraft(MOOD_KEY, 3, "😀".repeat(2_001)) }
+        }
+    }
+
     private suspend fun importJson(json: String) {
         val preview = importService.preview(encodeDst1ForTest(json))
         importService.import(preview)
@@ -208,6 +251,9 @@ class W10ExecutionServiceTest {
 
     private fun informationJson(batchId: String, requirement: String): String =
         """{"v":1,"b":"$batchId","t":[{"i":"$INFO_TASK","n":"Inform","r":1,"d":"$requirement","y":"2026-07-18","u":{"k":3}}]}"""
+
+    private fun moodJson(batchId: String): String =
+        """{"v":1,"b":"$batchId","t":[{"i":"$MOOD_TASK","n":"今天的心情怎么样","r":1,"y":"2026-07-18","p":7,"u":{"k":4}}]}"""
 
     private fun assertOperation(
         code: TaskOperationCode,
@@ -228,8 +274,10 @@ class W10ExecutionServiceTest {
         const val COUNTER_TASK = "CounterTask00001"
         const val TIMER_TASK = "TimerTask0000001"
         const val INFO_TASK = "InformTask000001"
+        const val MOOD_TASK = "MoodTask00000001"
         val COUNTER_KEY = TaskInstanceKey(COUNTER_TASK)
         val TIMER_KEY = TaskInstanceKey(TIMER_TASK)
         val INFO_KEY = TaskInstanceKey(INFO_TASK)
+        val MOOD_KEY = TaskInstanceKey(MOOD_TASK)
     }
 }

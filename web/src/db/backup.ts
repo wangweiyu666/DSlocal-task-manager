@@ -14,7 +14,8 @@ const recurrence = z.object({
 const execution = z.discriminatedUnion("k", [
   z.object({ k: z.literal(1), a: z.union([z.literal(1), z.literal(2)]), v: z.number().int().min(1).max(999) }).strict(),
   z.object({ k: z.literal(2), v: z.number().int().min(1).max(3600) }).strict(),
-  z.object({ k: z.literal(3) }).strict()
+  z.object({ k: z.literal(3) }).strict(),
+  z.object({ k: z.literal(4) }).strict()
 ]);
 const taskFieldsShape = {
   name: z.string().max(100), required: z.boolean(), description: z.string().max(2000), taskDate: z.string(),

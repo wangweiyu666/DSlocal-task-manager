@@ -28,6 +28,7 @@ class AppDatabaseMigrationTest {
         context.deleteDatabase(V3_DATABASE)
         context.deleteDatabase(V4_DATABASE)
         context.deleteDatabase(V5_DATABASE)
+        context.deleteDatabase(V6_DATABASE)
     }
 
     @Test
@@ -77,6 +78,39 @@ class AppDatabaseMigrationTest {
         assertEquals("Legacy task", definition?.name)
         assertTrue("singleDayAdjusted" in instanceColumns)
         assertTrue(exceptionTable)
+        assertNoForeignKeyViolations(database)
+    }
+
+    @Test
+    fun `version 6 migration adds mood submissions without changing existing rows`() {
+        createLegacyDatabase(V6_DATABASE, 6) { db ->
+            insertV1Task(db, "LegacyTaskV60001", "LegacyGroupV6001")
+            MIGRATION_1_2.migrate(db)
+            MIGRATION_2_3.migrate(db)
+            MIGRATION_3_4.migrate(db)
+            MIGRATION_4_5.migrate(db)
+            MIGRATION_5_6.migrate(db)
+            db.execSQL(
+                "INSERT INTO execution_progress VALUES ('LegacyTaskV60001', 'once', 'NORMAL', NULL, NULL, 202, 303)",
+            )
+        }
+
+        val database = openCurrent(V6_DATABASE)
+        val progress = database.openHelper.readableDatabase.query(
+            "SELECT executionKind, updatedAtEpochMillis FROM execution_progress WHERE taskId = 'LegacyTaskV60001'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getString(0) to cursor.getLong(1)
+        }
+        val moodColumns = database.openHelper.readableDatabase.query("PRAGMA table_info(`mood_submission`)").use { cursor ->
+            buildSet { while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name"))) }
+        }
+
+        assertEquals("NORMAL" to 303L, progress)
+        assertEquals(
+            setOf("taskId", "occurrenceKey", "rating", "text", "createdAtEpochMillis", "updatedAtEpochMillis", "submittedAtEpochMillis"),
+            moodColumns,
+        )
         assertNoForeignKeyViolations(database)
     }
 
@@ -226,7 +260,7 @@ class AppDatabaseMigrationTest {
 
     private fun openCurrent(name: String): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .allowMainThreadQueries()
             .build()
             .also {
@@ -278,5 +312,6 @@ class AppDatabaseMigrationTest {
         const val V3_DATABASE = "migration-v3.db"
         const val V4_DATABASE = "migration-v4.db"
         const val V5_DATABASE = "migration-v5.db"
+        const val V6_DATABASE = "migration-v6.db"
     }
 }

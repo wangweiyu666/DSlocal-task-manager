@@ -26,13 +26,14 @@ import com.ds.localtaskmanager.data.dao.StatisticsDao
         InstanceStepEntity::class,
         ExecutionProgressEntity::class,
         InformationSubmissionEntity::class,
+        MoodSubmissionEntity::class,
         TaskNoteEntity::class,
         PointsLedgerEntity::class,
         ActionLogEntity::class,
         ResultRevisionEntity::class,
         ReminderRecordEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
