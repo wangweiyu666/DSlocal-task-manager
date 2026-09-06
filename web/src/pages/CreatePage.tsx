@@ -7,13 +7,38 @@ import { useToast } from "../components/Toast";
 import { db } from "../db/database";
 import { getOrCreateActiveDraft } from "../db/operations";
 import { createDraft, createRecurringDraftTask, createTemporaryDraftTask, draftTaskFromTemplate } from "../model/defaults";
+import { normalizeEditableSteps } from "../model/steps";
 import type { DraftRecord, DraftTask, TaskExceptionRevision, TaskRevision } from "../model/types";
-import { buildBatch, draftTaskToDst1, taskRecordFromDraft } from "../protocol/builder";
+import { buildBatch, taskRecordFromDraft } from "../protocol/builder";
 import { encodeDst1, type EncodedDst1 } from "../protocol/dst1";
 import { createLocalId, createTransportId } from "../protocol/id";
-import type { Dst1Batch } from "../protocol/types";
+import type { Dst1Batch, Dst1Group, Dst1Task } from "../protocol/types";
+import { createPreviewSnapshot } from "../model/preview";
+import { commitPreviewSnapshot } from "../model/preview";
 
-interface PreviewState { batch: Dst1Batch; encoded: EncodedDst1 }
+interface PreviewState { batch: Dst1Batch; encoded: EncodedDst1; draftSnapshot: DraftRecord }
+
+export function naturalDate(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    if (values.year && values.month && values.day) return `${values.year}-${values.month}-${values.day}`;
+  } catch { /* use browser timezone below */ }
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+export function applyDefaultDates(batch: Dst1Batch, draft: DraftRecord, timeZone: string): Dst1Batch {
+  const date = naturalDate(timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const taskMap = new Map(draft.tasks.map((task) => [task.taskId, task]));
+  const patchTask = (task: Dst1Task): Dst1Task => {
+    const source = taskMap.get(task.i);
+    if (!source) return task;
+    if (source.taskDateIntent === "preserve" || (source.source === "existing" && source.taskDateIntent === undefined)) return task;
+    if (source.recurrence) return task.x && !task.x.s ? { ...task, x: { ...task.x, s: date } } : task;
+    return task.y ? task : { ...task, y: date };
+  };
+  return { ...batch, t: batch.t?.map(patchTask), g: batch.g?.map((group) => ({ ...group, t: group.t?.map(patchTask) })) };
+}
 
 function taskTypeLabel(task: DraftTask): string {
   if (!task.recurrence) return "临时任务";
@@ -40,6 +65,7 @@ export function CreatePage() {
   const [workingDraft, setWorkingDraft] = useState<DraftRecord | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [committing, setCommitting] = useState(false);
   const [templateId, setTemplateId] = useState("");
   const { show } = useToast();
   const liveDraft = drafts.find((item) => item.id === draftId) ?? null;
@@ -60,7 +86,8 @@ export function CreatePage() {
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   });
 
-  const selectedTask = draft?.tasks.find((task) => task.draftItemId === selectedItemId) ?? null;
+  const selectedTaskRecord = draft?.tasks.find((task) => task.draftItemId === selectedItemId) ?? null;
+  const selectedTask = selectedTaskRecord ? { ...selectedTaskRecord, timeZone: settings?.timeZone } : null;
   const groupedTasks = useMemo(() => {
     const map = new Map<string | null, DraftTask[]>();
     if (!draft) return map;
@@ -71,10 +98,19 @@ export function CreatePage() {
   const writeDraft = (patch: Partial<DraftRecord>) => {
     if (!draft) return;
     const next = { ...draft, ...patch, updatedAt: new Date().toISOString() };
+    // A preview is an immutable submission snapshot. Any draft edit must force
+    // the user to regenerate it so dates/IDs/exception payloads cannot diverge.
+    setPreview(null);
     setWorkingDraft(next);
     void db.drafts.put(next).catch((error: unknown) => show(error instanceof Error ? `自动保存失败：${error.message}` : "自动保存失败", "error"));
   };
-  const selectDraft = (id: string, nextDraft = drafts.find((item) => item.id === id) ?? null) => { setWorkingDraft(nextDraft); setDraftId(id); setSelectedItemId(null); void db.settings.update("app", { lastDraftId: id, updatedAt: new Date().toISOString() }); };
+  useEffect(() => {
+    if (!draft || !selectedTaskRecord) return;
+    const normalized = normalizeEditableSteps(selectedTaskRecord.taskId, selectedTaskRecord.name, selectedTaskRecord.steps, selectedTaskRecord.execution);
+    if (JSON.stringify(normalized.steps) === JSON.stringify(selectedTaskRecord.steps) && JSON.stringify(normalized.execution) === JSON.stringify(selectedTaskRecord.execution)) return;
+    writeDraft({ tasks: draft.tasks.map((task) => task.draftItemId === selectedTaskRecord.draftItemId ? { ...task, ...normalized } : task) });
+  }, [draft, selectedTaskRecord]);
+  const selectDraft = (id: string, nextDraft = drafts.find((item) => item.id === id) ?? null) => { setPreview(null); setWorkingDraft(nextDraft); setDraftId(id); setSelectedItemId(null); void db.settings.update("app", { lastDraftId: id, updatedAt: new Date().toISOString() }); };
   const addTask = (kind: "temporary" | "recurring", groupId: string | null) => {
     if (!draft) return;
     const task = kind === "recurring" ? createRecurringDraftTask(groupId) : createTemporaryDraftTask(groupId);
@@ -88,7 +124,8 @@ export function CreatePage() {
   };
   const changeSelectedTask = (value: EditableTask) => {
     if (!draft || !selectedTask) return;
-    writeDraft({ tasks: draft.tasks.map((task) => task.draftItemId === selectedTask.draftItemId ? { ...task, ...value } : task) });
+    const { timeZone: _timeZone, ...editableValue } = value;
+    writeDraft({ tasks: draft.tasks.map((task) => task.draftItemId === selectedTask.draftItemId ? { ...task, ...editableValue } : task) });
   };
   const removeSelectedTask = () => {
     if (!draft || !selectedTask || !confirm(`从草稿移除“${selectedTask.name || "未命名任务"}”？任务库中的原任务不会删除。`)) return;
@@ -111,27 +148,50 @@ export function CreatePage() {
 
   const createPreview = () => {
     if (!draft) return;
+    if (settings?.timeZone) {
+      try { new Intl.DateTimeFormat("en", { timeZone: settings.timeZone }).format(); }
+      catch { show("任务时区未知，请先在设置中刷新或修正时区。", "error"); return; }
+    }
     const issues = draft.tasks.flatMap((task) => taskIssues(task).map((issue) => `${task.name || "未命名任务"}：${issue}`));
     if (issues.length) { show(issues[0], "error"); return; }
-    try { const batch = buildBatch(draft, groups); setPreview({ batch, encoded: encodeDst1(batch) }); }
+    try {
+      setPreview(createPreviewSnapshot(draft, groups, settings?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone));
+    }
     catch (error) { show(error instanceof Error ? error.message : "无法生成 DST1", "error"); }
   };
 
   const commitGeneration = async () => {
-    if (!preview || !draft) return;
+    if (!preview || !draft || committing) return;
+    setCommitting(true);
     const now = new Date().toISOString();
-    await db.transaction("rw", [db.batchHistory, db.tasks, db.taskRevisions, db.taskExceptions, db.exceptionRevisions, db.drafts], async () => {
-      await db.batchHistory.add({ id: preview.batch.b, draftName: draft.name, generatedAt: now, envelope: preview.encoded.envelope, jsonBytes: preview.encoded.jsonBytes, envelopeChars: preview.encoded.envelope.length, taskCount: draft.tasks.length, snapshot: preview.batch });
+    const draftSnapshot = preview.draftSnapshot;
+    try {
+      const nextTasks = await commitPreviewSnapshot(preview, draftSnapshot.name, now);
+      setWorkingDraft({ ...draftSnapshot, tasks: nextTasks, updatedAt: now });
+      setCommitting(false);
+      try { await copyText(preview.encoded.envelope); show(`${preview.batch.sv === 1 ? "DST1.1" : "DST1"} 已保存到批次历史并复制`, "success"); } catch { show("批次已保存，但浏览器拒绝访问剪贴板；请在预览中手动复制", "error"); }
+      setPreview(null);
+      return;
+    } catch (error) { setCommitting(false); show(error instanceof Error ? `保存失败：${error.message}` : "保存失败，请重试", "error"); return; }
+    return;
+    /* Legacy inline commit retained below only as historical reference. */
+    const previewForLegacy = preview;
+    {
+    const preview = previewForLegacy!;
+    try { await db.transaction("rw", [db.batchHistory, db.tasks, db.taskRevisions, db.taskExceptions, db.exceptionRevisions, db.drafts], async () => {
+      await db.batchHistory.add({ id: preview.batch.b, draftName: draftSnapshot.name, generatedAt: now, envelope: preview.encoded.envelope, jsonBytes: preview.encoded.jsonBytes, envelopeChars: preview.encoded.envelope.length, taskCount: draftSnapshot.tasks.length, snapshot: preview.batch });
       const nextTasks: DraftTask[] = [];
-      for (const item of draft.tasks) {
+      for (const item of draftSnapshot.tasks) {
         const previous = await db.tasks.get(item.taskId);
         const record = taskRecordFromDraft(item, previous);
         await db.tasks.put(record);
-        const revision: TaskRevision = { id: createLocalId("revision"), taskId: record.id, version: record.version, generatedAt: now, batchId: preview.batch.b, snapshot: draftTaskToDst1(item) };
+        const revisionSnapshot = [...(preview.batch.t ?? []), ...(preview.batch.g ?? []).flatMap((group: Dst1Group) => group.t ?? [])].find((task) => task.i === item.taskId);
+        if (!revisionSnapshot) throw new Error(`预览快照缺少任务 ${item.taskId}`);
+        const revision: TaskRevision = { id: createLocalId("revision"), taskId: record.id, version: record.version, generatedAt: now, batchId: preview.batch.b, snapshot: revisionSnapshot };
         await db.taskRevisions.add(revision);
         nextTasks.push({ ...item, source: "existing" });
       }
-      for (const item of draft.exceptions ?? []) {
+      for (const item of draftSnapshot.exceptions ?? []) {
         const directive = item.directive;
         const exceptionId = `${directive.i}|${directive.y}`;
         const existing = await db.taskExceptions.get(exceptionId);
@@ -141,12 +201,14 @@ export function CreatePage() {
         const revision: TaskExceptionRevision = { id: createLocalId("exception-revision"), exceptionId, taskId: directive.i, date: directive.y, generatedAt: now, batchId: preview.batch.b, snapshot: directive };
         await db.exceptionRevisions.add(revision);
       }
-      await db.drafts.update(draft.id, { tasks: nextTasks, updatedAt: now });
-      setWorkingDraft({ ...draft, tasks: nextTasks, updatedAt: now });
-    });
+      await db.drafts.update(draftSnapshot.id, { tasks: nextTasks, updatedAt: now });
+      setWorkingDraft({ ...draftSnapshot, tasks: nextTasks, updatedAt: now });
+    }); } catch { setCommitting(false); show("保存失败，请重试", "error"); return; }
+    setCommitting(false);
     try { await copyText(preview.encoded.envelope); show(`${preview.batch.sv === 1 ? "DST1.1" : "DST1"} 已保存到批次历史并复制`, "success"); }
     catch { show("批次已保存，但浏览器拒绝访问剪贴板；请在预览中手动复制", "error"); }
     setPreview(null);
+    }
   };
 
   if (!draft) return <div className="page"><div className="loading">正在恢复草稿…</div></div>;
@@ -179,6 +241,6 @@ export function CreatePage() {
         {selectedTask ? <><div className="editor-toolbar"><button className="button text mobile-only" onClick={() => setSelectedItemId(null)}><ArrowLeft size={18} />返回批次</button><div><strong>{selectedTask.name || "编辑任务"}</strong><small>{taskTypeLabel(selectedTask)} · <span className="mono">{selectedTask.taskId}</span></small></div><button className="button text danger" onClick={removeSelectedTask}><Trash2 size={17} />移除</button></div><TaskEditor value={selectedTask} groups={groups} onChange={changeSelectedTask} /></> : <div className="empty-state"><Clipboard size={44} /><h2>选择任务开始编辑</h2><p>临时任务只生成一个实例；重复任务按每日或每周规则生成实例。</p><div className="empty-actions"><button className="button primary" onClick={() => addTask("temporary", null)}><Plus size={18} />添加临时任务</button><button className="button tonal" onClick={() => addTask("recurring", null)}><Repeat2 size={18} />添加重复任务</button></div></div>}
       </section>
     </div>
-    {preview && <Modal title="生成预览" onClose={() => setPreview(null)} wide><div className="preview-stats"><span><strong>{draft.tasks.length}</strong> 个任务</span><span><strong>{(draft.exceptions ?? []).length}</strong> 个单日例外</span><span><strong>{preview.encoded.jsonBytes}</strong> JSON 字节</span><span><strong>{preview.encoded.compressedBytes}</strong> 压缩字节</span><span><strong>{preview.encoded.envelope.length}</strong> 字符</span></div><label className="field"><span>{preview.batch.sv === 1 ? "DST1.1" : "DST1"} 字符串</span><textarea className="mono envelope-preview" readOnly rows={7} value={preview.encoded.envelope} onFocus={(event) => event.currentTarget.select()} /></label><details><summary>查看规范化 JSON</summary><pre className="json-preview">{JSON.stringify(preview.batch, null, 2)}</pre></details><div className="modal-actions"><button className="button text" onClick={() => setPreview(null)}>返回修改</button><button className="button primary" onClick={commitGeneration}><Clipboard size={18} />保存并复制</button></div></Modal>}
+    {preview && <Modal title="生成预览" onClose={() => !committing && setPreview(null)} wide><div className="preview-stats"><span><strong>{preview.draftSnapshot.tasks.length}</strong> 个任务</span><span><strong>{(preview.draftSnapshot.exceptions ?? []).length}</strong> 个单日例外</span><span><strong>{preview.encoded.jsonBytes}</strong> JSON 字节</span><span><strong>{preview.encoded.compressedBytes}</strong> 压缩字节</span><span><strong>{preview.encoded.envelope.length}</strong> 字符</span></div><label className="field"><span>{preview.batch.sv === 1 ? "DST1.1" : "DST1"} 字符串</span><textarea className="mono envelope-preview" readOnly rows={7} value={preview.encoded.envelope} onFocus={(event) => event.currentTarget.select()} /></label><details><summary>查看规范化 JSON</summary><pre className="json-preview">{JSON.stringify(preview.batch, null, 2)}</pre></details><div className="modal-actions"><button className="button text" disabled={committing} onClick={() => setPreview(null)}>返回修改</button><button className="button primary" disabled={committing} onClick={commitGeneration}>{committing ? "保存中…" : <><Clipboard size={18} />保存并复制</>}</button></div></Modal>}
   </div>;
 }

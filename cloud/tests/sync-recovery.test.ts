@@ -22,6 +22,24 @@ function count(table: string): number { return Number(row(`SELECT COUNT(*) AS co
 const content = { v: 1, b: "CloudBatch000001", t: [{ i: "CloudTask0000001", n: "测试", r: 1 }] };
 
 describe("durable command results", () => {
+  it("accepts a task name with 60 emoji code points", async () => {
+    const emojiContent = { v: 1, b: "EmojiBatch000001", t: [{ i: "CloudTask0000001", n: "😀".repeat(60), r: 1 }] };
+    expect(await submit(command("TASK_PUBLISH", undefined, { content: emojiContent }))).toMatchObject({ status: "accepted" });
+  });
+
+  it("validates effective exception STEPS at publish while allowing inherited definitions", async () => {
+    const baseSteps = { v: 1, sv: 1, b: "StepsBatch000001", t: [{ i: "CloudTask0000001", n: "步骤", r: 1, u: { k: 5 }, s: [{ i: "Step000000000001", n: "一步", r: 1 }] }], e: [{ i: "CloudTask0000001", y: "2026-09-05" }] };
+    expect(await submit(command("TASK_PUBLISH", undefined, { content: baseSteps }))).toMatchObject({ status: "accepted" });
+    const cutOut = { ...baseSteps, b: "StepsBatch000002", e: [{ i: "CloudTask0000001", y: "2026-09-05", u: null }] };
+    expect(await submit(command("TASK_UPDATE", undefined, { content: cutOut }, 1))).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    const cutOutWithSteps = { ...baseSteps, b: "StepsBatch000004", e: [{ i: "CloudTask0000001", y: "2026-09-05", u: null, s: [{ i: "Step000000000002", n: "不应保留", r: 1 }] }] };
+    expect(await submit(command("TASK_UPDATE", undefined, { content: cutOutWithSteps }, 1))).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    const cutOutLeaf = { ...baseSteps, b: "StepsBatch000005", e: [{ i: "CloudTask0000001", y: "2026-09-05", u: { k: 3 }, s: [] }] };
+    expect(await submit(command("TASK_UPDATE", undefined, { content: cutOutLeaf }, 1))).toMatchObject({ status: "accepted" });
+    const normalToSteps = { ...baseSteps, b: "StepsBatch000003", t: [{ i: "CloudTask0000001", n: "普通", r: 1 }], e: [{ i: "CloudTask0000001", y: "2026-09-05", u: { k: 5 }, s: [{ i: "Step000000000002", n: "例外步骤", r: 1 }] }] };
+    expect(await submit(command("TASK_UPDATE", undefined, { content: normalToSteps }, 2))).toMatchObject({ status: "accepted" });
+  });
+
   it("replays rejection and conflict without reporting success", async () => {
     const rejected = command("TASK_CANCEL");
     expect(await submit(rejected)).toMatchObject({ status: "rejected", code: "NOT_FOUND" });
@@ -82,8 +100,71 @@ describe("session rotation", () => {
 });
 
 describe("completion undo", () => {
+  it("validates and snapshots ordered STEPS results from the occurrence revision", async () => {
+    const stepsContent = {
+      v: 1, b: "StepsBatch000001", t: [{ i: "CloudTask0000001", n: "步骤任务", r: 1, u: { k: 5 }, s: [
+        { i: "Step000000000001", n: "计数", r: 1, u: { k: 1, a: 2, v: 3 } },
+        { i: "Step000000000002", n: "可跳过", r: 0 },
+        { i: "Step000000000003", n: "计时", r: 1, u: { k: 2, v: 2 } },
+        { i: "Step000000000004", n: "填写", r: 1, u: { k: 3 } },
+        { i: "Step000000000005", n: "心情", r: 1, u: { k: 4 } },
+      ] }],
+    };
+    const published = await submit(command("TASK_PUBLISH", undefined, { content: stepsContent }));
+    expect(published.status).toBe("accepted");
+    const assignmentId = published.details!.assignmentId as string;
+    const occurrenceKey = "CloudTask0000001:1:1:2026-09-05T00:00";
+    expect(await submit(command("OCCURRENCE_UPSERT", occurrenceKey, { taskId: "CloudTask0000001", assignmentId, occurrenceKey, taskRevision: 1, timeZoneVersion: 1, localDate: "2026-09-05", scheduledAt: "2026-09-04T16:00:00Z" }), "EXECUTOR")).toMatchObject({ status: "accepted" });
+    const event = (data: Record<string, unknown>, occurredAt = "2026-09-05T01:00:00Z") => command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType: "RESULT_SUBMITTED", data, occurredAt });
+    const valid = event({ status: "COMPLETED", executionKind: "STEPS", localOccurrenceKey: "", stepResults: [
+      { stepId: "Step000000000001", status: "CONFIRMED", counterValue: 3 },
+      { stepId: "Step000000000002", status: "SKIPPED" },
+      { stepId: "Step000000000003", status: "CONFIRMED", elapsedMillis: 2000 },
+      { stepId: "Step000000000004", status: "CONFIRMED", informationContent: "完成" },
+      { stepId: "Step000000000005", status: "CONFIRMED", moodRating: 4, moodText: "不错" },
+    ] });
+    expect(await submit(valid, "EXECUTOR")).toMatchObject({ status: "accepted" });
+    const stored = JSON.parse(String(row("SELECT payload_json FROM execution_events WHERE id='" + valid.entityId + "'").payload_json));
+    expect(stored).toMatchObject({ executionKind: "STEPS", taskName: "步骤任务", taskDate: "2026-09-05", localOccurrenceKey: "" });
+    expect(stored.stepResults).toEqual([
+      { stepId: "Step000000000001", status: "CONFIRMED", name: "计数", required: true, execution: { k: 1, a: 2, v: 3 }, counterValue: 3 },
+      { stepId: "Step000000000002", status: "SKIPPED", name: "可跳过", required: false, execution: null },
+      { stepId: "Step000000000003", status: "CONFIRMED", name: "计时", required: true, execution: { k: 2, v: 2 }, elapsedMillis: 2000 },
+      { stepId: "Step000000000004", status: "CONFIRMED", name: "填写", required: true, execution: { k: 3 }, informationContent: "完成" },
+      { stepId: "Step000000000005", status: "CONFIRMED", name: "心情", required: true, execution: { k: 4 }, moodRating: 4, moodText: "不错" },
+    ]);
+    const beforeInvalid = count("execution_events");
+    const completeResults = [
+      { stepId: "Step000000000001", status: "CONFIRMED", counterValue: 3 }, { stepId: "Step000000000002", status: "SKIPPED" },
+      { stepId: "Step000000000003", status: "CONFIRMED", elapsedMillis: 2000 }, { stepId: "Step000000000004", status: "CONFIRMED", informationContent: "完成" }, { stepId: "Step000000000005", status: "CONFIRMED", moodRating: 4, moodText: "不错" },
+    ];
+    const invalidCases = [
+      completeResults.slice(0, 4),
+      [completeResults[0], completeResults[1], completeResults[2], completeResults[3], { ...completeResults[4], stepId: "Step000000000004" }],
+      [completeResults[1], completeResults[0], completeResults[2], completeResults[3], completeResults[4]],
+      [{ ...completeResults[0], status: "SKIPPED" }, ...completeResults.slice(1)],
+      [completeResults[0], completeResults[1], completeResults[2], { ...completeResults[3], informationContent: "   " }, completeResults[4]],
+    ];
+    for (const stepResults of invalidCases) {
+      expect(await submit(event({ status: "COMPLETED", executionKind: "STEPS", localOccurrenceKey: "", stepResults }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    }
+    expect(count("execution_events")).toBe(beforeInvalid);
+    const undo = command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType: "COMPLETION_UNDONE", data: { status: "PENDING", localOccurrenceKey: "", taskName: "步骤任务", taskDate: "2026-09-05", executionKind: "STEPS" }, occurredAt: "2026-09-05T03:00:00Z" });
+    expect(await submit(undo, "EXECUTOR")).toMatchObject({ status: "accepted" });
+    const delayed = event({ status: "COMPLETED", executionKind: "STEPS", localOccurrenceKey: "", stepResults: [
+      { stepId: "Step000000000001", status: "CONFIRMED", counterValue: 3 }, { stepId: "Step000000000002", status: "SKIPPED" }, { stepId: "Step000000000003", status: "CONFIRMED", elapsedMillis: 2000 }, { stepId: "Step000000000004", status: "CONFIRMED", informationContent: "完成" }, { stepId: "Step000000000005", status: "CONFIRMED", moodRating: 4, moodText: "不错" },
+    ] }, "2026-09-05T02:00:00Z");
+    expect(await submit(delayed, "EXECUTOR")).toMatchObject({ status: "accepted" });
+    expect(row("SELECT execution_event_id FROM result_selections ORDER BY created_at DESC,rowid DESC LIMIT 1").execution_event_id).toBe(undo.entityId);
+    expect(await submit(undo, "EXECUTOR")).toMatchObject({ status: "duplicate" });
+    expect(await submit(event({ status: "MISSED", executionKind: "STEPS", localOccurrenceKey: "" }), "EXECUTOR")).toMatchObject({ status: "accepted" });
+    expect(JSON.parse(String(row("SELECT payload_json FROM execution_events WHERE id='" + valid.entityId + "'").payload_json))).toMatchObject({ status: "COMPLETED" });
+    expect(await submit(event({ status: "COMPLETED", executionKind: "STEPS", localOccurrenceKey: "", stepResults: [{ stepId: "Step000000000001", status: "CONFIRMED", counterValue: 4 }, { stepId: "Step000000000002", status: "SKIPPED" }, { stepId: "Step000000000003", status: "CONFIRMED", elapsedMillis: 2000 }, { stepId: "Step000000000004", status: "CONFIRMED", informationContent: "完成" }, { stepId: "Step000000000005", status: "CONFIRMED", moodRating: 4, moodText: "不错" }] }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    expect(await submit(event({ status: "COMPLETED", executionKind: "STEPS", localOccurrenceKey: "", stepResults: [{ stepId: "Step000000000001", status: "CONFIRMED", counterValue: 3 }, { stepId: "Step000000000002", status: "SKIPPED", informationContent: "draft" }, { stepId: "Step000000000003", status: "CONFIRMED", elapsedMillis: 2000 }, { stepId: "Step000000000004", status: "CONFIRMED", informationContent: "完成" }, { stepId: "Step000000000005", status: "CONFIRMED", moodRating: 4, moodText: "不错" }] }), "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+  });
+
   it("accepts valid mood completion data and rejects invalid rating, text, and task type", async () => {
-    const moodContent = { v: 1, b: "CloudMoodBatch01", t: [{ i: "CloudTask0000001", n: "今天的心情怎么样", r: 1, u: { k: 4 } }] };
+    const moodContent = { v: 1, b: "CloudMoodBatch01", t: [{ i: "CloudTask0000001", n: "今天的心情怎么样", r: 1, s: [{ n: "旧版步骤", r: 1 }], u: { k: 4 } }] };
     const published = await submit(command("TASK_PUBLISH", undefined, { content: moodContent }));
     const assignmentId = published.details!.assignmentId as string;
     const occurrenceKey = "CloudTask0000001:1:1:2026-09-05T00:00";

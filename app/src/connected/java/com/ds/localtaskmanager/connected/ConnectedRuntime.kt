@@ -77,6 +77,13 @@ data class ConnectedNotification(
     val unread: Boolean,
 )
 
+internal data class ResultSnapshot(
+    val instance: TaskInstanceEntity,
+    val information: com.ds.localtaskmanager.data.InformationSubmissionEntity?,
+    val mood: com.ds.localtaskmanager.data.MoodSubmissionEntity?,
+    val steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>?,
+)
+
 class ConnectedRuntime(
     private val application: DstApplication,
     private val api: CloudApi = CloudApi(),
@@ -689,19 +696,20 @@ class ConnectedRuntime(
 
     private suspend fun enqueueResult(spaceId: String, assignmentId: String, occurrenceKey: String, revision: Int, instance: TaskInstanceEntity) {
         val semantic = "result:${instance.taskId}:${instance.occurrenceKey}:${instance.updatedAtEpochMillis}"
-        val mood = if (instance.executionKind == "MOOD" && instance.status == "COMPLETED") {
-            application.database.withTransaction {
-                val current = application.database.instanceDao().getInstance(instance.taskId, instance.occurrenceKey)
-                if (current != instance) return@withTransaction null
+        val prepared = application.database.withTransaction {
+            val current = application.database.instanceDao().getInstance(instance.taskId, instance.occurrenceKey)
+            val mood = if (instance.executionKind == "MOOD" && instance.status == "COMPLETED") {
                 application.database.executionDao().getMood(instance.taskId, instance.occurrenceKey)
-                    ?.takeIf { it.submittedAtEpochMillis != null && it.submittedAtEpochMillis == instance.completedAtEpochMillis }
-            } ?: return // A newer local transition will be scanned on the next sync.
-        } else null
-        val informationContent = if (instance.executionKind == "INFORMATION") {
-            application.database.executionDao().getSubmission(instance.taskId, instance.occurrenceKey)
-                ?.takeIf { it.submittedAtEpochMillis != null }
-        } else null
-        informationContent?.let { submission ->
+            } else null
+            val steps = if (instance.executionKind == "STEPS" && instance.status == "COMPLETED") {
+                application.database.instanceDao().getInstanceSteps(instance.taskId, instance.occurrenceKey)
+            } else null
+            val information = if (instance.executionKind == "INFORMATION") {
+                application.database.executionDao().getSubmission(instance.taskId, instance.occurrenceKey)
+            } else null
+            prepareResultSnapshot(instance, current, information, mood, steps)
+        } ?: return
+        prepared.information?.let { submission ->
             enqueue(
                 spaceId,
                 "information-submission:${instance.taskId}:${instance.occurrenceKey}:${submission.updatedAtEpochMillis}",
@@ -727,7 +735,7 @@ class ConnectedRuntime(
                 payload = buildJsonObject {
                     put("assignmentId", assignmentId); put("occurrenceKey", occurrenceKey); put("taskRevision", revision)
                     put("eventType", "RESULT_SUBMITTED"); put("occurredAt", Instant.ofEpochMilli(instance.updatedAtEpochMillis).toString())
-                    put("data", buildExecutionResultData(instance, informationContent?.content, mood))
+                    put("data", buildExecutionResultData(prepared.instance, prepared.information?.content, prepared.mood, prepared.steps))
                 },
             ),
         )
@@ -826,10 +834,38 @@ internal fun hasNewNotificationIds(
     return current.any { notification -> notification.notificationIds.any { it !in previousIds } }
 }
 
+internal fun prepareResultSnapshot(
+    expected: TaskInstanceEntity,
+    current: TaskInstanceEntity?,
+    information: com.ds.localtaskmanager.data.InformationSubmissionEntity?,
+    mood: com.ds.localtaskmanager.data.MoodSubmissionEntity?,
+    steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>?,
+): ResultSnapshot? {
+    if (current != expected) return null
+    if (expected.executionKind == "MOOD" && expected.status == "COMPLETED" &&
+        (mood?.submittedAtEpochMillis == null || mood.submittedAtEpochMillis != expected.completedAtEpochMillis)
+    ) return null
+    val finalSteps = if (expected.executionKind == "STEPS" && expected.status == "COMPLETED") {
+        steps?.takeIf(::hasFinalStepSnapshot) ?: return null
+    } else null
+    return ResultSnapshot(expected, information?.takeIf { it.submittedAtEpochMillis != null }, mood, finalSteps)
+}
+
+internal fun hasFinalStepSnapshot(steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>): Boolean {
+    if (steps.isEmpty() || steps.size > 50) return false
+    val ordered = steps.sortedBy { it.position }
+    if (ordered.map { it.position } != ordered.indices.toList()) return false
+    if (ordered.any { it.stepId.isBlank() || it.stepStatus !in setOf("CONFIRMED", "SKIPPED") }) return false
+    if (ordered.any { it.required && it.stepStatus == "SKIPPED" }) return false
+    if (ordered.map { it.stepId }.distinct().size != ordered.size) return false
+    return true
+}
+
 internal fun buildExecutionResultData(
     instance: TaskInstanceEntity,
     informationContent: String?,
     mood: com.ds.localtaskmanager.data.MoodSubmissionEntity? = null,
+    steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>? = null,
 ): JsonObject = buildJsonObject {
     put("status", instance.status)
     put("localOccurrenceKey", instance.occurrenceKey)
@@ -839,6 +875,24 @@ internal fun buildExecutionResultData(
     if (instance.executionKind == "MOOD" && instance.status == "COMPLETED" && mood?.submittedAtEpochMillis != null) {
         put("moodRating", requireNotNull(mood.rating))
         put("moodText", mood.text)
+    }
+    if (instance.executionKind == "STEPS" && instance.status == "COMPLETED" && hasFinalStepSnapshot(steps.orEmpty())) {
+        put("stepResults", buildJsonArray {
+            steps!!.sortedBy { it.position }.forEach { step ->
+                add(buildJsonObject {
+                    put("stepId", requireNotNull(step.stepId))
+                    put("status", step.stepStatus)
+                    if (step.stepStatus == "CONFIRMED") {
+                        when (step.executionKind) {
+                            "COUNTER" -> step.counterValue?.let { put("counterValue", it) }
+                            "TIMER" -> step.elapsedMillis?.let { put("elapsedMillis", it) }
+                            "INFORMATION" -> step.informationContent?.let { put("informationContent", it) }
+                            "MOOD" -> { step.moodRating?.let { put("moodRating", it) }; step.moodText?.let { put("moodText", it) } }
+                        }
+                    }
+                })
+            }
+        })
     }
     instance.completedAtEpochMillis?.let { put("completedAt", Instant.ofEpochMilli(it).toString()) }
     informationContent?.takeIf { it.isNotBlank() }?.let { put("informationContent", it) }

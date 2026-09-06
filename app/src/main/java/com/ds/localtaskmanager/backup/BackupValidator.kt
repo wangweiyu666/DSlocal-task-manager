@@ -13,9 +13,12 @@ object BackupValidator {
     fun validate(decoded: DecodedBackup) {
         if (decoded.metadata.createdAtEpochMillis < 0) throw DstbException("备份创建时间无效")
         val payload = decoded.payload
-        if (payload.schemaVersion !in 1..3) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion !in 1..4) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
         if (payload.schemaVersion < 3 && (payload.moods.isNotEmpty() || payload.definitions.any { it.executionKind == "MOOD" } || payload.instances.any { it.executionKind == "MOOD" })) {
             throw DstbException("心情记录需要备份数据 v3")
+        }
+        if (payload.schemaVersion < 4 && (payload.definitions.any { it.executionKind == "STEPS" } || payload.instances.any { it.executionKind == "STEPS" })) {
+            throw DstbException("分步骤任务需要备份数据 v4")
         }
         if (payload.schemaVersion == 1 &&
             (payload.recurrenceExceptions.isNotEmpty() || payload.instances.any { it.singleDayAdjusted })
@@ -80,12 +83,29 @@ object BackupValidator {
             if (it.recurrenceCount != null && it.recurrenceCount <= 0) throw DstbException("任务“${it.name}”的重复次数无效")
             if (it.recurrenceFrequency != null && it.recurrenceFrequency !in 1..2) throw DstbException("任务“${it.name}”的重复频率无效")
             if (it.executionKind !in EXECUTION_KINDS) throw DstbException("任务“${it.name}”的执行方式无效")
+            if (it.executionKind == "STEPS") {
+                val steps = payload.definitionSteps.filter { step -> step.taskId == it.taskId }
+                if (steps.isEmpty() || steps.size > 50 || steps.any { step -> step.stepId == null } ||
+                    steps.mapNotNull { step -> step.stepId }.distinct().size != steps.size ||
+                    steps.map { it.position }.distinct().size != steps.size ||
+                    steps.map { it.position }.sorted() != (0 until steps.size).toList() ||
+                    steps.any { step -> step.executionKind == "STEPS" || !validLeafConfig(step.executionKind, step.executionAction, step.executionTarget) }) {
+                    throw DstbException("STEPS 任务“${it.name}”的步骤定义无效")
+                }
+            }
             if (it.points !in -1_000_000..1_000_000) throw DstbException("任务“${it.name}”的积分超出范围")
             requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "任务“${it.name}”")
         }
         payload.definitionSteps.forEach {
             if (it.taskId !in taskIds) throw DstbException("任务步骤引用了不存在的任务")
             if (it.position < 0) throw DstbException("任务步骤位置无效")
+            val definition = payload.definitions.first { definition -> definition.taskId == it.taskId }
+            if (payload.schemaVersion >= 4 && definition.executionKind == "STEPS" && (it.stepId == null || !STEP_ID.matches(it.stepId))) {
+                throw DstbException("任务步骤 ID 无效")
+            }
+        }
+        payload.definitionSteps.filter { it.executionKind == "STEPS" }.forEach {
+            throw DstbException("步骤不能嵌套 STEPS 执行方式")
         }
         payload.instances.forEach {
             val label = "任务实例“${it.name}”"
@@ -111,6 +131,39 @@ object BackupValidator {
         payload.instanceSteps.forEach {
             requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "实例步骤")
             if (it.position < 0 || it.updatedAtEpochMillis > snapshotLimit) throw DstbException("实例步骤数据无效")
+            val instance = payload.instances.first { instance -> instance.taskId == it.taskId && instance.occurrenceKey == it.occurrenceKey }
+            if (payload.schemaVersion >= 4 && instance.executionKind == "STEPS" && !STEP_ID.matches(it.stepId)) throw DstbException("实例步骤 ID 无效")
+            if (payload.schemaVersion >= 4 && instance.executionKind == "STEPS" && it.stepStatus !in STEP_STATUSES) throw DstbException("实例步骤状态无效")
+            if (payload.schemaVersion >= 4 && instance.executionKind == "STEPS") {
+                if (it.completed != (it.stepStatus == "CONFIRMED")) throw DstbException("实例步骤完成状态不一致")
+                if (it.stepStatus == "SKIPPED" && it.required) throw DstbException("必需步骤不能跳过")
+                if (!validLeafConfig(it.executionKind, it.executionAction, it.executionTarget)) throw DstbException("实例步骤执行配置无效")
+                if (it.stepStatus == "CONFIRMED" && !validLeafAnswer(it)) throw DstbException("实例步骤答案未达成目标")
+            }
+            if (it.counterValue != null && it.counterValue < 0) throw DstbException("实例步骤计数无效")
+            if (it.elapsedMillis != null && it.elapsedMillis < 0) throw DstbException("实例步骤计时无效")
+            if (it.informationContent != null && it.informationContent.codePointCount(0, it.informationContent.length) > 2_000) throw DstbException("实例步骤正文过长")
+            if (it.moodRating != null && it.moodRating !in 1..5) throw DstbException("实例步骤心情无效")
+            if (it.moodText != null && it.moodText.codePointCount(0, it.moodText.length) > 2_000) throw DstbException("实例步骤感受过长")
+        }
+        if (payload.schemaVersion >= 4) {
+            payload.instances.filter { it.executionKind == "STEPS" }.forEach { instance ->
+                val steps = payload.instanceSteps.filter { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }
+                if (steps.isEmpty() || steps.size > 50 || steps.map { it.position }.sorted() != (0 until steps.size).toList() ||
+                    steps.map { it.stepId }.distinct().size != steps.size) throw DstbException("STEPS 实例步骤快照无效")
+                var pendingSeen = false
+                steps.sortedBy { it.position }.forEach { step ->
+                    if (step.stepStatus == "PENDING") pendingSeen = true
+                    else if (pendingSeen) throw DstbException("STEPS 实例步骤顺序无效")
+                }
+                if (instance.status == "COMPLETED" && (instance.completedAtEpochMillis == null || steps.any { it.stepStatus == "PENDING" })) {
+                    throw DstbException("已完成 STEPS 实例缺少完整步骤")
+                }
+            }
+            payload.instanceSteps.filter { step ->
+                payload.instances.any { it.taskId == step.taskId && it.occurrenceKey == step.occurrenceKey && it.executionKind == "STEPS" }
+            }.groupBy { Triple(it.taskId, it.occurrenceKey, it.stepId) }.values
+                .firstOrNull { it.size > 1 }?.let { throw DstbException("实例步骤 ID 重复") }
         }
         payload.progress.forEach {
             requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "任务进度")
@@ -166,6 +219,23 @@ object BackupValidator {
         }
     }
 
+    private fun validLeafConfig(kind: String, action: Int?, target: Int?): Boolean = when (kind) {
+        "NORMAL" -> action == null && target == null
+        "COUNTER" -> action in 1..2 && target in 1..999
+        "TIMER" -> action == null && target in 1..3_600
+        "INFORMATION", "MOOD" -> action == null && target == null
+        else -> false
+    }
+
+    private fun validLeafAnswer(step: InstanceStepBackup): Boolean = when (step.executionKind) {
+        "NORMAL" -> true
+        "COUNTER" -> step.counterValue == step.executionTarget
+        "TIMER" -> step.elapsedMillis == (step.executionTarget ?: 0) * 1_000L
+        "INFORMATION" -> step.informationContent?.let { raw -> raw.isNotBlank() && raw.trim().codePointCount(0, raw.trim().length) <= 2_000 } == true
+        "MOOD" -> step.moodRating in 1..5 && (step.moodText ?: "").codePointCount(0, (step.moodText ?: "").length) <= 2_000
+        else -> false
+    }
+
     private fun <T, K> unique(values: List<T>, key: (T) -> K, label: String) {
         val seen = HashSet<K>()
         values.forEach { if (!seen.add(key(it))) throw DstbException("备份中存在重复的$label") }
@@ -200,7 +270,9 @@ object BackupValidator {
     }
 
     private val TASK_STATUSES = TaskStatus.entries.mapTo(hashSetOf()) { it.name }
-    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION", "MOOD")
+    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION", "MOOD", "STEPS")
+    private val STEP_ID = Regex("[A-Za-z0-9_-]{16}")
+    private val STEP_STATUSES = setOf("PENDING", "CONFIRMED", "SKIPPED")
     private val INSTANCE_CATEGORIES = setOf("DAILY", "WEEKLY", "TEMPORARY")
     private val RESULT_SCOPES = setOf("GLOBAL", "GROUP")
 }

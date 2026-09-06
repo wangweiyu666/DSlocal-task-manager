@@ -10,6 +10,7 @@ import com.ds.localtaskmanager.data.dao.HistoryDayRow
 import com.ds.localtaskmanager.data.dao.HistoryTaskRow
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.execution.ExecutionState
+import com.ds.localtaskmanager.domain.execution.StepState
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import com.ds.localtaskmanager.domain.result.DailyResultStatus
 
@@ -123,7 +124,13 @@ class RoomHistoryRepository(private val database: AppDatabase) : HistoryReposito
         HistoryDetail(
             instance = instance,
             steps = database.instanceDao().getInstanceSteps(key.taskId, key.occurrenceKey),
-            execution = if (instance.executionKind == "MOOD") {
+            execution = if (instance.executionKind == "STEPS") {
+                ExecutionState.Steps(database.instanceDao().getInstanceSteps(key.taskId, key.occurrenceKey).map {
+                    StepState(it.stepId, it.position, it.name, it.required, it.completed, it.executionKind,
+                        it.executionAction, it.executionTarget, it.stepStatus, it.counterValue, it.elapsedMillis,
+                        it.informationContent, it.moodRating, it.moodText)
+                })
+            } else if (instance.executionKind == "MOOD") {
                 database.executionDao().getMood(key.taskId, key.occurrenceKey).let {
                     ExecutionState.Mood(it?.rating, it?.text.orEmpty(), it?.submittedAtEpochMillis)
                 }

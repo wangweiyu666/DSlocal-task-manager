@@ -266,4 +266,20 @@ interface InstanceDao {
         completed: Boolean,
         updatedAt: Long,
     ): Int
+
+    @Query(
+        """
+        UPDATE instance_step SET completed = :completed, stepStatus = :status, updatedAtEpochMillis = :updatedAt
+        WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey AND position = :position
+        """,
+    )
+    suspend fun updateStepStatus(taskId: String, occurrenceKey: String, position: Int, completed: Boolean, status: String, updatedAt: Long): Int
+
+    @Query(
+        """
+        UPDATE instance_step SET completed = :completed, stepStatus = :status, updatedAtEpochMillis = :updatedAt
+        WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey AND stepId = :stepId
+        """,
+    )
+    suspend fun updateStepStatusById(taskId: String, occurrenceKey: String, stepId: String, completed: Boolean, status: String, updatedAt: Long): Int
 }

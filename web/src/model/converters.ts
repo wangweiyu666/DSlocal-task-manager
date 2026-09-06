@@ -1,6 +1,7 @@
 import type { DraftTask, TaskFields } from "./types";
 import type { Dst1Task } from "../protocol/types";
 import { createLocalId } from "../protocol/id";
+import { normalizeEditableSteps } from "./steps";
 
 export function fieldsFromDst1(task: Dst1Task): TaskFields {
   let deadlineMode: TaskFields["deadlineMode"] = "default";
@@ -10,23 +11,28 @@ export function fieldsFromDst1(task: Dst1Task): TaskFields {
     deadlineMode = task.l.includes("T") ? "datetime" : "date";
     deadline = task.l;
   }
+  const steps = task.s ?? [];
+  const execution = task.u ?? null;
   return {
     name: task.n,
     required: task.r === 1,
     description: task.d ?? "",
     taskDate: task.y ?? "",
+    taskDateIntent: task.y ? "set" : "preserve",
     deadlineMode,
     deadline,
     points: task.p ?? 0,
     order: task.o ?? null,
-    steps: task.s ?? [],
+    steps,
     recurrence: task.x ?? null,
     completionMessage: task.m ?? "",
     reminders: task.h ?? [],
-    execution: task.u ?? null
+    execution
   };
 }
 
 export function draftTaskFromDst1(task: Dst1Task, groupId: string | null, source: DraftTask["source"] = "existing"): DraftTask {
-  return { ...fieldsFromDst1(task), taskId: task.i, groupId, draftItemId: createLocalId("item"), source };
+  const fields = fieldsFromDst1(task);
+  const normalized = normalizeEditableSteps(task.i, task.n, fields.steps, fields.execution);
+  return { ...fields, ...normalized, taskId: task.i, groupId, draftItemId: createLocalId("item"), source };
 }

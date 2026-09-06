@@ -125,4 +125,23 @@ describe("connected result presentation", () => {
     expect(presentExecutionResult(result, [task, occurrence, result, submission], "Asia/Hong_Kong").informationContent)
       .toBe("旧结果补传的完整正文");
   });
+
+  it("renders STEPS answers from the flat Cloud event fields and keeps event snapshot names", () => {
+    const result = entity("execution_event", "steps-event-1", {
+      assignmentId: "assignment-1", occurrenceKey: "occurrence-1", eventType: "RESULT_SUBMITTED",
+      occurredAt: "2026-08-23T12:34:00Z",
+      data: {
+        status: "COMPLETED", executionKind: "STEPS", informationContent: "旧正文不应出现",
+        stepResults: [
+          { stepId: "Step000000000001", status: "CONFIRMED", name: "事件快照名称", required: true, execution: { k: 1, a: 2, v: 3 }, counterValue: 3 },
+          { stepId: "Step000000000002", status: "CONFIRMED", name: "填写", required: true, execution: { k: 3 }, informationContent: "第一行\n第二行" },
+          { stepId: "Step000000000003", status: "SKIPPED", name: "选做", required: false, execution: { k: 4 }, moodRating: 5, moodText: "不应显示" },
+        ],
+      },
+    });
+    const value = presentExecutionResult(result, [task, occurrence, result], "Asia/Hong_Kong");
+    expect(value.informationContent).toBeNull();
+    expect(value.stepResults.map((step) => step.answer)).toEqual(["完成 3 / 3 次", "第一行\n第二行", ""]);
+    expect(value.stepResults[0].name).toBe("事件快照名称");
+  });
 });

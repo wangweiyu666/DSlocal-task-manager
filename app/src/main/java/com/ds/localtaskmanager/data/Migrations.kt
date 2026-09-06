@@ -2,6 +2,7 @@ package com.ds.localtaskmanager.data
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import android.content.ContentValues
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
@@ -187,6 +188,71 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `mood_submission` (`taskId` TEXT NOT NULL, `occurrenceKey` TEXT NOT NULL, `rating` INTEGER, `text` TEXT NOT NULL, `createdAtEpochMillis` INTEGER NOT NULL, `updatedAtEpochMillis` INTEGER NOT NULL, `submittedAtEpochMillis` INTEGER, PRIMARY KEY(`taskId`, `occurrenceKey`), FOREIGN KEY(`taskId`, `occurrenceKey`) REFERENCES `task_instance`(`taskId`, `occurrenceKey`) ON UPDATE NO ACTION ON DELETE CASCADE)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_mood_submission_taskId_occurrenceKey` ON `mood_submission` (`taskId`, `occurrenceKey`)")
+    }
+}
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `task_step_definition` ADD COLUMN `stepId` TEXT")
+        db.execSQL("ALTER TABLE `task_step_definition` ADD COLUMN `executionKind` TEXT NOT NULL DEFAULT 'NORMAL'")
+        db.execSQL("ALTER TABLE `task_step_definition` ADD COLUMN `executionAction` INTEGER")
+        db.execSQL("ALTER TABLE `task_step_definition` ADD COLUMN `executionTarget` INTEGER")
+
+        // Room cannot change a composite primary key with ALTER TABLE. Rebuild the
+        // table and assign deterministic IDs to rows created by Room 7.
+        db.execSQL("ALTER TABLE `instance_step` RENAME TO `instance_step_v7`")
+        db.execSQL("""
+            CREATE TABLE `instance_step` (
+              `taskId` TEXT NOT NULL,
+              `occurrenceKey` TEXT NOT NULL,
+              `position` INTEGER NOT NULL,
+              `name` TEXT NOT NULL,
+              `required` INTEGER NOT NULL,
+              `completed` INTEGER NOT NULL,
+              `updatedAtEpochMillis` INTEGER NOT NULL,
+              `stepId` TEXT NOT NULL,
+              `executionKind` TEXT NOT NULL,
+              `executionAction` INTEGER,
+              `executionTarget` INTEGER,
+              `stepStatus` TEXT NOT NULL,
+              `counterValue` INTEGER,
+              `elapsedMillis` INTEGER,
+              `informationContent` TEXT,
+              `moodRating` INTEGER,
+              `moodText` TEXT,
+              PRIMARY KEY(`taskId`, `occurrenceKey`, `stepId`),
+              FOREIGN KEY(`taskId`, `occurrenceKey`) REFERENCES `task_instance`(`taskId`, `occurrenceKey`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+        """.trimIndent())
+        val cursor = db.query("SELECT * FROM `instance_step_v7`")
+        cursor.use {
+            val task = it.getColumnIndexOrThrow("taskId")
+            val occurrence = it.getColumnIndexOrThrow("occurrenceKey")
+            val position = it.getColumnIndexOrThrow("position")
+            val name = it.getColumnIndexOrThrow("name")
+            val required = it.getColumnIndexOrThrow("required")
+            val completed = it.getColumnIndexOrThrow("completed")
+            val updated = it.getColumnIndexOrThrow("updatedAtEpochMillis")
+            while (it.moveToNext()) {
+                val taskId = it.getString(task)
+                val pos = it.getInt(position)
+                val id = "s${taskId.take(12).padEnd(12, '0')}${pos.toString(36).padStart(3, '0')}"
+                val values = ContentValues().apply {
+                    put("taskId", taskId)
+                    put("occurrenceKey", it.getString(occurrence))
+                    put("position", pos)
+                    put("name", it.getString(name))
+                    put("required", it.getInt(required))
+                    put("completed", it.getInt(completed))
+                    put("updatedAtEpochMillis", it.getLong(updated))
+                    put("stepId", id)
+                    put("executionKind", "NORMAL")
+                    put("stepStatus", if (it.getInt(completed) != 0) "CONFIRMED" else "PENDING")
+                }
+                db.insert("instance_step", 0, values)
+            }
+        }
+        db.execSQL("DROP TABLE `instance_step_v7`")
     }
 }
 

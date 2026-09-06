@@ -1,15 +1,21 @@
 export type RequiredFlag = 0 | 1;
 
 export interface Dst1Step {
+  /** Stable protocol identity. Omitted only for legacy task-level steps. */
+  i?: string;
   n: string;
   r: RequiredFlag;
+  /** Leaf execution override; k=5 is forbidden here. */
+  u?: Dst1LeafExecution;
 }
 
-export type Dst1Execution =
+export type Dst1LeafExecution =
   | { k: 1; a: 1 | 2; v: number }
   | { k: 2; v: number }
   | { k: 3 }
   | { k: 4 };
+
+export type Dst1Execution = Dst1LeafExecution | { k: 5 };
 
 export interface Dst1Recurrence {
   f: 1 | 2;

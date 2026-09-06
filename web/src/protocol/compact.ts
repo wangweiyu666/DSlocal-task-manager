@@ -1,7 +1,10 @@
 import type { Dst11Exception, Dst1Batch, Dst1Execution, Dst1Group, Dst1Recurrence, Dst1Step, Dst1Task } from "./types";
 
 function compactStep(step: Dst1Step): Dst1Step {
-  return { n: step.n.normalize("NFC"), r: step.r };
+  const result: Dst1Step = { n: step.n.normalize("NFC"), r: step.r };
+  if (step.i !== undefined) result.i = step.i;
+  if (step.u !== undefined) result.u = { ...step.u };
+  return result;
 }
 
 function compactRecurrence(value: Dst1Recurrence): Dst1Recurrence {
@@ -17,7 +20,9 @@ function compactRecurrence(value: Dst1Recurrence): Dst1Recurrence {
 function compactExecution(value: Dst1Execution): Dst1Execution {
   if (value.k === 1) return { k: 1, a: value.a, v: value.v };
   if (value.k === 2) return { k: 2, v: value.v };
-  return value.k === 4 ? { k: 4 } : { k: 3 };
+  if (value.k === 4) return { k: 4 };
+  if (value.k === 5) return { k: 5 };
+  return { k: 3 };
 }
 
 export function compactTask(task: Dst1Task): Dst1Task {

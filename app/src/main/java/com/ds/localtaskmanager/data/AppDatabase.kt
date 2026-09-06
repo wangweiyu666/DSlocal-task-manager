@@ -33,7 +33,7 @@ import com.ds.localtaskmanager.data.dao.StatisticsDao
         ResultRevisionEntity::class,
         ReminderRecordEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

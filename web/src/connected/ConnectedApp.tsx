@@ -6,12 +6,14 @@ import { Modal } from "../components/Modal";
 import { TaskEditor, taskIssues, type EditableTask } from "../components/TaskEditor";
 import { TaskLibraryFilters } from "../components/TaskLibraryFilters";
 import { emptyTaskFields } from "../model/defaults";
+import { normalizeEditableSteps } from "../model/steps";
 import { groupIssue, newGroup, normalizeGroup } from "../model/groups";
 import type { GroupRecord } from "../model/types";
 import { createTransportId } from "../protocol/id";
 import { cloudApi } from "./api";
 import { connectedDb, purgeAllConnectedData, purgeSpace } from "./db";
 import { buildCloudTaskContent, editableFromCloudTask, unpackCloudTask } from "./library";
+import { validateDst1Batch } from "../protocol/validation";
 import { presentExecutionResult } from "./results";
 import { pullChanges, queueCommand, synchronize, uuidV7 } from "./sync";
 import { useOutboxSync } from "./useOutboxSync";
@@ -24,7 +26,7 @@ type AssignmentMode = "ALL" | "SELECTED";
 type SensitiveAction = "export" | "delete-scheduled" | "delete-immediate";
 type TaskEditorState = { taskId: string; baseVersion: number; value: EditableTask; assignmentMode: AssignmentMode; executorMembershipIds: string[]; conflictCommandId?: string };
 
-function newEditable(): EditableTask { return { ...emptyTaskFields(), groupId: null }; }
+function newEditable(taskId?: string): EditableTask { return { ...emptyTaskFields(), groupId: null, taskId }; }
 
 function Login({ state, email, setEmail, code, setCode, busy, error, onEmail, onCode }: {
   state: AuthState; email: string; setEmail: (value: string) => void; code: string; setCode: (value: string) => void; busy: boolean; error: string; onEmail: () => void; onCode: () => void;
@@ -77,6 +79,12 @@ export default function ConnectedApp() {
   const [sensitiveCode, setSensitiveCode] = useState("");
   const [sensitiveChallengeId, setSensitiveChallengeId] = useState("");
 
+  useEffect(() => {
+    const zone = membership?.space.timeZone;
+    if (!editor || editor.value.timeZone || !zone) return;
+    setEditor((current) => current ? { ...current, value: { ...current.value, timeZone: zone } } : current);
+  }, [editor, membership?.space.timeZone]);
+
   const spaceId = membership?.space.id ?? "";
   const entities = useLiveQuery<CloudEntity[], CloudEntity[]>(async () => spaceId ? connectedDb.entities.where("spaceId").equals(spaceId).toArray() : [], [spaceId], []);
   const outboxCount = useLiveQuery<number, number>(async () => spaceId ? connectedDb.outbox.where("spaceId").equals(spaceId).count() : 0, [spaceId], 0);
@@ -107,13 +115,15 @@ export default function ConnectedApp() {
   }), [taskGroupFilter, taskKindFilter, taskSearch, tasks]);
 
   const openTaskEditor = (item: CloudEntity, value: EditableTask, copy = false) => {
+    const taskId = copy ? createTransportId() : item.entityId;
+    const normalized = normalizeEditableSteps(item.entityId, value.name, value.steps, value.execution);
     const assignmentMode: AssignmentMode = item.payload.assignmentMode === "SELECTED" ? "SELECTED" : "ALL";
     const activeIds = new Set(executorMembers.map((member) => member.id));
     const storedIds = Array.isArray(item.payload.executorMembershipIds) ? item.payload.executorMembershipIds.filter((id): id is string => typeof id === "string" && activeIds.has(id)) : [];
     setEditor({
-      taskId: copy ? createTransportId() : item.entityId,
+      taskId,
       baseVersion: copy ? 0 : item.entityVersion,
-      value: copy ? { ...value, name: `${value.name} · 副本` } : value,
+      value: { ...value, ...normalized, taskId, timeZone: membership?.space.timeZone, ...(copy ? { name: `${value.name} · 副本`, taskDateIntent: "set" as const } : {}) },
       assignmentMode,
       executorMembershipIds: assignmentMode === "SELECTED" ? storedIds : executorMembers.map((member) => member.id),
     });
@@ -267,13 +277,18 @@ export default function ConnectedApp() {
   const saveTask = async () => {
     if (!editor || !spaceId || taskIssues(editor.value).length) return;
     if (editor.assignmentMode === "SELECTED" && editor.executorMembershipIds.length === 0) { setError("指定执行者时至少选择一名成员"); return; }
-    const content = buildCloudTaskContent(editor.taskId, editor.value, groups);
-    const assignment = { assignmentMode: editor.assignmentMode, executorMembershipIds: editor.assignmentMode === "SELECTED" ? editor.executorMembershipIds : [] };
-    const command: SyncCommand = { commandId: uuidV7(), entityId: editor.taskId, baseVersion: editor.baseVersion, createdAt: new Date().toISOString(), type: editor.baseVersion === 0 ? "TASK_PUBLISH" : "TASK_UPDATE", payload: { content, ...assignment } };
-    await queueCommand(spaceId, command, "task", { id: editor.taskId, version: editor.baseVersion + 1, status: "ACTIVE", content, ...assignment, assignment: null });
-    if (editor.conflictCommandId) await connectedDb.conflicts.delete(editor.conflictCommandId);
-    setEditor(null); setNotice(navigator.onLine ? "已加入同步队列" : "已离线保存，联网后同步");
-    if (navigator.onLine) void sync();
+    const timeZone = membership?.space.timeZone;
+    if (!timeZone) { setError("空间时区尚未加载，请刷新空间信息后再保存任务。"); return; }
+    try {
+      const content = buildCloudTaskContent(editor.taskId, editor.value, groups, timeZone);
+      validateDst1Batch(content);
+      const assignment = { assignmentMode: editor.assignmentMode, executorMembershipIds: editor.assignmentMode === "SELECTED" ? editor.executorMembershipIds : [] };
+      const command: SyncCommand = { commandId: uuidV7(), entityId: editor.taskId, baseVersion: editor.baseVersion, createdAt: new Date().toISOString(), type: editor.baseVersion === 0 ? "TASK_PUBLISH" : "TASK_UPDATE", payload: { content, ...assignment } };
+      await queueCommand(spaceId, command, "task", { id: editor.taskId, version: editor.baseVersion + 1, status: "ACTIVE", content, ...assignment, assignment: null });
+      if (editor.conflictCommandId) await connectedDb.conflicts.delete(editor.conflictCommandId);
+      setEditor(null); setNotice(navigator.onLine ? "已加入同步队列" : "已离线保存，联网后同步");
+      if (navigator.onLine) void sync();
+    } catch (value) { setError(value instanceof Error ? value.message : "保存任务失败，请刷新空间信息后重试"); }
   };
 
   const useServerConflict = async (commandId: string) => {
@@ -463,7 +478,7 @@ export default function ConnectedApp() {
       {error && <div className="connected-banner error">{error}<button onClick={() => setError("")}>×</button></div>}{notice && <div className="connected-banner">{notice}<button onClick={() => setNotice("")}>×</button></div>}
       {conflicts.length > 0 && <section className="connected-conflict-list"><div className="connected-conflicts"><ShieldAlert /><div><strong>{conflicts.length} 个冲突需要处理</strong><span>系统未覆盖服务器版本。原始、本地和服务器三份数据均已保留。</span></div></div>{conflicts.map((conflict) => <article className="data-card" key={conflict.commandId}><div className="data-card-main"><h2>{conflict.entityId}</h2><p>本地命令基于旧版本，服务器当前为 v{conflict.serverVersion}。</p><details><summary>查看三方数据</summary><pre className="json-preview">{JSON.stringify({ original: conflict.original, local: conflict.local, server: conflict.server }, null, 2)}</pre></details></div><div className="card-actions"><button className="button text" onClick={() => void useServerConflict(conflict.commandId)}>采用服务器</button><button className="button tonal" onClick={() => void editConflict(conflict.commandId)}>以本地内容重新编辑</button></div></article>)}</section>}
 
-      {tab === "tasks" && <section className="connected-page"><div className="page-header"><div><p className="eyebrow">临时任务与重复任务分别管理</p><h1>任务库</h1><p>沿用离线版编辑器、筛选和积分组快照；每次保存都会形成不可变云端修订。</p></div><button className="button primary" onClick={() => setEditor({ taskId: createTransportId(), baseVersion: 0, value: newEditable(), assignmentMode: "ALL", executorMembershipIds: executorMembers.map((member) => member.id) })}><Plus />新建任务</button></div>
+      {tab === "tasks" && <section className="connected-page"><div className="page-header"><div><p className="eyebrow">临时任务与重复任务分别管理</p><h1>任务库</h1><p>沿用离线版编辑器、筛选和积分组快照；每次保存都会形成不可变云端修订。</p></div><button className="button primary" onClick={() => { const taskId = createTransportId(); setEditor({ taskId, baseVersion: 0, value: newEditable(taskId), assignmentMode: "ALL", executorMembershipIds: executorMembers.map((member) => member.id) }); }}><Plus />新建任务</button></div>
         <TaskLibraryFilters groups={groups} search={taskSearch} onSearchChange={setTaskSearch} kindFilter={taskKindFilter} onKindFilterChange={setTaskKindFilter} groupFilter={taskGroupFilter} onGroupFilterChange={setTaskGroupFilter} searchInputRef={taskSearchRef} />
         <div className="connected-grid">{filteredTasks.length === 0 ? <div className="empty-state"><ListTodo size={38} /><h2>{tasks.length ? "没有匹配的任务" : "任务库还是空的"}</h2><p>新建任务后会先保存在本地，再安全同步到空间。</p></div> : filteredTasks.map((item) => {
           const definition = unpackCloudTask(item.payload.content as Record<string, unknown> | undefined);
@@ -485,7 +500,7 @@ export default function ConnectedApp() {
       {tab === "results" && <section className="connected-page"><div className="page-header"><div><p className="eyebrow">执行结果</p><h1>结果与复核</h1><p>这里使用面向用户的任务名称和状态；信息告知任务会展示执行者填写的正文。</p></div></div><div className="card-list">{results.length === 0 ? <div className="empty-state"><Send /><h2>暂无执行结果</h2></div> : results.map((item) => {
         const selected = selections.find((selection) => selection.payload.assignmentId === item.payload.assignmentId && selection.payload.occurrenceKey === item.payload.occurrenceKey)?.payload.executionEventId === item.entityId;
         const presentation = presentExecutionResult(item, entities, membership?.space.timeZone ?? "Asia/Hong_Kong");
-        return <article className="data-card result-card" key={item.key}><div className="data-card-main"><div className="card-title-row"><div><h2>{presentation.taskName}</h2><p>{presentation.eventLabel}</p></div><div className="status-pills"><span className={`status-pill ${presentation.statusLabel === "已完成" ? "recurring" : "temporary"}`}>{presentation.statusLabel}</span>{selected && <span className="status-pill recurring">当前正式结果</span>}</div></div>{presentation.moodLabel && <section className="information-result"><h3>心情记录</h3><p style={{ display: "flex", alignItems: "center", gap: 12 }}><img src={`${import.meta.env.BASE_URL}mood/mood_${presentation.moodRating}.png`} width={48} height={48} alt="" />{presentation.moodLabel}</p>{presentation.moodText && <p>{presentation.moodText}</p>}</section>}{presentation.informationContent && <section className="information-result"><h3>填写内容</h3><p>{presentation.informationContent}</p></section>}<div className="meta-row">{presentation.taskDate && <span>任务日期：{presentation.taskDate}</span>}<span>提交时间：{presentation.occurredAt}</span>{presentation.taskRevision !== null && <span>任务版本：第 {presentation.taskRevision} 版</span>}</div>{presentation.reviewMessage && <p className="result-warning">{presentation.reviewMessage}</p>}{presentation.duplicateMessage && <p className="result-warning neutral">{presentation.duplicateMessage}</p>}</div><div className="card-actions"><button className="button tonal" disabled={!online || selected} onClick={() => void selectResult(item)}>{selected ? "已采用" : "采用为正式结果"}</button></div></article>;
+        return <article className="data-card result-card" key={item.key}><div className="data-card-main"><div className="card-title-row"><div><h2>{presentation.taskName}</h2><p>{presentation.eventLabel}</p></div><div className="status-pills"><span className={`status-pill ${presentation.statusLabel === "已完成" ? "recurring" : "temporary"}`}>{presentation.statusLabel}</span>{selected && <span className="status-pill recurring">当前正式结果</span>}</div></div>{presentation.stepResults.length > 0 && <section className="information-result"><h3>分步骤结果</h3>{presentation.stepResults.map((step) => <div className="step-result-row" key={step.stepId}><strong>{step.name}</strong><span>{step.status === "CONFIRMED" ? "已确认" : "已跳过"}{step.answer ? ` · ${step.answer}` : ""}</span></div>)}</section>}{presentation.moodLabel && <section className="information-result"><h3>心情记录</h3><p style={{ display: "flex", alignItems: "center", gap: 12 }}><img src={`${import.meta.env.BASE_URL}mood/mood_${presentation.moodRating}.png`} width={48} height={48} alt="" />{presentation.moodLabel}</p>{presentation.moodText && <p>{presentation.moodText}</p>}</section>}{presentation.informationContent && <section className="information-result"><h3>填写内容</h3><p>{presentation.informationContent}</p></section>}<div className="meta-row">{presentation.taskDate && <span>任务日期：{presentation.taskDate}</span>}<span>提交时间：{presentation.occurredAt}</span>{presentation.taskRevision !== null && <span>任务版本：第 {presentation.taskRevision} 版</span>}</div>{presentation.reviewMessage && <p className="result-warning">{presentation.reviewMessage}</p>}{presentation.duplicateMessage && <p className="result-warning neutral">{presentation.duplicateMessage}</p>}</div><div className="card-actions"><button className="button tonal" disabled={!online || selected} onClick={() => void selectResult(item)}>{selected ? "已采用" : "采用为正式结果"}</button></div></article>;
       })}</div></section>}
 
       {tab === "settings" && settingsSection === "notifications" && <section className="connected-page"><div className="page-header"><div><p className="eyebrow">设置 · 通知</p><h1>空间动态</h1><p>服务端保留每个事件，此处按任务或批次合并显示。</p></div><button className="button tonal" disabled={!online || remoteNotifications.length === 0} onClick={() => void markNotificationsRead()}>全部标为已读</button></div>{settingsNavigation}<div className="card-list">{remoteNotifications.length === 0 ? <div className="empty-state"><Bell /><h2>{online ? "暂无通知" : "离线时显示上次缓存"}</h2></div> : remoteNotifications.map((item) => <article className="data-card" key={String(item.id)}><div className="data-card-main"><h2>{String(item.type)}</h2><p>{String(item.entityId ?? "空间事件")}</p><div className="meta-row"><span>{String(item.createdAt)}</span><span>{Number(item.eventCount ?? 1)} 个事件</span>{!item.readAt && <span>未读</span>}</div></div></article>)}</div></section>}

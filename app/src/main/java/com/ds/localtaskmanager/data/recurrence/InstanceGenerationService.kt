@@ -199,6 +199,10 @@ class RoomInstanceGenerationService(
                     required = step.required,
                     completed = false,
                     updatedAtEpochMillis = now,
+                    stepId = step.id ?: stableStepId(definition.taskId, index),
+                    executionKind = step.execution.kindName(),
+                    executionAction = step.execution.actionValue(),
+                    executionTarget = step.execution.targetValue(),
                 )
             } ?: stepDefinitions.map { step ->
                 InstanceStepEntity(
@@ -209,6 +213,10 @@ class RoomInstanceGenerationService(
                     required = step.required,
                     completed = false,
                     updatedAtEpochMillis = now,
+                    stepId = step.stepId ?: stableStepId(definition.taskId, step.position),
+                    executionKind = step.executionKind,
+                    executionAction = step.executionAction,
+                    executionTarget = step.executionTarget,
                 )
             }
             val instance = TaskInstanceEntity(
@@ -317,6 +325,7 @@ class RoomInstanceGenerationService(
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
         "MOOD" -> ExecutionSpec.Mood
+        "STEPS" -> ExecutionSpec.Steps
         else -> ExecutionSpec.Normal
     }
 
@@ -326,6 +335,7 @@ class RoomInstanceGenerationService(
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
         ExecutionSpec.Mood -> "MOOD"
+        ExecutionSpec.Steps -> "STEPS"
     }
 
     private fun ExecutionSpec.actionValue(): Int? = (this as? ExecutionSpec.Counter)?.action?.protocolValue
@@ -335,6 +345,9 @@ class RoomInstanceGenerationService(
         is ExecutionSpec.Timer -> targetSeconds
         else -> null
     }
+
+    private fun stableStepId(taskId: String, position: Int): String =
+        "s" + taskId.take(12).padEnd(12, '0') + position.toString(36).padStart(3, '0')
 
     private fun String?.toReminderList(): List<Int> = this
         ?.removePrefix("[")?.removeSuffix("]")

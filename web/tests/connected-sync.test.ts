@@ -101,14 +101,14 @@ describe("connected task library DST1 snapshots", () => {
   };
 
   it("keeps an ungrouped cloud task at the DST1 top level", () => {
-    const content = buildCloudTaskContent("CloudTask0000001", task, [group]);
+    const content = buildCloudTaskContent("CloudTask0000001", task, [group], "Asia/Hong_Kong");
     expect(content.t).toHaveLength(1);
     expect(content.g).toBeUndefined();
     expect(unpackCloudTask(content as unknown as Record<string, unknown>)?.task.i).toBe("CloudTask0000001");
   });
 
   it("embeds the selected group's immutable snapshot and restores it for editing", () => {
-    const content = buildCloudTaskContent("CloudTask0000001", { ...task, groupId: group.id }, [group]);
+    const content = buildCloudTaskContent("CloudTask0000001", { ...task, groupId: group.id }, [group], "Asia/Hong_Kong");
     expect(content.t).toBeUndefined();
     expect(content.g?.[0]).toMatchObject({ i: group.id, n: "日常", cm: "全部完成", im: "仍需努力" });
     expect(content.g?.[0].t?.[0].i).toBe("CloudTask0000001");

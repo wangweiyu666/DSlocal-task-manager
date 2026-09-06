@@ -15,6 +15,7 @@ export interface TaskFields {
   required: boolean;
   description: string;
   taskDate: string;
+  taskDateIntent?: "preserve" | "set" | "clear";
   deadlineMode: "default" | "date" | "datetime" | "none";
   deadline: string;
   points: number;

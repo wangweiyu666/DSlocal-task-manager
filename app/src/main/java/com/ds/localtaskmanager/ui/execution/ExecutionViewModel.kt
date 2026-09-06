@@ -45,6 +45,8 @@ data class ExecutionUiState(
     val noteDraft: String = "",
     val noteSaveState: NoteSaveState = NoteSaveState.SAVED,
     val timerRunning: Boolean = false,
+    val activeStepTimerId: String? = null,
+    val stepSaveStates: Map<String, NoteSaveState> = emptyMap(),
     val completionFeedback: String? = null,
     val errorCode: TaskOperationCode? = null,
     val errorMessage: String? = null,
@@ -56,6 +58,7 @@ class ExecutionViewModel(
     private val repository: TaskRepository,
     private val noteService: TaskNoteService,
     private val timer: TimerSessionController = TimerSessionController(service),
+    val monotonicNow: () -> Long = { android.os.SystemClock.elapsedRealtime() },
     private val reminderReconciler: ReminderReconciler? = null,
     private val onCompletionCommitted: () -> Unit = {},
 ) : ViewModel() {
@@ -72,6 +75,16 @@ class ExecutionViewModel(
     private var moodSaveJob: Job? = null
     private val moodSaveMutex = Mutex()
     private var completing = false
+    private data class StepDraft(val revision: Long, val save: suspend () -> Any)
+    private val stepSaveMutex = Mutex()
+    private val stepDraftRevisions = mutableMapOf<String, Long>()
+    private val stepDebounceJobs = mutableMapOf<String, Job>()
+    private val stepPendingSaves = mutableMapOf<String, StepDraft>()
+    private val stepLocalDrafts = mutableMapOf<String, InstanceStepEntity>()
+    private var stepWriterJob: Job? = null
+    private var stepTimerJob: Job? = null
+    private var stepTimerStartedAt: Long? = null
+    private var stepTimerBaseMillis: Long = 0L
 
     init {
         refresh(loadNote = true)
@@ -83,6 +96,157 @@ class ExecutionViewModel(
 
     fun setStep(position: Int, completed: Boolean) = perform {
         service.setStep(key, position, completed)
+    }
+
+    fun confirmStep(stepId: String) = perform {
+        if (!stopStepTimerAndFlush() || !flushStepDrafts()) error("步骤草稿保存失败，请重试")
+        service.confirmStep(key, stepId)
+    }
+
+    fun skipStep(position: Int) = perform {
+        if (!stopStepTimerAndFlush() || !flushStepDrafts()) error("步骤草稿保存失败，请重试")
+        service.skipStep(key, position)
+    }
+
+    fun undoStep(stepId: String) = perform {
+        if (!stopStepTimerAndFlush() || !flushStepDrafts()) error("步骤草稿保存失败，请重试")
+        service.undoStep(key, stepId)
+    }
+
+    private fun canEditCurrentStep(stepId: String): Boolean {
+        val current = mutableState.value
+        val step = current.steps.firstOrNull { it.stepId == stepId } ?: return false
+        return current.instance?.status == "PENDING" && current.instance.executionKind == "STEPS" &&
+            !current.working && !completing && step.stepStatus == "PENDING" &&
+            current.steps.firstOrNull { it.stepStatus == "PENDING" }?.stepId == stepId
+    }
+
+    fun updateStepInformation(stepId: String, value: String) {
+        if (!canEditCurrentStep(stepId)) return
+        updateStepLocal(stepId) { it.copy(informationContent = value) }
+        scheduleStepSave(stepId) { service.saveStepInformation(key, stepId, value) }
+    }
+
+    fun updateStepCounter(stepId: String, value: Int) {
+        if (!canEditCurrentStep(stepId)) return
+        updateStepLocal(stepId) { it.copy(counterValue = value) }
+        enqueueStepSave(stepId) { service.setStepCounter(key, stepId, value) }
+    }
+
+    fun updateStepMood(stepId: String, rating: Int?, text: String) {
+        if (rating != null && rating !in 1..5 || text.codePointCount(0, text.length) > 2000 || !canEditCurrentStep(stepId)) return
+        val old = mutableState.value.steps.firstOrNull { it.stepId == stepId }
+        updateStepLocal(stepId) { it.copy(moodRating = rating, moodText = text) }
+        val save: suspend () -> Any = { service.saveStepMood(key, stepId, rating, text) }
+        if (old?.moodRating != rating) enqueueStepSave(stepId, save) else scheduleStepSave(stepId, save)
+    }
+
+    fun startStepTimer(stepId: String) {
+        if (!canEditCurrentStep(stepId)) return
+        if (stepTimerJob != null || mutableState.value.working) return
+        val step = mutableState.value.steps.firstOrNull { it.stepId == stepId } ?: return
+        stepTimerBaseMillis = step.elapsedMillis ?: 0L
+        stepTimerStartedAt = monotonicNow()
+        mutableState.value = mutableState.value.copy(activeStepTimerId = stepId)
+        stepTimerJob = viewModelScope.launch {
+            while (true) {
+            val elapsed = currentStepElapsed()
+                val target = mutableState.value.steps.firstOrNull { it.stepId == stepId }?.executionTarget?.times(1_000L)
+                updateStepLocal(stepId) { it.copy(elapsedMillis = target?.let { limit -> minOf(elapsed, limit) } ?: elapsed) }
+                enqueueStepSave(stepId) { service.setStepTimer(key, stepId, elapsed) }
+                if (step.executionTarget?.let { elapsed >= it * 1_000L } == true) break
+                delay(TIMER_TICK_MILLIS)
+            }
+            stopStepTimerAndFlush(stepId, cancelTicker = false)
+        }
+    }
+
+    fun pauseStepTimer(stepId: String) {
+        viewModelScope.launch { stopStepTimerAndFlush(stepId) }
+    }
+
+    fun retryStepSave(stepId: String) {
+        if (stepPendingSaves.containsKey(stepId)) {
+            mutableState.value = mutableState.value.copy(stepSaveStates = mutableState.value.stepSaveStates + (stepId to NoteSaveState.SAVING))
+            ensureStepWriter()
+        }
+    }
+
+    private fun currentStepElapsed(): Long = stepTimerBaseMillis +
+        (monotonicNow() - (stepTimerStartedAt ?: monotonicNow()))
+
+    private suspend fun stopStepTimerAndFlush(expectedStepId: String? = null, cancelTicker: Boolean = true): Boolean {
+        val active = mutableState.value.activeStepTimerId
+        if (active != null && (expectedStepId == null || expectedStepId == active)) {
+            val elapsed = currentStepElapsed()
+            if (cancelTicker) stepTimerJob?.cancel()
+            stepTimerJob = null
+            stepTimerStartedAt = null
+            val target = mutableState.value.steps.firstOrNull { it.stepId == active }?.executionTarget?.times(1_000L)
+            updateStepLocal(active) { it.copy(elapsedMillis = target?.let { limit -> minOf(elapsed, limit) } ?: elapsed) }
+            enqueueStepSave(active) { service.setStepTimer(key, active, elapsed) }
+            mutableState.value = mutableState.value.copy(activeStepTimerId = null)
+        }
+        return flushStepDrafts()
+    }
+
+    private fun updateStepLocal(stepId: String, transform: (InstanceStepEntity) -> InstanceStepEntity) {
+        val updated = mutableState.value.steps.map { if (it.stepId == stepId) transform(it) else it }
+        val local = updated.firstOrNull { it.stepId == stepId }
+        if (local != null) stepLocalDrafts[stepId] = local
+        mutableState.value = mutableState.value.copy(steps = updated)
+    }
+
+    private fun scheduleStepSave(stepId: String, save: suspend () -> Any) {
+        val revision = (stepDraftRevisions[stepId] ?: 0L) + 1L
+        stepDraftRevisions[stepId] = revision
+        stepPendingSaves[stepId] = StepDraft(revision, save)
+        mutableState.value = mutableState.value.copy(stepSaveStates = mutableState.value.stepSaveStates + (stepId to NoteSaveState.SAVING))
+        stepDebounceJobs[stepId]?.cancel()
+        stepDebounceJobs[stepId] = viewModelScope.launch {
+            delay(NOTE_SAVE_DEBOUNCE_MILLIS)
+            stepDebounceJobs.remove(stepId)
+            ensureStepWriter()
+        }
+    }
+
+    private fun enqueueStepSave(stepId: String, save: suspend () -> Any) {
+        val revision = (stepDraftRevisions[stepId] ?: 0L) + 1L
+        stepDraftRevisions[stepId] = revision
+        stepPendingSaves[stepId] = StepDraft(revision, save)
+        mutableState.value = mutableState.value.copy(stepSaveStates = mutableState.value.stepSaveStates + (stepId to NoteSaveState.SAVING))
+        ensureStepWriter()
+    }
+
+    private fun ensureStepWriter() {
+        if (stepWriterJob?.isActive != true) stepWriterJob = viewModelScope.launch { writeStepDrafts() }
+    }
+
+    private suspend fun writeStepDrafts() {
+        while (true) {
+            val entry = stepSaveMutex.withLock { stepPendingSaves.entries.firstOrNull()?.toPair() } ?: return
+            val (stepId, draft) = entry
+            var attemptedRevision = draft.revision
+            try {
+                stepSaveMutex.withLock {
+                    val latest = stepPendingSaves[stepId] ?: return@withLock
+                    attemptedRevision = latest.revision
+                    latest.save()
+                    if (stepPendingSaves[stepId]?.revision == latest.revision) {
+                        stepPendingSaves.remove(stepId)
+                        stepLocalDrafts.remove(stepId)
+                        mutableState.value = mutableState.value.copy(stepSaveStates = mutableState.value.stepSaveStates + (stepId to NoteSaveState.SAVED))
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                val newer = stepSaveMutex.withLock { stepPendingSaves[stepId]?.revision != attemptedRevision }
+                if (newer) continue
+                mutableState.value = mutableState.value.copy(stepSaveStates = mutableState.value.stepSaveStates + (stepId to NoteSaveState.ERROR), errorMessage = error.message ?: "步骤保存失败，请重试")
+                return
+            }
+        }
     }
 
     fun setCounter(value: Int) = perform {
@@ -222,8 +386,12 @@ class ExecutionViewModel(
     }
 
     fun onForegroundLost() {
-        if (timer.isRunning) pauseTimer()
-        if (moodDirty) retryMoodSave()
+        viewModelScope.launch {
+            if (timer.isRunning) pauseTimer()
+            stopStepTimerAndFlush()
+            if (moodDirty) saveMoodNow()
+            flushStepDrafts()
+        }
     }
 
     fun complete() {
@@ -236,6 +404,10 @@ class ExecutionViewModel(
                 runCatching {
                     timerTickerJob?.cancel()
                     timer.pause()
+                    if (!stopStepTimerAndFlush() || !flushStepDrafts()) {
+                        showError(IllegalStateException("步骤草稿保存失败，请重试"))
+                        return@launch
+                    }
                     timerBase = null
                     if (!saveMoodNow()) return@launch
                     service.complete(key)
@@ -287,8 +459,22 @@ class ExecutionViewModel(
         noteSaveJob = null
         moodSaveJob?.cancel()
         viewModelScope.launch {
-            if (saveMoodNow() && (mutableState.value.noteDraft == savedNote || saveNoteNow())) onSaved()
+            if (saveMoodNow() && stopStepTimerAndFlush() && flushStepDrafts()) {
+                if (mutableState.value.noteDraft == savedNote || saveNoteNow()) onSaved()
+            }
         }
+    }
+
+    private suspend fun flushStepDrafts(): Boolean {
+        stepDebounceJobs.values.toList().forEach { it.cancel() }
+        stepDebounceJobs.clear()
+        ensureStepWriter()
+        stepWriterJob?.join()
+        if (stepPendingSaves.isNotEmpty()) {
+            ensureStepWriter()
+            stepWriterJob?.join()
+        }
+        return stepPendingSaves.isEmpty()
     }
 
     private fun perform(block: suspend () -> Unit) {
@@ -316,7 +502,9 @@ class ExecutionViewModel(
                 loading = false,
                 working = completing,
                 instance = result.instance,
-                steps = result.steps,
+                steps = result.steps.map { remote ->
+                    if (stepPendingSaves.containsKey(remote.stepId)) stepLocalDrafts[remote.stepId] ?: remote else remote
+                },
                 execution = result.execution,
                 requiredStepsComplete = result.readiness.requiredStepsComplete,
                 executionTargetReached = result.readiness.executionTargetReached,
@@ -385,7 +573,13 @@ class ExecutionViewModel(
 
     override fun onCleared() {
         timerTickerJob?.cancel()
-        viewModelScope.launch { timer.pause() }
+        stepTimerJob?.cancel()
+        stepDebounceJobs.values.forEach { it.cancel() }
+        viewModelScope.launch {
+            stopStepTimerAndFlush()
+            flushStepDrafts()
+            timer.pause()
+        }
         super.onCleared()
     }
 

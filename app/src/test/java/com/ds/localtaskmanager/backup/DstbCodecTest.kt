@@ -198,7 +198,7 @@ class DstbCodecTest {
                     groupNameSnapshot = "学习",
                 ),
             ),
-            instanceSteps = listOf(InstanceStepBackup("task-1", "once", 0, "打开书", true, true, created)),
+            instanceSteps = listOf(InstanceStepBackup("task-1", "once", 0, "打开书", true, true, created, "1234567890abcdef", stepStatus = "CONFIRMED")),
             progress = listOf(ProgressBackup("task-1", "once", "TIMER", null, 600_000, created, created)),
             information = listOf(InformationBackup("task-1", "once", "示例告知", created, created, null)),
             notes = listOf(NoteBackup("task-1", "once", "示例备注", created, created)),

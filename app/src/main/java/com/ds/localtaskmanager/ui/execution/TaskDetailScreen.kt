@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -113,6 +114,14 @@ fun TaskDetailRoute(
         onBack = ::leave,
         onRetry = { viewModel.refresh() },
         onStepChange = viewModel::setStep,
+        onStepConfirm = viewModel::confirmStep,
+        onStepSkip = viewModel::skipStep,
+        onStepUndo = viewModel::undoStep,
+        onStepInformationChange = viewModel::updateStepInformation,
+        onStepMoodChange = viewModel::updateStepMood,
+        onStepCounterChange = viewModel::updateStepCounter,
+        onStepTimerToggle = { stepId -> if (state.activeStepTimerId == stepId) viewModel.pauseStepTimer(stepId) else viewModel.startStepTimer(stepId) },
+        onStepRetrySave = viewModel::retryStepSave,
         onCounterChange = viewModel::setCounter,
         onTimerToggle = { if (state.timerRunning) viewModel.pauseTimer() else viewModel.startTimer() },
         onInformationChange = viewModel::updateInformationDraft,
@@ -163,6 +172,14 @@ fun TaskDetailScreen(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onStepChange: (Int, Boolean) -> Unit,
+    onStepConfirm: (String) -> Unit = {},
+    onStepSkip: (Int) -> Unit = {},
+    onStepUndo: (String) -> Unit = {},
+    onStepInformationChange: (String, String) -> Unit = { _, _ -> },
+    onStepMoodChange: (String, Int?, String) -> Unit = { _, _, _ -> },
+    onStepCounterChange: (String, Int) -> Unit = { _, _ -> },
+    onStepTimerToggle: (String) -> Unit = {},
+    onStepRetrySave: (String) -> Unit = {},
     onCounterChange: (Int) -> Unit,
     onTimerToggle: () -> Unit,
     onInformationChange: (String) -> Unit,
@@ -232,6 +249,14 @@ fun TaskDetailScreen(
                 state = state,
                 modifier = Modifier.padding(padding),
                 onStepChange = onStepChange,
+                onStepConfirm = onStepConfirm,
+                onStepSkip = onStepSkip,
+                onStepUndo = onStepUndo,
+                onStepInformationChange = onStepInformationChange,
+                onStepMoodChange = onStepMoodChange,
+                onStepCounterChange = onStepCounterChange,
+                onStepTimerToggle = onStepTimerToggle,
+                onStepRetrySave = onStepRetrySave,
                 onCounterChange = onCounterChange,
                 onTimerToggle = onTimerToggle,
                 onInformationChange = onInformationChange,
@@ -288,6 +313,14 @@ private fun TaskDetailContent(
     state: ExecutionUiState,
     modifier: Modifier,
     onStepChange: (Int, Boolean) -> Unit,
+    onStepConfirm: (String) -> Unit,
+    onStepSkip: (Int) -> Unit,
+    onStepUndo: (String) -> Unit,
+    onStepInformationChange: (String, String) -> Unit,
+    onStepMoodChange: (String, Int?, String) -> Unit,
+    onStepCounterChange: (String, Int) -> Unit,
+    onStepTimerToggle: (String) -> Unit,
+    onStepRetrySave: (String) -> Unit,
     onCounterChange: (Int) -> Unit,
     onTimerToggle: () -> Unit,
     onInformationChange: (String) -> Unit,
@@ -317,7 +350,7 @@ private fun TaskDetailContent(
         if (instance.description.isNotBlank()) {
             DetailCard("任务说明") { Text(instance.description, style = MaterialTheme.typography.bodyLarge) }
         }
-        if (state.steps.isNotEmpty()) {
+        if (state.steps.isNotEmpty() && instance.executionKind != "STEPS") {
             DetailCard("任务步骤") {
                 state.steps.forEachIndexed { index, step ->
                     StepRow(step, editable, state.working, onStepChange)
@@ -329,7 +362,26 @@ private fun TaskDetailContent(
             MoodSection(state.moodRating, state.moodText, editable, state.working, state.moodSaveState,
                 onMoodRatingChange, onMoodTextChange, onMoodRetry)
         }
-        ExecutionSection(
+        if (instance.executionKind == "STEPS" && state.execution is ExecutionState.Steps) {
+            StepsExecutionSection(
+                steps = state.steps,
+                editable = editable,
+                working = state.working,
+                activeTimerId = state.activeStepTimerId,
+                stepSaveStates = state.stepSaveStates,
+                onConfirm = onStepConfirm,
+                onSkip = onStepSkip,
+                onUndo = onStepUndo,
+                onInformationChange = onStepInformationChange,
+                onMoodChange = onStepMoodChange,
+                onCounterChange = onStepCounterChange,
+                onTimerToggle = onStepTimerToggle,
+                onRetrySave = onStepRetrySave,
+            )
+            if (editable && state.steps.any { !it.required && it.stepStatus == "PENDING" }) {
+                Text("完成任务时，尚未确认的选做步骤会自动跳过。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            }
+        } else ExecutionSection(
             execution = state.execution,
             editable = editable,
             working = state.working,
@@ -542,8 +594,143 @@ private fun ExecutionSection(
                 Text("完成后正文已锁定", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             }
         }
+        is ExecutionState.Steps -> DetailCard("分步骤执行") {
+            execution.items.forEach { item ->
+                Text(
+                    "${if (item.completed) "✓" else "○"} ${item.position + 1}. ${item.name} · ${if (item.completed) "已确认" else "未处理"}",
+                    color = if (item.completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
         is ExecutionState.Mood, ExecutionState.Normal, null -> Unit
     }
+}
+
+@Composable
+private fun StepsExecutionSection(
+    steps: List<InstanceStepEntity>,
+    editable: Boolean,
+    working: Boolean,
+    activeTimerId: String?,
+    stepSaveStates: Map<String, NoteSaveState> = emptyMap(),
+    onConfirm: (String) -> Unit,
+    onSkip: (Int) -> Unit,
+    onUndo: (String) -> Unit,
+    onInformationChange: (String, String) -> Unit,
+    onMoodChange: (String, Int?, String) -> Unit,
+    onCounterChange: (String, Int) -> Unit,
+    onTimerToggle: (String) -> Unit,
+    onRetrySave: (String) -> Unit,
+) {
+    DetailCard("分步骤执行") {
+        val openIndex = steps.indexOfFirst { it.stepStatus == "PENDING" }
+        steps.forEachIndexed { index, step ->
+            val confirmed = step.stepStatus == "CONFIRMED"
+            val skipped = step.stepStatus == "SKIPPED"
+            val open = editable && !working && (index == openIndex || confirmed)
+            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${index + 1}. ${step.name.ifBlank { step.stepId ?: "步骤" }}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    Text(if (confirmed) "已确认" else if (skipped) "已跳过" else if (index == openIndex) "进行中" else "已锁定", style = MaterialTheme.typography.labelMedium)
+                }
+                if (!confirmed && !skipped && index != openIndex) Text("请先处理前一步", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                if (step.required) Text("必需步骤", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (confirmed || index == openIndex) StepAnswerEditor(step, editable && !working && index == openIndex, activeTimerId, step.stepId?.let { stepSaveStates[it] }, onInformationChange, onMoodChange, onCounterChange, onTimerToggle, onRetrySave)
+                if (confirmed || skipped) OutlinedButton(onClick = { onUndo(step.stepId ?: "") }, enabled = editable && !working && step.stepId != null) { Text(if (skipped) "重新处理此步骤" else "撤销此步骤") }
+                if (index == openIndex && !step.required && editable) OutlinedButton(onClick = { onSkip(index) }, enabled = !working) { Text("跳过选做步骤") }
+                if (index == openIndex && editable && step.stepId != null) Button(onClick = { onConfirm(step.stepId) }, enabled = !working && stepSatisfiedForUi(step)) { Text("完成此步骤") }
+            }
+            if (index != steps.lastIndex) HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun StepAnswerEditor(
+    step: InstanceStepEntity,
+    editable: Boolean,
+    activeTimerId: String?,
+    saveState: NoteSaveState?,
+    onInformationChange: (String, String) -> Unit,
+    onMoodChange: (String, Int?, String) -> Unit,
+    onCounterChange: (String, Int) -> Unit,
+    onTimerToggle: (String) -> Unit,
+    onRetrySave: (String) -> Unit,
+) {
+    if (!editable) {
+        if (step.executionKind == "MOOD") {
+            MoodSection(step.moodRating, step.moodText.orEmpty(), false, false, saveState ?: NoteSaveState.SAVED, {}, {}, {})
+        } else if (step.executionKind == "INFORMATION" && !step.informationContent.isNullOrBlank()) {
+            var expanded by rememberSaveable(step.stepId) { mutableStateOf(false) }
+            Text(if (expanded) step.informationContent.orEmpty() else compactInformation(step.informationContent.orEmpty()), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起正文" else "展开正文") }
+        } else Text(stepAnswerSummary(step), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (saveState != null) Text(
+            when (saveState) { NoteSaveState.SAVING -> "保存中…"; NoteSaveState.SAVED -> "已保存"; NoteSaveState.ERROR -> "保存失败，请重试" },
+            color = if (saveState == NoteSaveState.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        when (step.executionKind) {
+        "COUNTER" -> {
+            Text("${step.counterValue ?: 0} / ${step.executionTarget ?: 0}", style = MaterialTheme.typography.titleLarge)
+            if (step.executionAction == 2) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { step.stepId?.let { onCounterChange(it, (step.counterValue ?: 0) - 1) } }, enabled = editable && (step.counterValue ?: 0) > 0) { Text("−1") }
+                    Button(onClick = { step.stepId?.let { onCounterChange(it, (step.counterValue ?: 0) + 1) } }, enabled = editable && (step.counterValue ?: 0) < (step.executionTarget ?: 0)) { Text("+1") }
+                }
+            } else Slider(value = (step.counterValue ?: 0).toFloat(), onValueChange = { value -> step.stepId?.let { onCounterChange(it, value.roundToInt()) } }, valueRange = 0f..(step.executionTarget ?: 1).toFloat(), enabled = editable, modifier = Modifier.testTag("step-counter-${step.stepId}"))
+        }
+        "TIMER" -> {
+            Text("${formatDuration(step.elapsedMillis ?: 0)} / ${formatDuration((step.executionTarget ?: 0) * 1000L)}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.titleLarge)
+            Button(onClick = { step.stepId?.let(onTimerToggle) }, enabled = editable || activeTimerId == step.stepId) { Text(if (activeTimerId == step.stepId) "暂停" else "开始") }
+        }
+        "INFORMATION" -> OutlinedTextField(
+            value = step.informationContent.orEmpty(),
+            onValueChange = { text -> step.stepId?.let { onInformationChange(it, text) } },
+            enabled = editable,
+            modifier = Modifier.fillMaxWidth().testTag("step-information-${step.stepId}"),
+            minLines = 3,
+            label = { Text("填写信息") },
+            supportingText = { Text("${step.informationContent.orEmpty().codePointCount(0, step.informationContent.orEmpty().length)} / 2000") },
+        )
+        "MOOD" -> {
+            MoodSection(step.moodRating, step.moodText.orEmpty(), true, false, saveState ?: NoteSaveState.SAVED,
+                onRatingChange = { rating -> step.stepId?.let { onMoodChange(it, rating, step.moodText.orEmpty()) } },
+                onTextChange = { text -> step.stepId?.let { onMoodChange(it, step.moodRating, text) } },
+                onRetry = { step.stepId?.let(onRetrySave) },
+            )
+        }
+        }
+        if (saveState == NoteSaveState.ERROR && step.executionKind != "MOOD") {
+            TextButton(onClick = { step.stepId?.let(onRetrySave) }) { Text("重试保存") }
+        }
+    }
+}
+
+private fun stepAnswerSummary(step: InstanceStepEntity): String = when (step.executionKind) {
+    "COUNTER" -> "计数：${step.counterValue ?: 0} / ${step.executionTarget ?: 0}"
+    "TIMER" -> "计时：${formatDuration(step.elapsedMillis ?: 0)} / ${formatDuration((step.executionTarget ?: 0) * 1000L)}"
+    "INFORMATION" -> "填写：${step.informationContent.orEmpty().ifBlank { "未填写" }}"
+    "MOOD" -> "心情：${step.moodRating?.toString() ?: "未选择"}${step.moodText.orEmpty().takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""}"
+    else -> "直接完成"
+}
+
+private fun compactInformation(value: String): String {
+    val count = value.codePointCount(0, value.length)
+    if (count <= 60) return "填写：$value"
+    val end = value.offsetByCodePoints(0, 60)
+    return "填写：${value.substring(0, end)}…"
+}
+
+private fun stepSatisfiedForUi(step: InstanceStepEntity): Boolean = when (step.executionKind) {
+    "COUNTER" -> (step.counterValue ?: 0) >= (step.executionTarget ?: Int.MAX_VALUE)
+    "TIMER" -> (step.elapsedMillis ?: 0L) >= (step.executionTarget ?: Int.MAX_VALUE) * 1_000L
+    "INFORMATION" -> !step.informationContent.isNullOrBlank() && step.informationContent!!.codePointCount(0, step.informationContent!!.length) <= 2000
+    "MOOD" -> step.moodRating in 1..5
+    else -> true
 }
 
 @Composable

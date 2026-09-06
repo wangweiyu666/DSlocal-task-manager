@@ -104,8 +104,10 @@
       "additionalProperties": false,
       "required": ["n", "r"],
       "properties": {
+        "i": { "$ref": "#/$defs/id" },
         "n": { "$ref": "#/$defs/text100" },
-        "r": { "type": "integer", "enum": [0, 1] }
+        "r": { "type": "integer", "enum": [0, 1] },
+        "u": { "$ref": "#/$defs/leafExecution" }
       }
     },
     "recurrence": {
@@ -150,7 +152,7 @@
       "uniqueItems": true,
       "items": { "type": "integer", "minimum": 0, "maximum": 10080 }
     },
-    "execution": {
+    "leafExecution": {
       "oneOf": [
         {
           "type": "object",
@@ -179,6 +181,12 @@
             "k": { "enum": [3, 4] }
           }
         }
+      ]
+    },
+    "execution": {
+      "oneOf": [
+        { "$ref": "#/$defs/leafExecution" },
+        { "type": "object", "additionalProperties": false, "required": ["k"], "properties": { "k": { "const": 5 } } }
       ]
     },
     "task": {

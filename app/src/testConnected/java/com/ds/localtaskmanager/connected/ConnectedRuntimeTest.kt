@@ -2,11 +2,16 @@ package com.ds.localtaskmanager.connected
 
 import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.data.MoodSubmissionEntity
+import com.ds.localtaskmanager.data.InstanceStepEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class ConnectedRuntimeTest {
     @Test
@@ -120,6 +125,61 @@ class ConnectedRuntimeTest {
         assertFalse(undone.containsKey("moodRating"))
         assertFalse(undone.containsKey("moodText"))
     }
+
+    @Test
+    fun stepsResultContainsAllFiveLeafTypesAndNoSkippedAnswer() {
+        val instance = baseInstance("STEPS")
+        val steps = listOf(
+            InstanceStepEntity("CloudSteps0001", "once", 0, "计数", true, true, 1, "step-counter-0001", "COUNTER", executionTarget = 3, stepStatus = "CONFIRMED", counterValue = 3),
+            InstanceStepEntity("CloudSteps0001", "once", 1, "计时", true, true, 1, "step-timer-000001", "TIMER", executionTarget = 2, stepStatus = "CONFIRMED", elapsedMillis = 2_000),
+            InstanceStepEntity("CloudSteps0001", "once", 2, "告知", true, true, 1, "step-info-000001", "INFORMATION", stepStatus = "CONFIRMED", informationContent = "已完成"),
+            InstanceStepEntity("CloudSteps0001", "once", 3, "心情", true, true, 1, "step-mood-000001", "MOOD", stepStatus = "CONFIRMED", moodRating = 4, moodText = "不错"),
+            InstanceStepEntity("CloudSteps0001", "once", 4, "直接", true, true, 1, "step-direct-0001", "NORMAL", stepStatus = "CONFIRMED"),
+            InstanceStepEntity("CloudSteps0001", "once", 5, "选做", false, false, 1, "step-skipped-01", "INFORMATION", stepStatus = "SKIPPED", informationContent = "草稿不应上传"),
+        )
+        val data = buildExecutionResultData(instance, null, steps = steps)
+        val results = data["stepResults"]!!.jsonArray
+        assertEquals(6, results.size)
+        assertEquals(listOf("step-counter-0001", "step-timer-000001", "step-info-000001", "step-mood-000001", "step-direct-0001", "step-skipped-01"), results.map { it.jsonObject["stepId"]!!.jsonPrimitive.content })
+        assertEquals(3, results[0].jsonObject["counterValue"]!!.jsonPrimitive.int)
+        assertEquals(2_000, results[1].jsonObject["elapsedMillis"]!!.jsonPrimitive.int)
+        assertEquals("已完成", results[2].jsonObject["informationContent"]!!.jsonPrimitive.content)
+        assertEquals(4, results[3].jsonObject["moodRating"]!!.jsonPrimitive.int)
+        assertTrue(results[1].jsonObject.containsKey("elapsedMillis"))
+        assertTrue(results[2].jsonObject.containsKey("informationContent"))
+        assertTrue(results[3].jsonObject.containsKey("moodRating"))
+        assertEquals("CONFIRMED", results[4].jsonObject["status"]!!.jsonPrimitive.content)
+        assertEquals("step-skipped-01", results[5].jsonObject["stepId"]!!.jsonPrimitive.content)
+        assertEquals("SKIPPED", results[5].jsonObject["status"]!!.jsonPrimitive.content)
+        assertEquals(setOf("stepId", "status"), results[5].jsonObject.keys)
+    }
+
+    @Test
+    fun pendingStepsNeverPretendToBeConfirmedAndMissedHasNoStepResults() {
+        val pending = listOf(InstanceStepEntity("CloudSteps0001", "once", 0, "计数", true, false, 1, "step-counter-0001", "COUNTER", executionTarget = 3))
+        val completed = buildExecutionResultData(baseInstance("STEPS"), null, steps = pending)
+        assertFalse(completed.containsKey("stepResults"))
+        val missed = buildExecutionResultData(baseInstance("STEPS").copy(status = "MISSED", completedAtEpochMillis = null), null, steps = pending)
+        assertFalse(missed.containsKey("stepResults"))
+        assertFalse(hasFinalStepSnapshot(pending))
+    }
+
+    @Test
+    fun newerUndoSnapshotCannotConstructOldCompletedResult() {
+        val oldCompleted = baseInstance("STEPS")
+        val newerUndo = oldCompleted.copy(status = "PENDING", completedAtEpochMillis = null, updatedAtEpochMillis = oldCompleted.updatedAtEpochMillis + 1)
+        val steps = listOf(InstanceStepEntity("CloudSteps0001", "once", 0, "计数", true, true, 1, "step-counter-0001", "COUNTER", stepStatus = "CONFIRMED", counterValue = 3))
+        assertEquals(null, prepareResultSnapshot(oldCompleted, newerUndo, null, null, steps))
+        assertEquals(oldCompleted, prepareResultSnapshot(oldCompleted, oldCompleted, null, null, steps)?.instance)
+        assertFalse(buildExecutionResultData(newerUndo, null).containsKey("stepResults"))
+    }
+
+    private fun baseInstance(kind: String) = TaskInstanceEntity(
+        taskId = "CloudSteps0001", occurrenceKey = "once", name = "步骤任务", description = "",
+        taskDate = "2026-08-23", deadline = null, groupId = null, required = true, points = 2,
+        sortOrder = null, completionMessage = "完成", status = "COMPLETED", completedAtEpochMillis = 1_777_000_000_000,
+        createdAtEpochMillis = 1_776_000_000_000, updatedAtEpochMillis = 1_777_000_000_000, executionKind = kind,
+    )
 
     private fun notification(groupKey: String, notificationId: String) = ConnectedNotification(
         groupKey = groupKey,

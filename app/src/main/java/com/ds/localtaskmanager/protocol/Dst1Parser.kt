@@ -268,6 +268,11 @@ class Dst1Parser {
             ?: "任务已完成"
 
         val execution = parseExecution(task["u"], "$context.u")
+        if (execution is ExecutionSpec.Steps) {
+            if (steps.isEmpty()) invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, "$context.s", "STEPS 任务必须包含步骤")
+            if (steps.any { it.id == null }) invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, "$context.s.i", "STEPS 步骤必须包含稳定 ID")
+            if (steps.map { it.id }.distinct().size != steps.size) invalid(Dst1ErrorCode.DUPLICATE_VALUE, "$context.s", "步骤 ID 必须唯一")
+        }
         val recurrence = parseRecurrence(task["x"], "$context.x")
         val reminderMinutes = parseReminders(task["h"], task["l"], "$context.h")
         return DstTask(
@@ -297,7 +302,10 @@ class Dst1Parser {
         if (requiredFlag !in 0..1) {
             invalid(Dst1ErrorCode.INVALID_VALUE, "$context.r", "$context.r 只能是 0 或 1")
         }
-        return DstStep(step.requiredText("n", 100, context), requiredFlag == 1)
+        val id = step["i"]?.asId("$context.i")
+        val execution = parseExecution(step["u"], "$context.u")
+        if (execution is ExecutionSpec.Steps) invalid(Dst1ErrorCode.INVALID_VALUE, "$context.u.k", "步骤不能嵌套 STEPS")
+        return DstStep(step.requiredText("n", 100, context), requiredFlag == 1, id, execution)
     }
 
     private fun parseDeadline(
@@ -457,6 +465,11 @@ class Dst1Parser {
                 }
                 if (kind == 4) ExecutionSpec.Mood else ExecutionSpec.Information
             }
+            5 -> {
+                val forbidden = listOf("a", "v").firstOrNull(execution::containsKey)
+                if (forbidden != null) invalid(Dst1ErrorCode.CONFLICTING_FIELDS, "$context.$forbidden", "STEPS 不能包含 $context.$forbidden")
+                ExecutionSpec.Steps
+            }
             else -> invalid(
                 Dst1ErrorCode.INVALID_VALUE,
                 "$context.k",
@@ -599,7 +612,7 @@ class Dst1Parser {
         val TOP_KEYS = setOf("v", "sv", "b", "d", "m", "g", "t", "z", "e")
         val GROUP_KEYS = setOf("i", "n", "cm", "im", "t")
         val TASK_KEYS = setOf("i", "n", "r", "d", "y", "l", "p", "o", "s", "x", "m", "h", "u")
-        val STEP_KEYS = setOf("n", "r")
+        val STEP_KEYS = setOf("i", "n", "r", "u")
         val RECURRENCE_KEYS = setOf("f", "s", "e", "c", "w", "t")
         val EXECUTION_KEYS = setOf("k", "a", "v")
         val EXCEPTION_KEYS = linkedSetOf("i", "y", "c", "n", "r", "d", "l", "p", "o", "s", "m", "h", "u")

@@ -77,6 +77,49 @@ describe("mood task editor and backup", () => {
 
     expect(saved).toMatchObject({ i: task.id, y: "2026-09-07", u: { k: 4 } });
   });
+
+  it("converts a legacy timer exception to STEPS with its root requirement preserved", () => {
+    const task = { ...moodTask(), execution: { k: 2 as const, v: 30 }, steps: [{ n: "旧步骤", r: 1 as const }] };
+    let saved: any;
+    render(<ExceptionEditor task={task} initial={{ i: task.id, y: "2026-09-07" }} onSave={(value) => { saved = value; }} onCancel={() => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "步骤" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并加入草稿" }));
+
+    expect(saved.u).toEqual({ k: 5 });
+    expect(saved.s).toHaveLength(2);
+    expect(saved.s.some((step: any) => step.u?.k === 2 && step.u.v === 30)).toBe(true);
+    expect(saved.s.filter((step: any) => step.u?.k === 2 && step.u.v === 30)).toHaveLength(1);
+    expect(new Set(saved.s.map((step: any) => step.i)).size).toBe(2);
+  });
+
+  it("saves an explicit empty step override as normal execution after deleting every step", () => {
+    const task = { ...moodTask(), execution: { k: 2 as const, v: 30 }, steps: [{ n: "旧步骤", r: 1 as const }] };
+    let saved: any;
+    render(<ExceptionEditor task={task} initial={{ i: task.id, y: "2026-09-07" }} onSave={(value) => { saved = value; }} onCancel={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "步骤" }));
+    for (const button of screen.getAllByRole("button", { name: "删除步骤" })) fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: "保存并加入草稿" }));
+    expect(saved).toMatchObject({ u: null, s: [] });
+  });
+
+  it("requires explicit empty steps when an exception cuts out of STEPS", () => {
+    const task = { ...moodTask(), steps: [{ i: "Step000000000001", n: "一步", r: 1 as const }], execution: { k: 5 as const } };
+    let saved: unknown;
+    render(<ExceptionEditor task={task} initial={{ i: task.id, y: "2026-09-07", u: { k: 2, v: 10 }, s: [] }} onSave={(value) => { saved = value; }} onCancel={() => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并加入草稿" }));
+    expect(saved).toMatchObject({ u: { k: 2, v: 10 }, s: [] });
+  });
+
+  it("restores normal execution when an empty STEPS exception is saved", () => {
+    const task = { ...moodTask(), steps: [], execution: null };
+    let saved: any;
+    render(<ExceptionEditor task={task} initial={{ i: task.id, y: "2026-09-07", u: { k: 5 }, s: [] }} onSave={(value) => { saved = value; }} onCancel={() => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并加入草稿" }));
+    expect(saved).toMatchObject({ u: null, s: [] });
+  });
 });
 
 function moodTask() {

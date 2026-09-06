@@ -10,6 +10,7 @@ import { useToast } from "../components/Toast";
 import { db } from "../db/database";
 import { getOrCreateActiveDraft, updateDraft } from "../db/operations";
 import { draftTaskFromTask } from "../model/defaults";
+import { normalizeEditableSteps } from "../model/steps";
 import { fieldsFromDst1 } from "../model/converters";
 import type { GroupRecord, TaskExceptionRecord, TaskRecord } from "../model/types";
 import { decodeDst1 } from "../protocol/dst1";
@@ -134,7 +135,7 @@ export function LibraryPage() {
     {filtered.length === 0 ? <div className="empty-state"><Search size={44} /><h2>{tasks.length ? "没有匹配的任务" : "任务库还是空的"}</h2><p>在创建页生成第一个临时或重复任务，或从旧 DST1 字符串恢复。</p></div> : <div className="card-list">{filtered.map((task) => {
       const recurring = task.recurrence !== null;
       return <article className="data-card" key={task.id}>
-        <div className="data-card-main" onClick={() => setEditing(task)}>
+        <div className="data-card-main" onClick={() => setEditing({ ...task, ...normalizeEditableSteps(task.id, task.name, task.steps, task.execution) })}>
           <div className="card-title-row"><h2>{task.name}</h2><div className="status-pills"><span className={`status-pill ${recurring ? "recurring" : "temporary"}`}>{recurring ? <><Repeat2 size={12} />重复任务</> : "临时任务"}</span><span className={`status-pill ${task.required ? "required" : "optional"}`}>{task.required ? "必做" : "选做"}</span></div></div>
           <p>{task.description || "无描述"}</p>
           <div className="meta-row"><span>{groupMap.get(task.groupId ?? "") ?? "未分组"}</span>{recurring && <span>{task.recurrence?.f === 1 ? "每天" : "每周"}</span>}<span>{task.points} 分</span><span>v{task.version}</span><span className="mono">{task.id}</span></div>

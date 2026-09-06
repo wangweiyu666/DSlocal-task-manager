@@ -8,6 +8,7 @@ import {
   assertOccurrenceKey,
   assertTimeZone,
   integerField,
+  object,
   optionalString,
   parseCommands,
   singleDstTask,
@@ -38,6 +39,88 @@ function stable(value: unknown): string {
 function parseJson(value: string): Record<string, unknown> {
   try { return JSON.parse(value) as Record<string, unknown>; }
   catch { throw new ApiError(500, "INTERNAL_ERROR", "服务器保存的同步数据无效", true); }
+}
+
+interface EffectiveStep {
+  i: string;
+  n: string;
+  r: number;
+  u?: Record<string, unknown>;
+}
+
+interface EffectiveTaskDefinition {
+  name: string;
+  execution?: Record<string, unknown> | null;
+  steps: EffectiveStep[];
+}
+
+function effectiveTaskDefinition(content: Record<string, unknown>, localDate: string): EffectiveTaskDefinition {
+  const task = singleDstTask(content);
+  const exception = Array.isArray(content.e)
+    ? content.e.find((value) => value && typeof value === "object" && (value as Record<string, unknown>).i === task.i && (value as Record<string, unknown>).y === localDate) as Record<string, unknown> | undefined
+    : undefined;
+  const merged = exception ? { ...task, ...exception } : task;
+  const execution = merged.u === undefined ? undefined : merged.u === null ? null : object(merged.u, "u");
+  const isSteps = execution !== null && typeof execution === "object" && Number(execution.k) === 5;
+  const rawSteps = isSteps ? merged.s : undefined;
+  const steps: EffectiveStep[] = Array.isArray(rawSteps) ? rawSteps.map((value, index) => {
+    const step = object(value, `步骤[${index}]`);
+    const id = stringField(step, "i", 16);
+    const name = stringField(step, "n", 100000);
+    if (Array.from(name).length > 100) throw new ApiError(400, "INVALID_REQUEST", "步骤名称过长");
+    const required = integerField(step, "r", 0, 1);
+    const execution = step.u === undefined ? undefined : object(step.u, `步骤[${index}].u`);
+    if (execution && Number(execution.k) === 5) throw new ApiError(400, "INVALID_REQUEST", "步骤不能嵌套 STEPS 执行");
+    return { i: id, n: name, r: required, ...(execution ? { u: execution } : {}) };
+  }) : [];
+  if (new Set(steps.map((step) => step.i)).size !== steps.length) throw new ApiError(400, "INVALID_REQUEST", "步骤 ID 不能重复");
+  const name = stringField(merged, "n", 100000);
+  if (Array.from(name).length > 100) throw new ApiError(400, "INVALID_REQUEST", "任务名称过长");
+  return { name, execution, steps };
+}
+
+function normalizedStepsData(data: Record<string, unknown>, definition: EffectiveTaskDefinition, localDate: string): Record<string, unknown> {
+  const execution = definition.execution;
+  if (!execution || Number(execution.k) !== 5 || definition.steps.length < 1 || definition.steps.length > 50) {
+    throw new ApiError(400, "INVALID_REQUEST", "任务版本不是有效 STEPS 定义");
+  }
+  if (data.executionKind !== "STEPS" || data.status !== "COMPLETED" || !Array.isArray(data.stepResults)) {
+    throw new ApiError(400, "INVALID_REQUEST", "STEPS 完成结果无效");
+  }
+  if (typeof data.localOccurrenceKey !== "string" || data.localOccurrenceKey.length > 160) throw new ApiError(400, "INVALID_REQUEST", "localOccurrenceKey 无效");
+  const submitted = data.stepResults as unknown[];
+  if (submitted.length !== definition.steps.length) throw new ApiError(400, "INVALID_REQUEST", "步骤结果必须完整且按顺序提交");
+  const normalized = definition.steps.map((step, index) => {
+    const raw = object(submitted[index], `stepResults[${index}]`);
+    const allowed = ["stepId", "status", "counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText"];
+    if (Object.keys(raw).some((key) => !allowed.includes(key))) throw new ApiError(400, "INVALID_REQUEST", "步骤结果包含未知字段");
+    if (raw.stepId !== step.i || (raw.status !== "CONFIRMED" && raw.status !== "SKIPPED")) throw new ApiError(400, "INVALID_REQUEST", "步骤结果 ID、状态或顺序无效");
+    const result: Record<string, unknown> = { stepId: step.i, status: raw.status, name: step.n, required: step.r === 1, execution: step.u ?? null };
+    const answerKeys = ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText"];
+    const suppliedAnswers = answerKeys.filter((key) => raw[key] !== undefined);
+    if (raw.status === "SKIPPED") {
+      if (step.r === 1 || suppliedAnswers.length > 0) throw new ApiError(400, "INVALID_REQUEST", "必需步骤不能跳过，跳过步骤不能携带答案");
+      return result;
+    }
+    const leaf = step.u;
+    if (leaf === undefined) {
+      if (suppliedAnswers.length > 0) throw new ApiError(400, "INVALID_REQUEST", "直接完成步骤不能携带答案");
+    } else if (leaf.k === 1) {
+      if (suppliedAnswers.length !== 1 || raw.counterValue === undefined || !Number.isInteger(raw.counterValue) || Number(raw.counterValue) !== Number(leaf.v)) throw new ApiError(400, "INVALID_REQUEST", "计数步骤未达标");
+      result.counterValue = raw.counterValue;
+    } else if (leaf.k === 2) {
+      if (suppliedAnswers.length !== 1 || raw.elapsedMillis === undefined || !Number.isInteger(raw.elapsedMillis) || Number(raw.elapsedMillis) !== Number(leaf.v) * 1000) throw new ApiError(400, "INVALID_REQUEST", "计时步骤未达标");
+      result.elapsedMillis = raw.elapsedMillis;
+    } else if (leaf.k === 3) {
+      if (suppliedAnswers.length !== 1 || typeof raw.informationContent !== "string" || raw.informationContent.trim().length === 0 || Array.from(raw.informationContent).length > 2000) throw new ApiError(400, "INVALID_REQUEST", "信息步骤答案无效");
+      result.informationContent = raw.informationContent;
+    } else if (leaf.k === 4) {
+      if (suppliedAnswers.length !== 2 || !Number.isInteger(raw.moodRating) || Number(raw.moodRating) < 1 || Number(raw.moodRating) > 5 || typeof raw.moodText !== "string" || Array.from(raw.moodText).length > 2000) throw new ApiError(400, "INVALID_REQUEST", "心情步骤答案无效");
+      result.moodRating = raw.moodRating; result.moodText = raw.moodText;
+    } else throw new ApiError(400, "INVALID_REQUEST", "步骤执行类型无效");
+    return result;
+  });
+  return { status: "COMPLETED", executionKind: "STEPS", taskName: definition.name, taskDate: localDate, localOccurrenceKey: data.localOccurrenceKey, stepResults: normalized };
 }
 
 function receiptStatus(result: CommandResult): "ACCEPTED" | "CONFLICT" | "REJECTED" {
@@ -301,15 +384,29 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
   const terminal = new Set(["COMPLETED", "RESULT_SUBMITTED", "CORRECTION"]).has(eventType);
   const undo = eventType === "COMPLETION_UNDONE";
   const eventData = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data as Record<string, unknown> : {};
+  let storedData: Record<string, unknown> | null = payload.data === undefined ? null : eventData;
   const hasMood = "moodRating" in eventData || "moodText" in eventData;
-  if (terminal || hasMood || eventData.executionKind === "MOOD") {
+  if (!undo && (terminal || hasMood || eventData.executionKind === "MOOD" || eventData.executionKind === "STEPS" || "stepResults" in eventData)) {
     const revision = await env.DB.prepare("SELECT r.content_json,o.local_date FROM task_revisions r JOIN task_occurrences o ON o.task_id=r.task_id AND o.space_id=r.space_id WHERE o.space_id=? AND o.assignment_id=? AND o.occurrence_key=? AND r.revision=?")
       .bind(spaceId, assignmentId, storedOccurrenceKey, taskRevision).first<{ content_json: string; local_date: string }>();
     if (!revision) throw new ApiError(400, "INVALID_REQUEST", "任务版本不存在");
     const content = parseJson(revision.content_json);
-    const task = singleDstTask(content);
-    const exception = Array.isArray(content.e) ? content.e.find((value: Record<string, unknown>) => value.i === task.i && value.y === revision.local_date) as Record<string, unknown> | undefined : undefined;
-    const execution = exception && "u" in exception ? exception.u : task.u;
+    const definition = effectiveTaskDefinition(content, revision.local_date);
+    const execution = definition.execution;
+    if (execution && Number(execution.k) === 5) {
+      if (!terminal) throw new ApiError(400, "INVALID_REQUEST", "STEPS 只能随整项完成提交");
+      if (eventData.status === "MISSED") {
+        if (eventData.stepResults !== undefined || ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText"].some((key) => key in eventData) || eventData.executionKind !== "STEPS") {
+          throw new ApiError(400, "INVALID_REQUEST", "MISSED 结果不能携带步骤答案");
+        }
+        if (typeof eventData.localOccurrenceKey !== "string" || eventData.localOccurrenceKey.length > 160) throw new ApiError(400, "INVALID_REQUEST", "localOccurrenceKey 无效");
+        storedData = { status: "MISSED", executionKind: "STEPS", taskName: definition.name, taskDate: revision.local_date, localOccurrenceKey: eventData.localOccurrenceKey };
+      } else {
+        storedData = normalizedStepsData(eventData, definition, revision.local_date);
+      }
+    } else if (eventData.executionKind === "STEPS" || "stepResults" in eventData) {
+      throw new ApiError(400, "INVALID_REQUEST", "只有 STEPS 任务可以提交 stepResults");
+    }
     const isMood = execution !== null && typeof execution === "object" && (execution as Record<string, unknown>).k === 4;
     if (isMood && terminal && !["COMPLETED", "MISSED"].includes(String(eventData.status))) throw new ApiError(400, "INVALID_REQUEST", "心情结果状态无效");
     if (hasMood && (!isMood || !terminal || eventData.status !== "COMPLETED")) throw new ApiError(400, "INVALID_REQUEST", "只有已完成的心情任务可以提交心情答案");
@@ -323,6 +420,7 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
   if (undo) {
     const data = strictObject(payload.data, ["status", "localOccurrenceKey", "taskName", "taskDate", "executionKind"], "data");
     if (!["PENDING", "NOT_STARTED", "MISSED"].includes(String(data.status))) throw new ApiError(400, "INVALID_REQUEST", "撤销完成后的状态无效");
+    storedData = data;
   }
   const followsSelected = !selected || Date.parse(selected.occurred_at) <= Date.parse(occurredAt);
   // Preserve explicit administrator choices and do not let delayed old events
@@ -331,10 +429,10 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
     ? followsSelected && (!selected || selected.selected_by_membership_id === memberId)
     : terminal && (!selected || (selected.event_type === "COMPLETION_UNDONE" && selected.selected_by_membership_id === memberId && followsSelected));
   const duplicateOf = terminal && selected && !selectAutomatically ? selected.execution_event_id : null; const now = iso();
-  const value = { id: command.entityId, assignmentId, occurrenceKey, taskRevision, eventType, data: payload.data ?? null, occurredAt, receivedAt: now, reviewReason, staleTimeZone, duplicateOf };
+  const value = { id: command.entityId, assignmentId, occurrenceKey, taskRevision, eventType, data: storedData, occurredAt, receivedAt: now, reviewReason, staleTimeZone, duplicateOf };
   const statements: D1PreparedStatement[] = [
     env.DB.prepare("INSERT INTO execution_events(id,space_id,assignment_id,executor_membership_id,task_revision,event_type,payload_json,review_reason,duplicate_of,occurred_at,received_at,occurrence_key,payload_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)")
-      .bind(command.entityId, spaceId, assignmentId, memberId, taskRevision, eventType, payload.data === undefined ? null : JSON.stringify(payload.data), reviewReason, duplicateOf, occurredAt, now, storedOccurrenceKey),
+      .bind(command.entityId, spaceId, assignmentId, memberId, taskRevision, eventType, storedData === null ? null : JSON.stringify(storedData), reviewReason, duplicateOf, occurredAt, now, storedOccurrenceKey),
     ...entityStatements(env, spaceId, "execution_event", command.entityId, 1, value, now),
   ];
   if (selectAutomatically) {

@@ -6,7 +6,12 @@ import { validateDst1Batch } from "../protocol/validation";
 
 const id = z.string().min(1);
 const timestamp = z.string().datetime();
-const step = z.object({ n: z.string().min(1).max(100), r: z.union([z.literal(0), z.literal(1)]) }).strict();
+const leafExecution = z.discriminatedUnion("k", [
+  z.object({ k: z.literal(1), a: z.union([z.literal(1), z.literal(2)]), v: z.number().int().min(1).max(999) }).strict(),
+  z.object({ k: z.literal(2), v: z.number().int().min(1).max(3600) }).strict(),
+  z.object({ k: z.literal(3) }).strict(), z.object({ k: z.literal(4) }).strict(),
+]);
+const step = z.object({ i: z.string().length(16).optional(), n: z.string().min(1).max(100), r: z.union([z.literal(0), z.literal(1)]), u: leafExecution.optional() }).strict();
 const recurrence = z.object({
   f: z.union([z.literal(1), z.literal(2)]), s: z.string().optional(), e: z.string().optional(), c: z.number().int().positive().optional(),
   w: z.array(z.number().int().min(1).max(7)).optional(), t: z.string().nullable().optional()
@@ -15,10 +20,11 @@ const execution = z.discriminatedUnion("k", [
   z.object({ k: z.literal(1), a: z.union([z.literal(1), z.literal(2)]), v: z.number().int().min(1).max(999) }).strict(),
   z.object({ k: z.literal(2), v: z.number().int().min(1).max(3600) }).strict(),
   z.object({ k: z.literal(3) }).strict(),
-  z.object({ k: z.literal(4) }).strict()
+  z.object({ k: z.literal(4) }).strict(),
+  z.object({ k: z.literal(5) }).strict()
 ]);
 const taskFieldsShape = {
-  name: z.string().max(100), required: z.boolean(), description: z.string().max(2000), taskDate: z.string(),
+  name: z.string().max(100), required: z.boolean(), description: z.string().max(2000), taskDate: z.string(), taskDateIntent: z.enum(["preserve", "set", "clear"]).optional(),
   deadlineMode: z.enum(["default", "date", "datetime", "none"]), deadline: z.string(), points: z.number().int().min(0).max(9999),
   order: z.number().int().nullable(), steps: z.array(step).max(50), recurrence: recurrence.nullable(), completionMessage: z.string().max(500),
   reminders: z.array(z.number().int().min(0).max(10080)).max(5), execution: execution.nullable()

@@ -27,6 +27,7 @@ import com.ds.localtaskmanager.protocol.Dst1Parser
 import com.ds.localtaskmanager.protocol.DstBatch
 import com.ds.localtaskmanager.protocol.DstGroupPatch
 import com.ds.localtaskmanager.protocol.DstTask
+import com.ds.localtaskmanager.protocol.DstStep
 import com.ds.localtaskmanager.protocol.DstOccurrenceException
 import com.ds.localtaskmanager.protocol.Dst1ErrorCode
 import com.ds.localtaskmanager.protocol.Dst1ValidationException
@@ -404,6 +405,7 @@ class RoomImportService(
     private suspend fun applyTasks(batch: DstBatch, now: Long) {
         val tasks = batch.allTasks()
         if (tasks.isEmpty()) return
+        tasks.forEach { task -> validateEffectiveSteps(task.execution, task.steps) }
         val ids = tasks.map { it.taskId }
         val oldDefinitions = definitionDao.getDefinitions(ids).associateBy { it.taskId }
         val oldInstances = instanceDao.getOnceInstances(ids).associateBy { it.taskId }
@@ -420,8 +422,14 @@ class RoomImportService(
         }
         definitionDao.deleteStepDefinitions(ids)
         definitionDao.insertStepDefinitions(tasks.flatMap { task ->
-            task.steps.mapIndexed { index, step ->
-                TaskStepDefinitionEntity(task.taskId, index, step.name, step.required)
+            val old = oldDefinitions[task.taskId]
+            val importedSteps = task.steps
+            importedSteps.mapIndexed { index, step ->
+                TaskStepDefinitionEntity(
+                    task.taskId, index, step.name, step.required,
+                    step.id ?: stableStepId(task.taskId, index),
+                    step.execution.kindName(), step.execution.actionValue(), step.execution.targetValue(),
+                )
             }
         })
 
@@ -429,17 +437,56 @@ class RoomImportService(
             val oldDefinition = oldDefinitions[task.taskId]
             val updatePlan = updatePlans.getValue(task.taskId)
             if (task.recurrence !is RecurrenceSpec.None) {
+                val incomingExceptions = batch.exceptions.filter { it.taskId == task.taskId }.associateBy { it.occurrenceDate.toString() }
+                val storedExceptions = database.recurrenceExceptionDao().forTask(task.taskId)
+                    .associateBy { it.occurrenceDate }
+                (storedExceptions.keys + incomingExceptions.keys).forEach { occurrenceDate ->
+                    val existing = instanceDao.getInstance(task.taskId, occurrenceDate)
+                    if (existing != null && !existing.isMutableForImport()) return@forEach
+                    val exception = incomingExceptions[occurrenceDate]
+                        ?: storedExceptions[occurrenceDate]?.let { parser.parseExceptionJson(it.patchJson) }
+                    if (exception != null && !exception.cancelled && !exception.clearsException) {
+                        validateEffectiveException(task.execution, task.steps, exception)
+                    }
+                }
                 val mutableInstances = allOldInstances[task.taskId].orEmpty()
                     .filter { it.isMutableForImport() }
                 if (mutableInstances.isNotEmpty()) {
                     instanceDao.upsertInstances(
-                        mutableInstances.map {
-                            it.copy(
+                        mutableInstances.map { existing ->
+                            val storedException = database.recurrenceExceptionDao().get(task.taskId, existing.occurrenceKey)
+                            val incomingException = batch.exceptions.lastOrNull { it.taskId == task.taskId && it.occurrenceDate.toString() == existing.occurrenceKey }
+                            val exception = incomingException ?: storedException?.let { parser.parseExceptionJson(it.patchJson) }
+                            val effectiveExecution = exception?.let { it.execution.valueOr(task.execution) } ?: task.execution
+                            if (exception != null && !exception.cancelled && !exception.clearsException) validateEffectiveException(task.execution, task.steps, exception)
+                            existing.copy(
+                                executionKind = effectiveExecution.kindName(),
+                                executionAction = effectiveExecution.actionValue(),
+                                executionTarget = effectiveExecution.targetValue(),
                                 reminderMinutesJson = task.reminderMinutes.toStorageJson(),
                                 updatedAtEpochMillis = now,
                             )
                         },
                     )
+                    mutableInstances.forEach { existing ->
+                        val storedException = database.recurrenceExceptionDao().get(task.taskId, existing.occurrenceKey)
+                        val incomingException = batch.exceptions.lastOrNull { it.taskId == task.taskId && it.occurrenceDate.toString() == existing.occurrenceKey }
+                        val exception = incomingException ?: storedException?.let { parser.parseExceptionJson(it.patchJson) }
+                        val effectiveExecution = exception?.let { it.execution.valueOr(task.execution) } ?: task.execution
+                        if (effectiveExecution.kindName() == "STEPS") {
+                            val effectiveSteps = exception?.let { it.steps.valueOr(task.steps) } ?: task.steps
+                            replaceInstanceStepsPreservingProgress(
+                                existing.taskId, existing.occurrenceKey, effectiveSteps, now,
+                                oldInstance = existing,
+                                targetExecutionKind = effectiveExecution.kindName(),
+                            )
+                        } else if (existing.executionKind == "STEPS") {
+                            instanceDao.deleteInstanceSteps(existing.taskId, existing.occurrenceKey)
+                            executionDao.deleteProgress(existing.taskId, existing.occurrenceKey)
+                            executionDao.deleteSubmission(existing.taskId, existing.occurrenceKey)
+                            executionDao.deleteMood(existing.taskId, existing.occurrenceKey)
+                        }
+                    }
                 }
                 if (oldDefinition?.recurrenceFrequency == null) {
                     allOldInstances[task.taskId].orEmpty()
@@ -497,18 +544,12 @@ class RoomImportService(
             }
             instanceDao.upsertInstances(listOf(instance))
             if (oldInstance == null || restored || (fingerprintChanged && oldInstance.isMutableForImport())) {
-                instanceDao.deleteInstanceSteps(task.taskId)
-                instanceDao.insertInstanceSteps(task.steps.mapIndexed { index, step ->
-                    InstanceStepEntity(
-                        taskId = task.taskId,
-                        occurrenceKey = "once",
-                        position = index,
-                        name = step.name,
-                        required = step.required,
-                        completed = false,
-                        updatedAtEpochMillis = now,
-                    )
-                })
+                val importedSteps = task.steps
+                replaceInstanceStepsPreservingProgress(
+                    task.taskId, "once", importedSteps, now,
+                    oldInstance = oldInstance,
+                    targetExecutionKind = task.execution.kindName(),
+                )
             }
             val action = when {
                 updatePlan.dateMoved -> "TASK_DATE_MOVED"
@@ -586,6 +627,12 @@ class RoomImportService(
     private suspend fun applyExceptions(batch: DstBatch, now: Long) {
         for (exception in batch.exceptions) {
             val definition = checkNotNull(definitionDao.getDefinition(exception.taskId))
+            val baseExecution = definition.toExecutionSpecForInstance()
+            val effectiveExecution = exception.execution.valueOr(baseExecution)
+            val baseSteps = definitionDao.getStepDefinitions(definition.taskId).sortedBy { it.position }.map {
+                DstStep(it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position), it.executionSpec())
+            }
+            validateEffectiveException(baseExecution, baseSteps, exception)
             val date = exception.occurrenceDate.toString()
             val existing = instanceDao.getInstance(exception.taskId, date)
             val stored = database.recurrenceExceptionDao().get(exception.taskId, date)
@@ -643,8 +690,9 @@ class RoomImportService(
         val deadline = if (clearing) definition.deadlineForOccurrence(date) else {
             exception.deadline.valueOr(definition.deadlineForOccurrence(date))
         }
-        val execution = if (clearing) definition.toExecutionSpec() else {
-            exception.execution.valueOr(definition.toExecutionSpec())
+        val baseExecution = definition.toExecutionSpecForInstance()
+        val execution = if (clearing) baseExecution else {
+            exception.execution.valueOr(baseExecution)
         }
         val reminderMinutes = if (clearing) definition.reminderMinutesJson.toReminderList() else {
             exception.reminders.valueOr(definition.reminderMinutesJson.toReminderList())
@@ -673,24 +721,39 @@ class RoomImportService(
         )
         instanceDao.upsertInstances(listOf(updated))
 
-        if (existing.executionKind != updated.executionKind) {
-            executionDao.deleteMood(existing.taskId, existing.occurrenceKey)
-        }
-
-        val resetSteps = clearing || exception.steps is Field.Value
+        val resetSteps = clearing || exception.steps is Field.Value ||
+            (exception.execution is Field.Value && execution.kindName() == "STEPS") ||
+            (existing.executionKind == "STEPS" && execution.kindName() != "STEPS")
         if (resetSteps) {
             val steps = if (clearing) {
                 definitionDao.getStepDefinitions(definition.taskId).map {
-                    com.ds.localtaskmanager.protocol.DstStep(it.name, it.required)
+                    com.ds.localtaskmanager.protocol.DstStep(
+                        it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position),
+                        it.executionSpec(),
+                    )
                 }
-            } else {
+            } else if (exception.steps is Field.Value) {
                 exception.steps.valueOr(emptyList())
+            } else {
+                definitionDao.getStepDefinitions(definition.taskId).map {
+                    DstStep(it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position), it.executionSpec())
+                }
             }
-            instanceDao.deleteInstanceSteps(existing.taskId, existing.occurrenceKey)
-            instanceDao.insertInstanceSteps(steps.mapIndexed { index, step ->
-                InstanceStepEntity(existing.taskId, existing.occurrenceKey, index, step.name, step.required, false, now)
-            })
+            if (execution.kindName() == "STEPS") {
+                if (steps.isEmpty() || steps.size > 50 || steps.any { it.id == null || !STEP_ID_PATTERN.matches(it.id!!) } ||
+                    steps.map { it.id }.distinct().size != steps.size) {
+                    throw IllegalArgumentException("STEPS 例外必须提供唯一的 16 字符步骤 ID")
+                }
+            }
+            replaceInstanceStepsPreservingProgress(
+                existing.taskId, existing.occurrenceKey, steps, now,
+                oldInstance = existing,
+                targetExecutionKind = execution.kindName(),
+            )
             auditOccurrence(exception, batchId, "OCCURRENCE_STEPS_RESET", now)
+        }
+        if (updated.executionKind != "STEPS" && existing.executionKind != updated.executionKind) {
+            executionDao.deleteMood(existing.taskId, existing.occurrenceKey)
         }
         if (clearing || exception.cancelled || exception.execution is Field.Value) {
             executionDao.deleteProgress(existing.taskId, existing.occurrenceKey)
@@ -742,11 +805,55 @@ class RoomImportService(
         else -> ExecutionSpec.Normal
     }
 
+    private fun validateEffectiveSteps(execution: ExecutionSpec, steps: List<DstStep>) {
+        if (execution !is ExecutionSpec.Steps) return
+        if (steps.isEmpty() || steps.size > 50 || steps.any { it.id == null || !STEP_ID_PATTERN.matches(it.id!!) } ||
+            steps.map { it.id }.distinct().size != steps.size || steps.any { it.execution is ExecutionSpec.Steps }) {
+            throw Dst1ValidationException(Dst1ErrorCode.INVALID_VALUE, "s", "STEPS 必须包含 1..50 个唯一稳定步骤 ID")
+        }
+    }
+
+    private fun validateEffectiveException(
+        baseExecution: ExecutionSpec,
+        baseSteps: List<DstStep>,
+        exception: DstOccurrenceException,
+    ) {
+        val effectiveExecution = exception.execution.valueOr(baseExecution)
+        if (baseExecution.kindName() == "STEPS" && exception.execution is Field.Value &&
+            effectiveExecution.kindName() != "STEPS" &&
+            (exception.steps !is Field.Value || exception.steps.value.isNotEmpty())
+        ) {
+            throw Dst1ValidationException(Dst1ErrorCode.CONFLICTING_FIELDS, "s", "切出 STEPS 必须明确清空步骤")
+        }
+        validateEffectiveSteps(effectiveExecution, exception.steps.valueOr(baseSteps))
+    }
+
+    private suspend fun TaskDefinitionEntity.toExecutionSpecForInstance(): ExecutionSpec =
+        if (executionKind == "STEPS") {
+            ExecutionSpec.Steps
+        } else toExecutionSpec()
+
+    private fun TaskStepDefinitionEntity.executionSpec(): ExecutionSpec = when (executionKind) {
+        "COUNTER" -> ExecutionSpec.Counter(
+            action = if (executionAction == 1) com.ds.localtaskmanager.domain.execution.CounterAction.SLIDER
+            else com.ds.localtaskmanager.domain.execution.CounterAction.CLICK,
+            target = checkNotNull(executionTarget),
+        )
+        "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
+        "INFORMATION" -> ExecutionSpec.Information
+        "MOOD" -> ExecutionSpec.Mood
+        else -> ExecutionSpec.Normal
+    }
+
     private fun String?.toReminderList(): List<Int> = this
         ?.removePrefix("[")?.removeSuffix("]")
         ?.takeIf(String::isNotBlank)
         ?.split(',')?.map(String::toInt)
         .orEmpty()
+
+    private companion object {
+        val STEP_ID_PATTERN = Regex("[A-Za-z0-9_-]{16}")
+    }
 
     private suspend fun applyCancellations(batch: DstBatch, now: Long) {
         if (batch.cancelledTaskIds.isEmpty()) return
@@ -915,12 +1022,86 @@ class RoomImportService(
             "\"newKind\":\"${task.execution.kindName()}\"," +
             "\"counterValue\":${progress?.counterValue ?: "null"}," +
             "\"elapsedMillis\":${progress?.elapsedMillis ?: "null"}}"
-        executionDao.deleteProgress(oldInstance.taskId, oldInstance.occurrenceKey)
-        executionDao.deleteMood(oldInstance.taskId, oldInstance.occurrenceKey)
-        if (oldDefinition.executionKind == "INFORMATION" && task.execution.kindName() != "INFORMATION") {
+        val convertingToSteps = task.execution.kindName() == "STEPS"
+        if (!convertingToSteps) executionDao.deleteProgress(oldInstance.taskId, oldInstance.occurrenceKey)
+        if (!convertingToSteps) executionDao.deleteMood(oldInstance.taskId, oldInstance.occurrenceKey)
+        if (!convertingToSteps && oldDefinition.executionKind == "INFORMATION" && task.execution.kindName() != "INFORMATION") {
             executionDao.deleteSubmission(oldInstance.taskId, oldInstance.occurrenceKey)
         }
         logImportExecution(oldInstance, batchId, "EXECUTION_RESET", detail, now)
+    }
+
+    /** Rebuilds the ordered snapshot without losing answers for stable IDs. */
+    private suspend fun replaceInstanceStepsPreservingProgress(
+        taskId: String,
+        occurrenceKey: String,
+        imported: List<DstStep>,
+        now: Long,
+        oldInstance: TaskInstanceEntity? = null,
+        targetExecutionKind: String = "STEPS",
+    ) {
+        val old = instanceDao.getInstanceSteps(taskId, occurrenceKey).associateBy { it.stepId }
+        val legacyProgress = executionDao.getProgress(taskId, occurrenceKey)
+        val legacyInformation = executionDao.getSubmission(taskId, occurrenceKey)
+        val legacyMood = executionDao.getMood(taskId, occurrenceKey)
+        val forceReset = oldInstance?.executionKind != null && oldInstance.executionKind != "STEPS" && targetExecutionKind == "STEPS"
+        val changedAt = if (forceReset) 0 else imported.indices.firstOrNull { index ->
+            val step = imported[index]
+            val previous = old[step.id ?: stableStepId(taskId, index)]
+            previous == null || previous.position != index ||
+                previous.required != step.required || previous.executionKind != step.execution.kindName() ||
+                previous.executionAction != step.execution.actionValue() || previous.executionTarget != step.execution.targetValue()
+        } ?: imported.size
+        instanceDao.deleteInstanceSteps(taskId, occurrenceKey)
+        instanceDao.insertInstanceSteps(imported.mapIndexed { index, step ->
+            val id = step.id ?: stableStepId(taskId, index)
+            val previous = old[id]
+            val compatible = previous != null && previous.executionKind == step.execution.kindName() &&
+                previous.executionAction == step.execution.actionValue() && previous.executionTarget == step.execution.targetValue()
+            val preserveConfirmed = previous != null && index < changedAt && previous.stepStatus == "CONFIRMED"
+            InstanceStepEntity(
+                taskId = taskId,
+                occurrenceKey = occurrenceKey,
+                position = index,
+                name = step.name,
+                required = step.required,
+                completed = preserveConfirmed,
+                updatedAtEpochMillis = now,
+                stepId = id,
+                executionKind = step.execution.kindName(),
+                executionAction = step.execution.actionValue(),
+                executionTarget = step.execution.targetValue(),
+                stepStatus = when {
+                    preserveConfirmed -> "CONFIRMED"
+                    previous?.stepStatus == "SKIPPED" && index < changedAt && !step.required -> "SKIPPED"
+                    else -> "PENDING"
+                },
+                counterValue = previous?.counterValue?.takeIf { compatible },
+                elapsedMillis = previous?.elapsedMillis?.takeIf { compatible },
+                informationContent = previous?.informationContent?.takeIf { compatible },
+                moodRating = previous?.moodRating?.takeIf { compatible },
+                moodText = previous?.moodText?.takeIf { compatible },
+            )
+        })
+        val rootIndex = imported.indexOfFirst { it.id == rootStepId(taskId) }
+        val hasLegacyExecution = legacyProgress != null || legacyInformation != null || legacyMood != null
+        if (rootIndex >= 0 && hasLegacyExecution) {
+            val root = instanceDao.getInstanceSteps(taskId, occurrenceKey).first { it.position == rootIndex }
+            val compatibleRoot = oldInstance != null &&
+                root.executionKind == oldInstance.executionKind &&
+                root.executionAction == oldInstance.executionAction &&
+                root.executionTarget == oldInstance.executionTarget
+            instanceDao.insertInstanceSteps(listOf(root.copy(
+                counterValue = legacyProgress?.counterValue?.takeIf { compatibleRoot && root.executionKind == "COUNTER" && legacyProgress.executionKind == "COUNTER" },
+                elapsedMillis = legacyProgress?.elapsedMillis?.takeIf { compatibleRoot && root.executionKind == "TIMER" && legacyProgress.executionKind == "TIMER" },
+                informationContent = legacyInformation?.content?.takeIf { compatibleRoot && root.executionKind == "INFORMATION" },
+                moodRating = legacyMood?.rating?.takeIf { compatibleRoot && root.executionKind == "MOOD" },
+                moodText = legacyMood?.text?.takeIf { compatibleRoot && root.executionKind == "MOOD" },
+            )))
+            executionDao.deleteProgress(taskId, occurrenceKey)
+            executionDao.deleteSubmission(taskId, occurrenceKey)
+            executionDao.deleteMood(taskId, occurrenceKey)
+        }
     }
 
     private suspend fun logImportExecution(
@@ -1056,6 +1237,7 @@ class RoomImportService(
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
         ExecutionSpec.Mood -> "MOOD"
+        ExecutionSpec.Steps -> "STEPS"
     }
 
     private fun ExecutionSpec.actionValue(): Int? =
@@ -1075,6 +1257,12 @@ class RoomImportService(
         Field.Missing -> fallback
         is Field.Value -> value
     }
+
+    private fun stableStepId(taskId: String, position: Int): String =
+        "s" + taskId.take(12).padEnd(12, '0') + position.toString(36).padStart(3, '0')
+
+    private fun rootStepId(taskId: String): String =
+        "r" + taskId.take(12).padEnd(12, '0') + "000"
 
     private fun Field<String>.valueOrDefault(current: String, default: String): String = when (this) {
         Field.Missing -> current

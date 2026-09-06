@@ -88,6 +88,11 @@ data class TaskStepDefinitionEntity(
     val position: Int,
     val name: String,
     val required: Boolean,
+    /** Stable protocol identity; null only for rows migrated from Room 7. */
+    val stepId: String? = null,
+    val executionKind: String = "NORMAL",
+    val executionAction: Int? = null,
+    val executionTarget: Int? = null,
 )
 
 @Entity(
@@ -165,7 +170,7 @@ data class TaskInstanceEntity(
 
 @Entity(
     tableName = "instance_step",
-    primaryKeys = ["taskId", "occurrenceKey", "position"],
+    primaryKeys = ["taskId", "occurrenceKey", "stepId"],
     foreignKeys = [
         ForeignKey(
             entity = TaskInstanceEntity::class,
@@ -184,6 +189,17 @@ data class InstanceStepEntity(
     val required: Boolean,
     val completed: Boolean,
     val updatedAtEpochMillis: Long,
+    /** Stable definition identity for Room 8 step snapshots. */
+    val stepId: String = stableInstanceStepId(taskId, position),
+    val executionKind: String = "NORMAL",
+    val executionAction: Int? = null,
+    val executionTarget: Int? = null,
+    val stepStatus: String = "PENDING",
+    val counterValue: Int? = null,
+    val elapsedMillis: Long? = null,
+    val informationContent: String? = null,
+    val moodRating: Int? = null,
+    val moodText: String? = null,
 )
 
 @Entity(
@@ -367,3 +383,6 @@ data class ReminderRecordEntity(
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
 )
+
+private fun stableInstanceStepId(taskId: String, position: Int): String =
+    "s${taskId.take(12).padEnd(12, '0')}${position.toString(36).padStart(3, '0')}"

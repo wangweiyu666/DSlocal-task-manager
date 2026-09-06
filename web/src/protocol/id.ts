@@ -19,3 +19,16 @@ export function base64UrlToBytes(value: string): Uint8Array {
   const binary = atob(padded);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
+
+/** Protocol-stable ID used when migrating a legacy step into STEPS. */
+export function legacyStepId(taskId: string, zeroBasedIndex: number): string {
+  if (!/^[A-Za-z0-9_-]{16}$/u.test(taskId)) throw new Error("invalid task ID");
+  if (!Number.isInteger(zeroBasedIndex) || zeroBasedIndex < 0 || zeroBasedIndex >= 36 ** 3) throw new Error("invalid step index");
+  return `s${taskId.slice(0, 12)}${zeroBasedIndex.toString(36).padStart(3, "0")}`;
+}
+
+/** Stable ID for the former task-level execution when converting to STEPS. */
+export function legacyExecutionStepId(taskId: string): string {
+  if (!/^[A-Za-z0-9_-]{16}$/u.test(taskId)) throw new Error("invalid task ID");
+  return `r${taskId.slice(0, 12)}000`;
+}

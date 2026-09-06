@@ -44,7 +44,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const dstId = /^[A-Za-z0-9_-]{16}$/;
 const occurrence = /^[A-Za-z0-9_-]{16}:[1-9][0-9]*:[1-9][0-9]*:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(?::[0-9]{2})?$/;
 
-function object(value: unknown, label: string): Record<string, unknown> {
+export function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ApiError(400, "INVALID_REQUEST", `${label} 必须是对象`);
   return value as Record<string, unknown>;
 }
@@ -114,7 +114,42 @@ export function assertDst11Content(value: unknown): Record<string, unknown> {
   }
   try { validateDst1Batch(content, validateSchema as SchemaValidator); }
   catch { throw new ApiError(400, "INVALID_REQUEST", "DST1 任务内容未通过完整协议校验"); }
+  validateEffectiveSteps(content);
   return content;
+}
+
+function validateEffectiveSteps(content: Record<string, unknown>): void {
+  const task = singleDstTask(content);
+  const validateSteps = (steps: unknown, label: string): void => {
+    if (!Array.isArray(steps) || steps.length < 1 || steps.length > 50) throw new ApiError(400, "INVALID_REQUEST", `${label} 必须包含 1～50 个步骤`);
+    const ids = steps.map((value, index) => {
+      const step = object(value, `${label}[${index}]`);
+      const id = stringField(step, "i", 16);
+      if (!/^[A-Za-z0-9_-]{16}$/.test(id)) throw new ApiError(400, "INVALID_REQUEST", `${label} 步骤 ID 无效`);
+      if (step.u !== undefined) {
+        const execution = object(step.u, `${label}[${index}].u`);
+        if (Number(execution.k) === 5) throw new ApiError(400, "INVALID_REQUEST", "步骤不能嵌套 STEPS");
+      }
+      return id;
+    });
+    if (new Set(ids).size !== ids.length) throw new ApiError(400, "INVALID_REQUEST", `${label} 步骤 ID 不能重复`);
+  };
+  const execution = task.u && typeof task.u === "object" ? task.u as Record<string, unknown> : undefined;
+  const baseIsSteps = Number(execution?.k) === 5;
+  if (baseIsSteps) validateSteps(task.s, "任务步骤");
+  for (const [index, raw] of (Array.isArray(content.e) ? content.e.entries() : [])) {
+    const exception = object(raw, `content.e[${index}]`);
+    const hasU = Object.prototype.hasOwnProperty.call(exception, "u");
+    const effectiveU = hasU ? exception.u : task.u;
+    const effectiveExecution = effectiveU && typeof effectiveU === "object" ? effectiveU as Record<string, unknown> : undefined;
+    if (Number(effectiveExecution?.k) === 5) {
+      validateSteps(Object.prototype.hasOwnProperty.call(exception, "s") ? exception.s : task.s, `例外步骤[${index}]`);
+    } else if (baseIsSteps) {
+      if (!Object.prototype.hasOwnProperty.call(exception, "s") || !Array.isArray(exception.s) || exception.s.length !== 0) {
+        throw new ApiError(400, "INVALID_REQUEST", "切出 STEPS 的例外必须明确清空步骤");
+      }
+    }
+  }
 }
 
 export function singleDstTask(content: Record<string, unknown>): Record<string, unknown> {

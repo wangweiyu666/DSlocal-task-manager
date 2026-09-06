@@ -19,7 +19,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class BackupPayload(
-    val schemaVersion: Int = 3,
+    val schemaVersion: Int = 4,
     val settings: PortableSettings = PortableSettings(),
     val profiles: List<ProfileBackup> = emptyList(),
     val importBatches: List<ImportBatchBackup> = emptyList(),
@@ -50,7 +50,7 @@ data class BackupMetadata(
     val createdAtEpochMillis: Long,
     val appVersion: String,
     val sourceTimeZone: String,
-    val payloadSchemaVersion: Int = 3,
+    val payloadSchemaVersion: Int = 4,
     val counts: BackupCounts,
 )
 
@@ -104,7 +104,11 @@ data class DefinitionBackup(
     val reminderMinutesJson: String? = null,
 )
 
-@Serializable data class DefinitionStepBackup(val taskId: String, val position: Int, val name: String, val required: Boolean)
+@Serializable data class DefinitionStepBackup(
+    val taskId: String, val position: Int, val name: String, val required: Boolean,
+    val stepId: String? = null, val executionKind: String = "NORMAL",
+    val executionAction: Int? = null, val executionTarget: Int? = null,
+)
 
 @Serializable data class RecurrenceExceptionBackup(
     val taskId: String,
@@ -150,6 +154,16 @@ data class InstanceBackup(
     val required: Boolean,
     val completed: Boolean,
     val updatedAtEpochMillis: Long,
+    val stepId: String = "",
+    val executionKind: String = "NORMAL",
+    val executionAction: Int? = null,
+    val executionTarget: Int? = null,
+    val stepStatus: String = "PENDING",
+    val counterValue: Int? = null,
+    val elapsedMillis: Long? = null,
+    val informationContent: String? = null,
+    val moodRating: Int? = null,
+    val moodText: String? = null,
 )
 
 @Serializable data class ProgressBackup(
@@ -233,12 +247,24 @@ internal fun ImportBatchEntity.toBackup() = ImportBatchBackup(batchId, note, imp
 internal fun ImportBatchBackup.toEntity() = ImportBatchEntity(batchId, note, importedAtEpochMillis)
 internal fun TaskGroupEntity.toBackup() = GroupBackup(groupId, name, completeMessage, incompleteMessage, archived, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun GroupBackup.toEntity() = TaskGroupEntity(groupId, name, completeMessage, incompleteMessage, archived, createdAtEpochMillis, updatedAtEpochMillis)
-internal fun TaskStepDefinitionEntity.toBackup() = DefinitionStepBackup(taskId, position, name, required)
-internal fun DefinitionStepBackup.toEntity() = TaskStepDefinitionEntity(taskId, position, name, required)
+internal fun TaskStepDefinitionEntity.toBackup() = DefinitionStepBackup(taskId, position, name, required, stepId, executionKind, executionAction, executionTarget)
+internal fun DefinitionStepBackup.toEntity() = TaskStepDefinitionEntity(
+    taskId, position, name, required,
+    stepId ?: stableBackupStepId(taskId, position), executionKind, executionAction, executionTarget,
+)
 internal fun RecurrenceExceptionEntity.toBackup() = RecurrenceExceptionBackup(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun RecurrenceExceptionBackup.toEntity() = RecurrenceExceptionEntity(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
-internal fun InstanceStepEntity.toBackup() = InstanceStepBackup(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis)
-internal fun InstanceStepBackup.toEntity() = InstanceStepEntity(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis)
+internal fun InstanceStepEntity.toBackup() = InstanceStepBackup(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis, stepId, executionKind, executionAction, executionTarget, stepStatus, counterValue, elapsedMillis, informationContent, moodRating, moodText)
+internal fun InstanceStepBackup.toEntity() = InstanceStepEntity(
+    taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis,
+    stepId.takeIf { it.isNotBlank() } ?: stableBackupStepId(taskId, position), executionKind,
+    executionAction, executionTarget,
+    if (stepId.isBlank()) (if (completed) "CONFIRMED" else "PENDING") else stepStatus,
+    counterValue, elapsedMillis, informationContent, moodRating, moodText,
+)
+
+private fun stableBackupStepId(taskId: String, position: Int): String =
+    "s${taskId.take(12).padEnd(12, '0')}${position.toString(36).padStart(3, '0')}"
 internal fun ExecutionProgressEntity.toBackup() = ProgressBackup(taskId, occurrenceKey, executionKind, counterValue, elapsedMillis, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun ProgressBackup.toEntity() = ExecutionProgressEntity(taskId, occurrenceKey, executionKind, counterValue, elapsedMillis, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun InformationSubmissionEntity.toBackup() = InformationBackup(taskId, occurrenceKey, content, createdAtEpochMillis, updatedAtEpochMillis, submittedAtEpochMillis)

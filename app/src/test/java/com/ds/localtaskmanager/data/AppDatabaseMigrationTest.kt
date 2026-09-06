@@ -29,6 +29,7 @@ class AppDatabaseMigrationTest {
         context.deleteDatabase(V4_DATABASE)
         context.deleteDatabase(V5_DATABASE)
         context.deleteDatabase(V6_DATABASE)
+        context.deleteDatabase(V7_DATABASE)
     }
 
     @Test
@@ -111,6 +112,34 @@ class AppDatabaseMigrationTest {
             setOf("taskId", "occurrenceKey", "rating", "text", "createdAtEpochMillis", "updatedAtEpochMillis", "submittedAtEpochMillis"),
             moodColumns,
         )
+        assertNoForeignKeyViolations(database)
+    }
+
+    @Test
+    fun `version 7 steps migrate to stable step id primary key`() {
+        createLegacyDatabase(V7_DATABASE, 7) { db ->
+            insertV1Task(db, "LegacyTaskV70001", "LegacyGroupV7001")
+            MIGRATION_1_2.migrate(db)
+            MIGRATION_2_3.migrate(db)
+            MIGRATION_3_4.migrate(db)
+            MIGRATION_4_5.migrate(db)
+            MIGRATION_5_6.migrate(db)
+            MIGRATION_6_7.migrate(db)
+            db.execSQL("INSERT INTO instance_step(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis) VALUES ('LegacyTaskV70001', 'once', 0, '旧步骤', 1, 1, 400)")
+        }
+        val database = openCurrent(V7_DATABASE)
+        val primaryKey = database.openHelper.readableDatabase.query("PRAGMA table_info('instance_step')").use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) if (cursor.getInt(cursor.getColumnIndexOrThrow("pk")) > 0) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+            }
+        }
+        val migrated = database.openHelper.readableDatabase.query("SELECT stepId, stepStatus FROM instance_step WHERE taskId = 'LegacyTaskV70001'").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.getString(0) to cursor.getString(1)
+        }
+        assertEquals(listOf("taskId", "occurrenceKey", "stepId"), primaryKey)
+        assertEquals("sLegacyTaskV7000", migrated.first)
+        assertEquals("CONFIRMED", migrated.second)
         assertNoForeignKeyViolations(database)
     }
 
@@ -260,7 +289,7 @@ class AppDatabaseMigrationTest {
 
     private fun openCurrent(name: String): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .allowMainThreadQueries()
             .build()
             .also {
@@ -313,5 +342,6 @@ class AppDatabaseMigrationTest {
         const val V4_DATABASE = "migration-v4.db"
         const val V5_DATABASE = "migration-v5.db"
         const val V6_DATABASE = "migration-v6.db"
+        const val V7_DATABASE = "migration-v7.db"
     }
 }

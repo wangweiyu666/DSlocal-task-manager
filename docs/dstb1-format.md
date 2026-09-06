@@ -1,6 +1,6 @@
 # DSTB1 v1 文件格式
 
-DSTB1 是 Sub 端的本地备份容器。多字节整数统一采用无符号小端序；字符串统一为 UTF-8。
+DSTB1 是 Sub 端的本地备份容器。多字节整数统一采用无符号小端序；字符串统一为 UTF-8。Room 8 的步骤定义保存稳定 `stepId`、叶子执行配置、每实例草稿/进度和提交快照；恢复时按完整来源修订选择，不逐条拼接不同版本步骤。日期与 STEPS 的自动化验证记录见[验证记录](date-steps-validation.md)。
 
 ## 二进制布局
 
@@ -24,12 +24,12 @@ CRC32 覆盖从魔数开始到 zlib 数据末尾的全部字节，不包含末�
 - `createdAtEpochMillis`：快照创建时间；
 - `appVersion`：来源应用版本；
 - `sourceTimeZone`：来源 IANA 时区；
-- `payloadSchemaVersion`：业务 JSON 版本，当前为 `3`；读取端继续接受 `1`、`2`；
+- `payloadSchemaVersion`：业务 JSON 版本，当前为 `4`；读取端继续接受 `1`、`2`、`3`；
 - `counts`：积分组、任务定义、实例、积分流水、操作记录和结果版本数量。
 
 元数据不得包含设备名称、型号、账号、文件名或外部路径。数量摘要必须与解压后的实际集合一致。
 
-## 业务 JSON v3
+## 业务 JSON v4
 
 顶层字段顺序为：
 
@@ -44,6 +44,10 @@ progress, information, moods, notes, ledger, actionLogs, resultRevisions
 `settings` 只允许 `themeMode`、`reduceMotion` 和 `lastStatisticsPeriod`。`recurrenceExceptions` 保存重复任务单日例外；`instances.singleDayAdjusted` 保存已生成实例的来源快照。系统提醒记录不属于业务 JSON。业务 JSON v1 迁移时这两个字段按空列表和 `false` 处理。
 
 `moods` 按任务 ID、实例键保存 `rating`（草稿可为 null，否则 1～5）、`text`（最多 2000 个 Unicode 字符）、创建／更新时间和可空提交时间。旧 v1/v2 读取时补空集合，旧版本不得声明 MOOD 或包含心情记录。已完成 MOOD 实例必须有已提交答案；其他状态不得标记已提交。合并恢复时，已完成答案跟随所选实例快照，其他心情内容使用更新时间较新的记录；替换恢复完整还原。
+
+v4 的步骤记录携带稳定 16 字符 `stepId`、叶子执行配置、实例状态（`PENDING`/`CONFIRMED`/`SKIPPED`）及计数、计时、信息、心情答案。步骤状态按父实例整体选择和恢复，不按位置拼接不同版本。Room 8 的数据库迁移只增加稳定步骤定义、例外和结果快照所需字段，迁移过程不把旧任务按位置重写为 STEPS；只有管理员明确编辑并保存旧定义时才执行确定性 ID 转换。
+
+备份格式 v4 与旧版本保持读取兼容：缺失的步骤 ID、叶子执行配置和例外字段按旧格式语义解释，写出时使用完整的当前结构。导入合并先按任务/实例及来源修订选择完整记录，再恢复同一来源的整组步骤定义、例外和实例进度；不能把不同修订的步骤逐条拼接，也不能让旧完成状态覆盖较新的撤销或定义。
 
 ## 压缩与限制
 

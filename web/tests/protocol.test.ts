@@ -55,6 +55,17 @@ describe("DST1 v1 shared contract", () => {
     expect(() => validateDst1Batch({ ...dst11Exceptions, e: [{ i: exception.i, y: exception.y, c: 1, n: "invalid" }] })).toThrowError(expect.objectContaining({ code: "CONFLICTING_FIELDS" }));
   });
 
+  it("applies the effective STEPS exception rules without rejecting legacy steps", () => {
+    const base = { i: "TaskLegacy00001A", n: "旧任务", r: 1 as const, s: [{ n: "旧步骤", r: 1 as const }], u: { k: 1 as const, a: 2 as const, v: 2 } };
+    const common = { v: 1 as const, sv: 1 as const, b: "BatchExcept00001", t: [base] };
+    expect(() => validateDst1Batch({ ...common, e: [{ i: base.i, y: "2026-09-06", s: [{ n: "旧例外", r: 1 as const }] }] })).not.toThrow();
+    expect(() => validateDst1Batch({ ...common, e: [{ i: base.i, y: "2026-09-06", u: null, s: [] }] })).not.toThrow();
+    expect(() => validateDst1Batch({ v: 1, sv: 1, b: "BatchExcept00001", e: [{ i: base.i, y: "2026-09-06", u: { k: 5 } }] })).not.toThrow();
+    expect(() => validateDst1Batch({ ...common, e: [{ i: base.i, y: "2026-09-06", u: { k: 5 }, s: [] }] })).toThrowError(expect.objectContaining({ code: "REQUIRED_FIELD_MISSING" }));
+    const stepsBase = { ...base, u: { k: 5 as const }, s: [{ i: "Step000000000001", n: "一步", r: 1 as const }] };
+    expect(() => validateDst1Batch({ v: 1, sv: 1, b: "BatchExcept00001", t: [stepsBase], e: [{ i: base.i, y: "2026-09-06", u: null }] })).toThrowError(expect.objectContaining({ code: "CONFLICTING_FIELDS" }));
+  });
+
   it.each(invalidJsonCases)("matches the shared error contract for $id", (testCase) => {
     if (testCase.source.kind !== "json" || testCase.spec.result !== "ERROR") throw new Error("invalid test inventory");
     const value = JSON.parse(readFileSync(`${repositoryRoot}/protocol-test-vectors/${testCase.source.path}`, "utf8"));

@@ -52,6 +52,9 @@ data class DstTask(
 data class DstStep(
     val name: String,
     val required: Boolean,
+    /** Stable protocol identity. Null is retained only for legacy direct-completion steps. */
+    val id: String? = null,
+    val execution: ExecutionSpec = ExecutionSpec.Normal,
 )
 
 data class DstOccurrenceException(

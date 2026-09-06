@@ -24,9 +24,23 @@ export function editableFromCloudTask(content: Record<string, unknown> | undefin
   return definition ? { ...fieldsFromDst1(definition.task), groupId: definition.group?.i ?? null } : null;
 }
 
-export function buildCloudTaskContent(taskId: string, value: EditableTask, groups: GroupRecord[]): Dst1Batch {
+function naturalDate(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    if (values.year && values.month && values.day) return `${values.year}-${values.month}-${values.day}`;
+  } catch { throw new Error("空间时区无效，请刷新空间信息后重试"); }
+  throw new Error("无法计算空间自然日");
+}
+
+export function buildCloudTaskContent(taskId: string, value: EditableTask, groups: GroupRecord[], timeZone?: string): Dst1Batch {
   const draft = { ...value, taskId, draftItemId: createLocalId("cloud"), source: "existing" as const };
-  const task = draftTaskToDst1(draft);
+  const rawTask = draftTaskToDst1(draft);
+  const needsDate = value.taskDateIntent !== "preserve" && (value.recurrence ? !rawTask.x?.s : !rawTask.y);
+  if (needsDate && !timeZone) throw new Error("空间时区尚未加载，请刷新空间信息后重试");
+  const task = value.recurrence
+    ? value.taskDateIntent === "preserve" || !rawTask.x || rawTask.x.s ? rawTask : { ...rawTask, x: { ...rawTask.x, s: naturalDate(timeZone!) } }
+    : value.taskDateIntent === "preserve" || rawTask.y ? rawTask : { ...rawTask, y: naturalDate(timeZone!) };
   const group = value.groupId ? groups.find((item) => item.id === value.groupId) : undefined;
   if (!group) return { v: 1, b: createTransportId(), t: [task] };
   return {

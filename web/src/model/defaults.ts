@@ -1,4 +1,5 @@
 import { createLocalId, createTransportId } from "../protocol/id";
+import { normalizeEditableSteps } from "./steps";
 import type { DraftRecord, DraftTask, TaskFields, TaskRecord, TemplateRecord } from "./types";
 
 export const emptyTaskFields = (): TaskFields => ({
@@ -6,6 +7,7 @@ export const emptyTaskFields = (): TaskFields => ({
   required: true,
   description: "",
   taskDate: "",
+  taskDateIntent: "set",
   deadlineMode: "default",
   deadline: "",
   points: 0,
@@ -55,10 +57,15 @@ export function createRecurringDraftTask(groupId: string | null = null): DraftTa
 
 export function draftTaskFromTask(task: TaskRecord, source: DraftTask["source"] = "existing"): DraftTask {
   const { id, groupId, createdAt: _createdAt, updatedAt: _updatedAt, lastGeneratedAt: _lastGeneratedAt, version: _version, ...fields } = task;
-  return { ...fields, taskId: id, groupId, draftItemId: createLocalId("item"), source };
+  const normalized = normalizeEditableSteps(id, fields.name, fields.steps, fields.execution);
+  const steps = normalized.steps;
+  const execution = normalized.execution;
+  return { ...fields, taskDateIntent: fields.taskDate ? "set" : "preserve", steps, execution, taskId: id, groupId, draftItemId: createLocalId("item"), source };
 }
 
 export function draftTaskFromTemplate(template: TemplateRecord): DraftTask {
   const { id: _id, title: _title, groupId, createdAt: _createdAt, updatedAt: _updatedAt, ...fields } = template;
-  return { ...fields, taskId: createTransportId(), groupId, draftItemId: createLocalId("item"), source: "template" };
+  const taskId = createTransportId();
+  const normalized = normalizeEditableSteps(taskId, fields.name, fields.steps, fields.execution);
+  return { ...fields, ...normalized, taskDateIntent: "set", taskId, groupId, draftItemId: createLocalId("item"), source: "template" };
 }

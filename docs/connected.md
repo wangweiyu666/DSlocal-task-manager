@@ -98,6 +98,7 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 - 执行事件不可变，绑定执行者实际看到的任务版本；旧修订或取消后的结果保留并标记待复核。
 - 信息告知正文使用独立不可变命令同步，并展示在管理员结果卡片。
 - 心情任务使用 `u: { k: 4 }`。已完成的 `EXECUTION_EVENT` 在 `data` 中携带 `executionKind: "MOOD"`、`status: "COMPLETED"`、`moodRating`（整数 1～5）和 `moodText`（可空字符串，最多 2000 个 Unicode 字符）。服务端按提交的任务版本和实例日期校验执行类型，包含单日覆盖；沿用事件权限、幂等和结果选择。草稿不上传，MISSED 与撤销事件不携带答案。管理员从所选事件展示心情，不从其他提交回填已撤销答案。
+- 分步骤任务使用 `u: { k: 5 }`，步骤结果仍通过一次整项 `EXECUTION_EVENT` 提交。`data` 必须为 `executionKind: "STEPS"`、`status: "COMPLETED"`、完整且按修订快照顺序排列的 `stepResults`，每项只有 `stepId`、`status: "CONFIRMED"|"SKIPPED"` 和对应类型答案（`counterValue`、`elapsedMillis`、`informationContent`、`moodRating`/`moodText`）；选做步骤才可无答案跳过，撤销和 `MISSED` 不带步骤答案。服务端按 `taskRevision` 与实例日期例外解析有效步骤，并在保存结果时补入该修订的 `name`、`required`、`execution`、`taskName`、`taskDate`；客户端 `localOccurrenceKey` 保留为本机实例键。延迟重试、旧修订和跨执行者结果继续使用现有幂等、审查与结果选择规则，不能以最新任务定义补历史标签。
 - 同一分配的首个有效终态结果暂定生效，后到结果作为 duplicate 保留；管理员改选写入新审计事件。
 
 关键竞态结果：

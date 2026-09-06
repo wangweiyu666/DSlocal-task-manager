@@ -120,10 +120,28 @@ internal object BackupMerger {
             local.definitions, backup.definitions, DefinitionBackup::taskId, DefinitionBackup::updatedAtEpochMillis,
             "task", "任务", DefinitionBackup::name, { summarizeDefinition(it) }, state,
         )
-        val definitionSteps = selectable(
-            local.definitionSteps, backup.definitionSteps, { "${it.taskId}|${it.position}" },
-            "definition-step", "任务步骤", { it.name }, { it.toString() }, state,
-        )
+        // Definition steps are also a snapshot: use the same source as the
+        // selected definition so a reorder cannot combine two revisions.
+        val definitionSteps = definitions.flatMap { definition ->
+            val taskId = definition.taskId
+            val localDefinition = local.definitions.firstOrNull { it.taskId == taskId }
+            val backupDefinition = backup.definitions.firstOrNull { it.taskId == taskId }
+            val localSteps = local.definitionSteps.filter { it.taskId == taskId }
+            val backupSteps = backup.definitionSteps.filter { it.taskId == taskId }
+            val source = when {
+                localDefinition == null -> backupSteps
+                backupDefinition == null -> localSteps
+                localDefinition != backupDefinition -> if (definition == backupDefinition) backupSteps else localSteps
+                localSteps == backupSteps -> localSteps
+                else -> {
+                    val conflictId = "definition-steps:$taskId"
+                    state.conflicts += MergeConflict(conflictId, "任务步骤", definition.name, localSteps.toString(), backupSteps.toString())
+                    if (conflictId in state.backupChoices) backupSteps.also { state.updated++ }
+                    else localSteps.also { state.keptLocal++ }
+                }
+            }
+            source
+        }
         val recurrenceExceptions = updated(
             local.recurrenceExceptions, backup.recurrenceExceptions,
             { "${it.taskId}|${it.occurrenceDate}" }, RecurrenceExceptionBackup::updatedAtEpochMillis,
@@ -134,11 +152,26 @@ internal object BackupMerger {
             local.instances, backup.instances, { "${it.taskId}|${it.occurrenceKey}" }, InstanceBackup::updatedAtEpochMillis,
             "instance", "任务实例", InstanceBackup::name, { summarizeInstance(it) }, state,
         )
-        val instanceSteps = updated(
-            local.instanceSteps, backup.instanceSteps, { "${it.taskId}|${it.occurrenceKey}|${it.position}" },
-            InstanceStepBackup::updatedAtEpochMillis, "instance-step", "实例步骤", InstanceStepBackup::name,
-            { "${it.name}：${if (it.completed) "已完成" else "未完成"}" }, state,
-        )
+        // Step state is an instance snapshot. Select the complete source set with its
+        // parent instance; never merge individual positions from different revisions.
+        val instanceSteps = instances.flatMap { instance ->
+            val key = instance.taskId to instance.occurrenceKey
+            val localInstance = local.instances.firstOrNull { it.taskId == key.first && it.occurrenceKey == key.second }
+            val backupInstance = backup.instances.firstOrNull { it.taskId == key.first && it.occurrenceKey == key.second }
+            val localSteps = local.instanceSteps.filter { it.taskId == key.first && it.occurrenceKey == key.second }
+            val backupSteps = backup.instanceSteps.filter { it.taskId == key.first && it.occurrenceKey == key.second }
+            when {
+                localInstance == null -> backupSteps
+                backupInstance == null -> localSteps
+                localInstance != backupInstance -> if (instance == backupInstance) backupSteps else localSteps
+                localSteps == backupSteps -> localSteps
+                else -> {
+                    val conflictId = "instance-steps:${key.first}|${key.second}"
+                    state.conflicts += MergeConflict(conflictId, "实例步骤", instance.name, localSteps.toString(), backupSteps.toString())
+                    if (conflictId in state.backupChoices) backupSteps.also { state.updated++ } else localSteps.also { state.keptLocal++ }
+                }
+            }
+        }
         val progress = updated(
             local.progress, backup.progress, { "${it.taskId}|${it.occurrenceKey}" }, ProgressBackup::updatedAtEpochMillis,
             "progress", "任务进度", { it.taskId }, { "计数 ${it.counterValue ?: 0}，计时 ${it.elapsedMillis ?: 0} 毫秒" }, state,

@@ -1,4 +1,4 @@
-import { Dst1ProtocolError, type Dst11Exception, type Dst1Batch, type Dst1ErrorCode, type Dst1Group, type Dst1Task } from "./types";
+import { Dst1ProtocolError, type Dst11Exception, type Dst1Batch, type Dst1ErrorCode, type Dst1Group, type Dst1Step, type Dst1Task } from "./types";
 
 interface ErrorObject { instancePath: string; keyword: string; params: Record<string, unknown>; message?: string; }
 export interface SchemaValidator { (value: unknown): boolean; errors?: ErrorObject[] | null; }
@@ -34,6 +34,13 @@ function validDate(value: string): boolean {
 }
 
 function validateTaskRules(task: Dst1Task, path: string): void {
+  const executionKind = task.u && typeof task.u === "object" ? task.u.k : undefined;
+  if (executionKind === 5) {
+    if (!task.s || task.s.length < 1 || task.s.length > 50) fail("REQUIRED_FIELD_MISSING", `${path}.s`, "STEPS 需要 1 至 50 个步骤");
+    const ids = task.s.map((step) => step.i);
+    if (ids.some((id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{16}$/u.test(id))) fail("INVALID_VALUE", `${path}.s`, "STEPS 步骤必须有 16 字符稳定 ID");
+    if (new Set(ids).size !== ids.length) fail("DUPLICATE_VALUE", `${path}.s`, "STEPS 步骤 ID 重复");
+  }
   for (const [field, value] of [["y", task.y], ["l", typeof task.l === "string" ? task.l.slice(0, 10) : undefined]] as const) {
     if (value !== undefined && !validDate(value)) fail("INVALID_DATE", `${path}.${field}`, "日期无效");
   }
@@ -56,6 +63,13 @@ function validateTaskRules(task: Dst1Task, path: string): void {
       fail("DUPLICATE_VALUE", `${path}.x.w`, "星期必须唯一并按升序排列");
     }
   }
+}
+
+function validateStepsForStepsExecution(steps: Dst1Step[] | undefined, path: string): void {
+  if (!steps || steps.length < 1 || steps.length > 50) fail("REQUIRED_FIELD_MISSING", `${path}.s`, "STEPS 需要完整步骤集");
+  const ids = steps.map((step) => step.i);
+  if (ids.some((id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{16}$/u.test(id))) fail("INVALID_VALUE", `${path}.s`, "STEPS 步骤必须有稳定 ID");
+  if (new Set(ids).size !== ids.length) fail("DUPLICATE_VALUE", `${path}.s`, "STEPS 步骤 ID 重复");
 }
 
 function validateExceptionRules(value: Dst11Exception, path: string): void {
@@ -140,4 +154,16 @@ export function validateDst1Batch(value: unknown, validateSchema: SchemaValidato
   if (batch.e?.some((item) => batch.z?.includes(item.i))) fail("CONFLICTING_FIELDS", "e", "任务不能同时整项撤销和设置单日例外");
   batch.e?.forEach((item, index) => validateExceptionRules(item, `e[${index}]`));
   taskEntries.forEach(([task, path]) => validateTaskRules(task, path));
+  const baseTasks = new Map(taskEntries.map(([task]) => [task.i, task]));
+  batch.e?.forEach((exception, index) => {
+    if (exception.c === 1) return;
+    const base = baseTasks.get(exception.i);
+    const hasExplicitExecution = Object.prototype.hasOwnProperty.call(exception, "u");
+    const effectiveExecution = hasExplicitExecution ? exception.u : base?.u;
+    if (base?.u?.k === 5 && hasExplicitExecution && effectiveExecution?.k !== 5) {
+      if (!Array.isArray(exception.s) || exception.s.length !== 0) fail("CONFLICTING_FIELDS", `e[${index}].s`, "切出 STEPS 必须明确清空步骤");
+    } else if (effectiveExecution?.k === 5 && !(base === undefined && exception.s === undefined)) {
+      validateStepsForStepsExecution(exception.s ?? base?.s, `e[${index}]`);
+    }
+  });
 }

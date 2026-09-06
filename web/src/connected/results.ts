@@ -14,6 +14,16 @@ export interface ExecutionResultPresentation {
   moodLabel: string | null;
   reviewMessage: string | null;
   duplicateMessage: string | null;
+  stepResults: StepResultPresentation[];
+}
+
+export interface StepResultPresentation {
+  stepId: string;
+  name: string;
+  required: boolean;
+  execution: Record<string, unknown> | null;
+  status: "CONFIRMED" | "SKIPPED";
+  answer: string;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -22,6 +32,16 @@ function record(value: unknown): Record<string, unknown> {
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stepAnswer(row: Record<string, unknown>, execution: Record<string, unknown>, skipped: boolean): string {
+  if (skipped) return "";
+  const kind = execution.k;
+  if (kind === 1 && Number.isFinite(row.counterValue)) return `完成 ${Number(row.counterValue)} / ${Number(execution.v)} 次`;
+  if (kind === 2 && Number.isFinite(row.elapsedMillis)) return `用时 ${(Number(row.elapsedMillis) / 1000).toFixed(1)} / ${Number(execution.v)} 秒`;
+  if (kind === 3) return nonEmptyString(row.informationContent) ?? "已填写";
+  if (kind === 4 && Number.isInteger(row.moodRating) && Number(row.moodRating) >= 1 && Number(row.moodRating) <= 5) return `${["很差", "较差", "一般", "不错", "很好"][Number(row.moodRating) - 1]}${nonEmptyString(row.moodText) ? ` · ${row.moodText}` : ""}`;
+  return "已完成";
 }
 
 function localDateLabel(value: unknown): string | null {
@@ -97,7 +117,17 @@ export function presentExecutionResult(
     : undefined;
   const informationContent = eventType === "COMPLETION_UNDONE" || data.executionKind === "MOOD"
     ? null
-    : nonEmptyString(data.informationContent) ?? nonEmptyString(separateSubmission?.payload.content);
+    : data.executionKind === "STEPS" ? null : nonEmptyString(data.informationContent) ?? nonEmptyString(separateSubmission?.payload.content);
+  const stepResults: StepResultPresentation[] = eventType !== "COMPLETION_UNDONE" && data.executionKind === "STEPS" && status === "COMPLETED" && Array.isArray(data.stepResults)
+    ? data.stepResults.flatMap((item): StepResultPresentation[] => {
+      const row = record(item);
+      const stepId = nonEmptyString(row.stepId);
+      const name = nonEmptyString(row.name);
+      const stepStatus = row.status === "CONFIRMED" || row.status === "SKIPPED" ? row.status : null;
+      if (!stepId || !name || !stepStatus || typeof row.required !== "boolean") return [];
+      const execution = row.execution === null ? {} : record(row.execution);
+      return [{ stepId, name, required: row.required, execution: row.execution === null ? null : execution, status: stepStatus, answer: stepAnswer(row, execution, stepStatus === "SKIPPED") }];
+    }) : [];
   const reviewReason = nonEmptyString(result.payload.reviewReason);
   const moodRating = eventType !== "COMPLETION_UNDONE" && data.status === "COMPLETED" && data.executionKind === "MOOD" && Number.isInteger(data.moodRating) && Number(data.moodRating) >= 1 && Number(data.moodRating) <= 5 ? Number(data.moodRating) : null;
 
@@ -114,5 +144,6 @@ export function presentExecutionResult(
     moodLabel: moodRating === null ? null : ["很差", "较差", "一般", "不错", "很好"][moodRating - 1],
     reviewMessage: reviewReason ? reviewMessages[reviewReason] ?? "这条结果需要管理员核对后采用。" : null,
     duplicateMessage: nonEmptyString(result.payload.duplicateOf) ? "同一任务已有更早提交，本条作为候选结果保留。" : null,
+    stepResults,
   };
 }
