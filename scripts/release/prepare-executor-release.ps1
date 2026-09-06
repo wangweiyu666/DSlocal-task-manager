@@ -20,7 +20,7 @@ try {
     $sourceApk = Join-Path $repo 'app\build\outputs\apk\production\release\app-production-release.apk'
     & (Join-Path $PSScriptRoot 'audit-apk.ps1') -Apk $sourceApk -AndroidHome $AndroidHome `
         -ExpectedPackage 'com.ds.localtaskmanager.connected.production' `
-        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 11 -Networked
+        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 12 -Networked
     if ($LASTEXITCODE -ne 0) { throw 'Production executor APK audit failed.' }
 
     $archive = Join-Path $ArchiveRoot $Version
