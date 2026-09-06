@@ -140,6 +140,18 @@ class AppDatabaseMigrationTest {
         assertEquals(listOf("taskId", "occurrenceKey", "stepId"), primaryKey)
         assertEquals("sLegacyTaskV7000", migrated.first)
         assertEquals("CONFIRMED", migrated.second)
+        val indexes = database.openHelper.readableDatabase.query("PRAGMA index_list('instance_step')").use { cursor ->
+            buildSet {
+                while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+            }
+        }
+        assertTrue("index_instance_step_taskId_occurrenceKey" in indexes)
+        val indexColumns = database.openHelper.readableDatabase.query("PRAGMA index_info('index_instance_step_taskId_occurrenceKey')").use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+            }
+        }
+        assertEquals(listOf("taskId", "occurrenceKey"), indexColumns)
         assertNoForeignKeyViolations(database)
     }
 

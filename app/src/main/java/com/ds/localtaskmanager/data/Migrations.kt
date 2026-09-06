@@ -253,6 +253,7 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
             }
         }
         db.execSQL("DROP TABLE `instance_step_v7`")
+        db.execSQL("CREATE INDEX `index_instance_step_taskId_occurrenceKey` ON `instance_step` (`taskId`, `occurrenceKey`)")
     }
 }
 
