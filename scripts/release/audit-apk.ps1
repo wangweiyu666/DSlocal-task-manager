@@ -25,7 +25,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect APK manifest.' }
 [xml]$manifest = $manifestText
 $androidNs = 'http://schemas.android.com/apk/res/android'
 $expectedPermissions = @(
-    'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.FOREGROUND_SERVICE',
     'android.permission.POST_NOTIFICATIONS',
     'android.permission.RECEIVE_BOOT_COMPLETED',
@@ -33,7 +32,10 @@ $expectedPermissions = @(
     'android.permission.WAKE_LOCK',
     "$ExpectedPackage.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 )
-if ($Networked) { $expectedPermissions += 'android.permission.INTERNET' }
+if ($Networked) {
+    $expectedPermissions += 'android.permission.ACCESS_NETWORK_STATE'
+    $expectedPermissions += 'android.permission.INTERNET'
+}
 $actualPermissions = @($manifest.manifest.'uses-permission' | ForEach-Object { $_.GetAttribute('name', $androidNs) } | Sort-Object)
 if (Compare-Object ($expectedPermissions | Sort-Object) $actualPermissions) {
     throw "Unexpected final permission set: $($actualPermissions -join ', ')"
