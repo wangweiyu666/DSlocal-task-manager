@@ -84,6 +84,12 @@ jobs:
         working-directory: web
       - run: npm run build:all
         working-directory: web
+      - name: Install Chromium for connected page verification
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Verify connected page startup under production CSP
+        run: npm run test:connected-smoke
+        working-directory: web
 
   deploy-staging:
     if: >-

@@ -67,6 +67,19 @@ TypeScript 生产代码修改后，额外运行对应端的 `npm --prefix cloud 
 
 ## Access 门禁与域名迁移的最小验证
 
+管理网页的 CSP/初始化回归分两层：`web/tests/protocol.test.ts` 在禁止字符串代码生成的独立环境中加载校验入口，验证合法与非法数据；联网页面启动 smoke 使用生产构建和管理站点的严格 CSP，在模拟身份交换与初始化后确认任务库可见、刷新正常、没有未捕获异常或 CSP 错误。模拟响应不能证明真实 Access 账号可以登录。
+
+每次部署还必须执行[管理员页面加载验收](stage4-production-runbook.md#管理员页面加载验收)，分别记录实际环境的登录后页面、刷新与控制台结果。CI 成功和匿名 302 跳转只能分别证明自动检查与边缘拦截，不能代替此验收。不得为使测试通过添加 `unsafe-eval`、导出浏览器凭据或降低站点保护。
+
+页面启动测试需要 Playwright Chromium；在 `web` 目录首次运行 `npx playwright install chromium`（Linux CI 使用 `--with-deps`）。先构建，再从仓库根目录执行：
+
+```text
+npm --prefix web run build:connected
+npm --prefix web run test:connected-smoke
+```
+
+若同一源码已通过 `build:all`，直接执行 smoke，复用 `dist-connected`，不重复构建。该命令只运行一个桌面 Chromium 页面启动用例，不扩展为 Android 或全浏览器矩阵。
+
 由主代理设计安全边界，Luna 编写并运行 `cloud-web/tests/gate.test.ts`：用临时真实 RSA 密钥与模拟 JWKS 覆盖合法身份、伪造/过期/跨环境令牌、缺配置、旁路主机、跨站请求和公钥获取失败；不模拟 `jwtVerify` 的成功结果。通过数据驱动分组保留约 6 条测试，不为每条路径重复建立测试。Web 的 `connected-api-access.test.ts` 补充 Access 登录 HTML 不能当成有效业务会话，以及正常响应和退出标记。
 
 ```text

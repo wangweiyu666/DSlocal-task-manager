@@ -18,6 +18,7 @@
     "test:minimum": "vitest run tests/connected-sync-scheduler.test.ts tests/connected-results.test.ts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:connected-smoke": "playwright test --config=playwright.connected.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "generate:protocol": "node scripts/generate-protocol-validator.mjs",
     "verify:protocol": "node scripts/generate-protocol-validator.mjs --check"

@@ -16,6 +16,7 @@ import { validateDst1Batch } from "../src/protocol/validation";
 import manifest from "../../protocol-test-vectors/manifest.json";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 
 const validVectors = [minimalJson, counter, timer, information, daily, weekly, reminders, clearFields, dst11Exceptions];
 const repositoryRoot = resolve(process.cwd(), "..");
@@ -47,6 +48,33 @@ describe("DST1 v1 shared contract", () => {
     expect(encoded.envelope.startsWith("DST1.1.")).toBe(true);
     expect(decodeDst1(encoded.envelope).batch).toEqual(dst11Exceptions);
     expect(encodeDst1(minimalJson as Dst1Batch).envelope.startsWith("DST1.")).toBe(true);
+  });
+
+  it("loads and executes validation when CSP forbids string code generation", () => {
+    const valid = JSON.stringify(minimalJson);
+    const invalid = JSON.stringify({ ...minimalJson, t: [] });
+    const script = `
+      const { buildSync } = require("esbuild");
+      const vm = require("node:vm");
+      const bundle = buildSync({
+        absWorkingDir: process.cwd(), bundle: true, format: "iife",
+        globalName: "ProtocolValidator", platform: "browser", target: "es2020",
+        write: false,
+        stdin: {
+          contents: "import { validateDst1Batch } from './src/protocol/validation'; globalThis.validateDst1Batch = validateDst1Batch;",
+          sourcefile: "csp-validation-entry.ts", resolveDir: process.cwd()
+        }
+      }).outputFiles[0].text;
+      const sandbox = {};
+      vm.runInNewContext(bundle, sandbox, {
+        contextCodeGeneration: { strings: false, wasm: false }
+      });
+      sandbox.validateDst1Batch(${valid});
+      let rejected = false;
+      try { sandbox.validateDst1Batch(${invalid}); } catch (_) { rejected = true; }
+      if (!rejected) process.exit(2);
+    `;
+    expect(execFileSync(process.execPath, ["-e", script], { cwd: process.cwd(), encoding: "utf8" })).toBe("");
   });
 
   it("rejects duplicate occurrence targets and cancellation overrides", () => {
