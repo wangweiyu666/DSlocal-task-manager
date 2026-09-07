@@ -11,6 +11,7 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.ColumnInfo
 import com.ds.localtaskmanager.data.connectedOpenHelperFactory
 import kotlinx.coroutines.flow.Flow
 
@@ -26,6 +27,11 @@ data class CloudSessionEntity(
     val spaceId: String? = null,
     val spaceName: String? = null,
     val role: String? = null,
+    /** Changes whenever an account is replaced, invalidating queued workers. */
+    val sessionGeneration: String = "legacy",
+    @ColumnInfo(defaultValue = "0") val retryUntilEpochMillis: Long = 0,
+    @ColumnInfo(defaultValue = "0") val needsSync: Boolean = false,
+    val blockedReason: String? = null,
 )
 
 @Entity(tableName = "cloud_entity")
@@ -48,6 +54,9 @@ data class CloudOutboxEntity(
     val commandJson: String,
     val queuedAt: String,
     val attempts: Int = 0,
+    val retryAtEpochMillis: Long? = null,
+    val state: String = "PENDING",
+    val lastError: String? = null,
 )
 
 @Entity(tableName = "cloud_sent_semantic")
@@ -85,6 +94,8 @@ interface ConnectedSyncDao {
     @Query("SELECT * FROM cloud_session WHERE id = 'active'") suspend fun session(): CloudSessionEntity?
     @Upsert suspend fun saveSession(value: CloudSessionEntity)
     @Query("DELETE FROM cloud_session") suspend fun clearSession()
+    @Query("UPDATE cloud_session SET retryUntilEpochMillis = :until, needsSync = :needsSync, blockedReason = :blocked WHERE id = 'active' AND sessionGeneration = :generation")
+    suspend fun updateSyncControl(generation: String, until: Long, needsSync: Boolean, blocked: String?)
 
     @Query("SELECT * FROM cloud_entity WHERE spaceId = :spaceId") suspend fun entities(spaceId: String): List<CloudEntity>
     @Query("SELECT * FROM cloud_entity WHERE spaceId = :spaceId AND entityType = :type") suspend fun entities(spaceId: String, type: String): List<CloudEntity>
@@ -101,6 +112,8 @@ interface ConnectedSyncDao {
     @Query("DELETE FROM cloud_sent_semantic WHERE spaceId = :spaceId") suspend fun clearSent(spaceId: String)
     @Query("DELETE FROM cloud_outbox WHERE commandId = :commandId") suspend fun deleteCommand(commandId: String)
     @Query("UPDATE cloud_outbox SET attempts = attempts + 1 WHERE commandId = :commandId") suspend fun incrementAttempts(commandId: String)
+    @Query("UPDATE cloud_outbox SET attempts = attempts + 1, retryAtEpochMillis = :retryAt, state = 'RETRYABLE', lastError = :error WHERE commandId = :commandId") suspend fun markRetryable(commandId: String, retryAt: Long?, error: String?)
+    @Query("UPDATE cloud_outbox SET state = 'PERMANENT_FAILURE', lastError = :error WHERE commandId = :commandId") suspend fun markPermanentFailure(commandId: String, error: String)
     @Query("DELETE FROM cloud_outbox WHERE spaceId = :spaceId") suspend fun clearOutbox(spaceId: String)
 
     @Query("SELECT * FROM cloud_sync_meta WHERE spaceId = :spaceId") suspend fun meta(spaceId: String): CloudSyncMetaEntity?
@@ -113,7 +126,7 @@ interface ConnectedSyncDao {
 
 @Database(
     entities = [CloudSessionEntity::class, CloudEntity::class, CloudOutboxEntity::class, CloudSentSemanticEntity::class, CloudSyncMetaEntity::class, CloudOccurrenceMapEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class ConnectedSyncDatabase : RoomDatabase() {
@@ -124,6 +137,20 @@ abstract class ConnectedSyncDatabase : RoomDatabase() {
             context.applicationContext,
             ConnectedSyncDatabase::class.java,
             "dst-connected-sync.db",
-        ).openHelperFactory(connectedOpenHelperFactory(context.applicationContext)).build()
+        ).openHelperFactory(connectedOpenHelperFactory(context.applicationContext))
+            .addMigrations(MIGRATION_1_2)
+            .build()
+    }
+}
+
+internal val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE cloud_session ADD COLUMN sessionGeneration TEXT NOT NULL DEFAULT 'legacy'")
+        database.execSQL("ALTER TABLE cloud_session ADD COLUMN retryUntilEpochMillis INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE cloud_session ADD COLUMN needsSync INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE cloud_session ADD COLUMN blockedReason TEXT")
+        database.execSQL("ALTER TABLE cloud_outbox ADD COLUMN retryAtEpochMillis INTEGER")
+        database.execSQL("ALTER TABLE cloud_outbox ADD COLUMN state TEXT NOT NULL DEFAULT 'PENDING'")
+        database.execSQL("ALTER TABLE cloud_outbox ADD COLUMN lastError TEXT")
     }
 }

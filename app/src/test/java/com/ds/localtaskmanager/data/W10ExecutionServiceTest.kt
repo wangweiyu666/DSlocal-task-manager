@@ -85,6 +85,46 @@ class W10ExecutionServiceTest {
     }
 
     @Test
+    fun `successful completion and undo notify after committed database state`() = runTest {
+        importJson(counterJson("CallbackBatc0001", target = 1))
+        val callbackStatuses = mutableListOf<String>()
+        val service = RoomTaskExecutionService(database, clock, ids) { key ->
+            assertEquals(false, database.openHelper.writableDatabase.inTransaction())
+            database.openHelper.readableDatabase.query(
+                "SELECT status FROM task_instance WHERE taskId = ? AND occurrenceKey = ?",
+                arrayOf(key.taskId, key.occurrenceKey),
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                callbackStatuses += cursor.getString(0)
+            }
+        }
+
+        service.setCounter(COUNTER_KEY, 1)
+        service.complete(COUNTER_KEY)
+        assertEquals(TaskStatus.COMPLETED.name, database.instanceDao().getInstance(COUNTER_TASK)?.status)
+        service.undoCompletion(COUNTER_KEY)
+
+        assertEquals(listOf(TaskStatus.COMPLETED.name, TaskStatus.PENDING.name), callbackStatuses)
+        assertEquals(TaskStatus.PENDING.name, database.instanceDao().getInstance(COUNTER_TASK)?.status)
+    }
+
+    @Test
+    fun `failed completion and draft save do not notify`() = runTest {
+        importJson(informationJson("CallbackBatc0002", "Tell me"))
+        val callbackCount = AtomicInteger()
+        val service = RoomTaskExecutionService(database, clock, ids) { _ -> callbackCount.incrementAndGet() }
+
+        assertOperation(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED) {
+            service.complete(INFO_KEY)
+        }
+        assertEquals(TaskStatus.PENDING.name, database.instanceDao().getInstance(INFO_TASK)?.status)
+        service.saveInformationDraft(INFO_KEY, "draft only")
+
+        assertEquals(0, callbackCount.get())
+        assertEquals(TaskStatus.PENDING.name, database.instanceDao().getInstance(INFO_TASK)?.status)
+    }
+
+    @Test
     fun `counter rejects values outside the imported target`() = runTest {
         importJson(counterJson("CounterBatch0001", target = 3))
 

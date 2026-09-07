@@ -5,6 +5,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -213,26 +214,29 @@ class CloudApi(
         body: JsonObject? = null,
     ): JsonObject = withContext(Dispatchers.IO) {
         cooldown.beforeRequest(path)
-        val connection = openConnection(URL(baseUrl + path)).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = 20_000
-            setRequestProperty("Accept", "application/json")
-            if (accessToken != null) setRequestProperty("Authorization", "Bearer $accessToken")
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
-            }
-        }
+        var connection: HttpURLConnection? = null
         try {
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            connection = openConnection(URL(baseUrl + path))
+            connection!!.apply {
+                requestMethod = method
+                connectTimeout = 15_000
+                readTimeout = 20_000
+                setRequestProperty("Accept", "application/json")
+                if (accessToken != null) setRequestProperty("Authorization", "Bearer $accessToken")
+                if (body != null) {
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+                }
+            }
+            val activeConnection = requireNotNull(connection)
+            val status = activeConnection.responseCode
+            val stream = if (status in 200..299) activeConnection.inputStream else activeConnection.errorStream
             val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
             val parsed = runCatching { json.parseToJsonElement(text).jsonObject }.getOrDefault(JsonObject(emptyMap()))
             if (status !in 200..299) {
                 val error = parsed["error"] as? JsonObject
-                val retryAfter = retryAfterSeconds(connection.getHeaderField("Retry-After"),
+                val retryAfter = retryAfterSeconds(activeConnection.getHeaderField("Retry-After"),
                     (error?.get("retryAfterSeconds") as? JsonPrimitive)?.intOrNull)
                     ?: if (status == 429) 60 else null
                 if (retryAfter != null && (status == 429 || status == 503)) cooldown.pause(retryAfter)
@@ -246,12 +250,14 @@ class CloudApi(
                 )
             }
             parsed
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: CloudApiException) {
             throw error
         } catch (error: Exception) {
             throw CloudApiException(0, "NETWORK_UNAVAILABLE", "当前无法连接服务器", true)
         } finally {
-            connection.disconnect()
+            connection?.disconnect()
         }
     }
 

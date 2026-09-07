@@ -1,5 +1,7 @@
 # 最小测试方案
 
+> 2026-09-07 起以[单一云端环境](production-only.md)为准：staging 已取消，下面历史命令中的 `testConnectedDebugUnitTest` 改用 `testProductionDebugUnitTest`，`assembleConnectedDebug` / `lintConnectedDebug` 不再执行；交付仅 offline、production 两个包。默认共享及联网单元套件仍只跑一次，保留两个变体构建、Lint 和离线边界检查。域名验收使用 `prod.rochelimit.me`；旧三变体与 staging 记录仅作历史证据。
+
 日常按改动选择一组测试，通过后停止；只有出现新改动、失败或未覆盖风险才扩大范围。本方案针对同步修复的快速反馈，不代表所有产品功能已经验证。Web／Cloud 的 `npm test` 继续运行各自完整套件。Android 默认 CI 在 connected 变体执行一次全部共用及联网单元测试，保留三个变体的构建、Lint、离线网络边界和截图检查；发布继续遵循对应主指南。
 
 ## Android 去除重复执行
@@ -16,13 +18,9 @@ staging（connected）和 production 使用同一份联网源码及联网测试�
 
 只有明确要求完整矩阵，或变体源码、source set、环境地址、签名、构建配置等变化需要验证差异时，才增加受影响变体测试。手动触发 Android CI 可勾选 `full_android_matrix`，恢复三变体全部单元测试；日常 push／PR 默认不重复运行。独立发布指南要求的生产验证仍然执行。
 
-## Luna 测试分工
+## 执行分工
 
-简单测试的编写，以及测试命令的执行、等待和结果整理，默认交给 Luna（`gpt-5.6-luna`）。简单测试包括行为和预期结果已明确的单元测试、参数校验、错误响应以及已有故障的直接回归测试。主代理提供待验证行为、相关文件、允许修改的范围及验收条件，并审查新增断言是否能发现真实回归。
-
-涉及并发、跨端状态一致性、安全边界或数据库恢复等复杂测试，先由主代理确定测试设计，仍可由 Luna 执行确定后的方案。遵循最小测试原则，优先复用既有测试，避免重复或只照抄实现的断言。
-
-Luna 应报告实际运行命令、代码版本或相关工作区变更、通过/失败/跳过数量、关键失败原因和未覆盖范围。不得为获得通过结果而跳过失败用例或削弱断言；无法定位的问题及时交回主代理。模型不可用时明确说明，不能把其他模型的执行称为 Luna。完整 Android 测试通过后，继续按下文交付 Debug APK。
+执行分工遵循 `AGENTS.md`。复用既有覆盖，报告实际命令、源码状态和通过／失败／跳过数量，不削弱断言或隐藏失败。
 
 ## 保留哪些测试
 
@@ -58,8 +56,16 @@ Android 同步回调、运行时判断或结果载荷修改：
 ```text
 java --version
 adb version
-.\gradlew.bat testConnectedDebugUnitTest --tests "com.ds.localtaskmanager.ui.execution.W22ExecutionViewModelTest" --tests "com.ds.localtaskmanager.connected.ConnectedRuntimeTest" --no-daemon
+.\gradlew.bat testConnectedDebugUnitTest --tests "com.ds.localtaskmanager.ui.execution.W22ExecutionViewModelTest" --tests "com.ds.localtaskmanager.connected.ConnectedRuntimeTest" --tests "com.ds.localtaskmanager.data.W10ExecutionServiceTest" --tests "com.ds.localtaskmanager.connected.CloudApiRateLimitTest" --tests "com.ds.localtaskmanager.connected.ConnectedSyncDatabaseMigrationTest" --tests "com.ds.localtaskmanager.connected.ConnectedSyncEngineTest" --tests "com.ds.localtaskmanager.connected.ConnectedSyncCoordinatorTest" --no-daemon
 ```
+
+后台同步改动的 targeted 集合覆盖事务提交回调、Room 1→2 迁移、一次性 WorkManager 请求、Engine 恢复、身份隔离、重试截止时间、拒绝／取消／丢失回执、duplicate 回执以及前台与 Worker 互斥。需要完整验证时运行一次：
+
+```text
+.\gradlew.bat testConnectedDebugUnitTest --no-daemon
+```
+
+完整验证还保留 offline、connected（staging）和 production 的 Debug 构建与相应 Lint；离线变体继续执行无网络边界检查。具体执行结果、源码状态和 APK 校验值由交付记录填写，本文不预先填写未运行的数量。
 
 要求 JDK 17、Android SDK。上述是 JVM 单元测试，不要求启动模拟器。缓存受限或离线运行方式见[Windows 工具指南](windows-tooling.md#使用已缓存的-robolectric-运行离线单元测试)，其中 Gradle 任务也应替换为上面的筛选命令。
 
@@ -80,7 +86,7 @@ npm --prefix web run test:connected-smoke
 
 若同一源码已通过 `build:all`，直接执行 smoke，复用 `dist-connected`，不重复构建。该命令只运行一个桌面 Chromium 页面启动用例，不扩展为 Android 或全浏览器矩阵。
 
-由主代理设计安全边界，Luna 编写并运行 `cloud-web/tests/gate.test.ts`：用临时真实 RSA 密钥与模拟 JWKS 覆盖合法身份、伪造/过期/跨环境令牌、缺配置、旁路主机、跨站请求和公钥获取失败；不模拟 `jwtVerify` 的成功结果。通过数据驱动分组保留约 6 条测试，不为每条路径重复建立测试。Web 的 `connected-api-access.test.ts` 补充 Access 登录 HTML 不能当成有效业务会话，以及正常响应和退出标记。
+由主代理设计安全边界，编写并运行 `cloud-web/tests/gate.test.ts`：用临时真实 RSA 密钥与模拟 JWKS 覆盖合法身份、伪造/过期/跨环境令牌、缺配置、旁路主机、跨站请求和公钥获取失败；不模拟 `jwtVerify` 的成功结果。通过数据驱动分组保留约 6 条测试，不为每条路径重复建立测试。Web 的 `connected-api-access.test.ts` 补充 Access 登录 HTML 不能当成有效业务会话，以及正常响应和退出标记。
 
 ```text
 npm --prefix cloud-web run check
@@ -98,7 +104,7 @@ npm --prefix web run build:all
 
 API 入口限流及 Android 重试修改的最小追加验证为 `cloud/tests/request-guard.test.ts`（4 条）和 `CloudApiRateLimitTest`（3 条）。检查超限与缺凭据时不访问数据库、伪造客户端标识不豁免限流，以及客户端等待期间不再次联网；部署前再运行本地 HTTP smoke，验证真实 binding 与原有登录/同步兼容。
 
-每次 Android 完整测试通过后，默认由 Luna（`gpt-5.6-luna`）继续构建本次测试覆盖变体的 Debug APK，并提供可点击的本地文件路径、对应环境和 SHA-256。完整三变体测试通过时构建 offline、connected（staging）和 production 三个 Debug APK；仅执行筛选测试时不触发该步骤。若模型不可用，明确说明，不把其他模型的执行称为 Luna。
+每次 Android 完整测试通过后，继续构建本次测试覆盖变体的 Debug APK，并提供可点击的本地文件路径、对应环境和 SHA-256。完整两变体测试通过时构建 offline 和 production 两个 Debug APK；仅执行筛选测试时不触发该步骤。
 
 构建使用通过测试的同一份代码；检查测试后的代码差异。只有文档修改时可以沿用测试结果，影响 Android 的代码或构建配置变化则补充相应验证。不为打包而重复已经通过的完整测试，也不把失败或中断的测试视为通过。
 
@@ -110,7 +116,7 @@ adb version
 
 本机缓存齐备且网络受限时可加 `--offline`。默认生成 `app/build/outputs/apk/<variant>/debug/app-<variant>-debug.apk`，核对包名与构建产物，避免把旧 APK 当成本次结果。已有同一代码的已验证 Debug 构建产物时可以复用，不必重复构建。
 
-这里交付本地 Debug 包，联网 production-debug 连接生产服务，但与正式 production Release 是不同安装包。公开上传、Release 签名发布及安装到设备分别按用户授权执行。完整 Android CI 的现有构建仍由 Gradle 执行；Luna 负责跟进结果并交付对应 APK。
+这里交付本地 Debug 包，联网 production-debug 连接生产服务，但与正式 production Release 是不同安装包。公开上传、Release 签名发布及安装到设备分别按用户授权执行。完整 Android CI 的现有构建仍由 Gradle 执行；主代理负责跟进结果并交付对应 APK。
 
 ## 实际删减
 

@@ -14,7 +14,7 @@
 
 默认运行一次 `testProductionDebugUnitTest`，覆盖共享及联网测试；保留 `lintOfflineRelease lintProductionDebug assembleOfflineDebug assembleProductionDebug` 和离线联网边界检查。修改 flavor、签名或构建配置时追加 `testOfflineDebugUnitTest`；手动 CI 的 `full_android_matrix` 现在表示这两个变体。
 
-Cloud push/PR 只验证；手动发布仍要求固定且通过验证的 SHA、`DEPLOY_PRODUCTION` 和 `cloud-production` 环境保护。主代理负责实现、验证、提交、推送、CI 跟进、部署和迁移。所有既有自动调用 Luna 的设定已取消；今后子智能体使用先讨论并取得新的明确授权。生产发布不再依赖已取消的 staging 运行。继续执行原生产手册的迁移前恢复记录、Access 检查和真实管理员页面加载验收。
+Cloud push/PR 只验证；手动发布仍要求固定且通过验证的 SHA、`DEPLOY_PRODUCTION` 和 `cloud-production` 环境保护。生产发布不再依赖已取消的 staging 运行。继续执行原生产手册的迁移前恢复记录、Access 检查和真实管理员页面加载验收。
 
 Wrangler 配置及 npm scripts 已移除 staging 部署入口。旧云资源退役单独记录实际远程结果；本地配置移除不代表云资源已经停用。旧 staging 主库及删除账本保留，不合并或删除；正式数据不变。
 

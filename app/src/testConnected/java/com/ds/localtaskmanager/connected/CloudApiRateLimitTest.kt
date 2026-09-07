@@ -1,15 +1,41 @@
 package com.ds.localtaskmanager.connected
 
 import java.io.ByteArrayInputStream
+import java.io.IOException
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CloudApiRateLimitTest {
+    @Test
+    fun requestBodyWriteFailureBecomesRetryableAndDisconnects() = runTest {
+        var disconnected = false
+        val api = CloudApi("https://example.invalid") { url ->
+            object : HttpURLConnection(url) {
+                override fun connect() = Unit
+                override fun usingProxy() = false
+                override fun disconnect() { disconnected = true }
+                override fun getOutputStream(): OutputStream = object : OutputStream() {
+                    override fun write(b: Int) = throw IOException("write failed")
+                }
+            }
+        }
+        try {
+            api.acknowledgePrivacy("token", 1)
+            throw AssertionError("Expected retryable network failure")
+        } catch (error: CloudApiException) {
+            assertTrue(error.retryable)
+            assertEquals(0, error.status)
+        }
+        assertTrue(disconnected)
+    }
+
     @Test
     fun repeatedLoginAttemptsWaitWithoutBlockingCodeVerification() {
         var now = 0L
@@ -67,6 +93,46 @@ class CloudApiRateLimitTest {
         }
         assertEquals(1, opened.get())
         assertTrue(disconnected)
+    }
+
+    @Test
+    fun responseCancellationIsPreservedAndNetworkFailureIsRetryableAndBothDisconnect() = runTest {
+        var cancellationDisconnected = false
+        val cancellationApi = CloudApi("https://example.invalid") { url ->
+            object : HttpURLConnection(url) {
+                override fun connect() = Unit
+                override fun usingProxy() = false
+                override fun disconnect() { cancellationDisconnected = true }
+                override fun getResponseCode(): Int = throw CancellationException("cancelled while reading response")
+            }
+        }
+
+        try {
+            cancellationApi.bootstrap("token")
+            throw AssertionError("Expected cancellation")
+        } catch (error: CancellationException) {
+            assertEquals("cancelled while reading response", error.message)
+        }
+        assertTrue(cancellationDisconnected)
+
+        var networkDisconnected = false
+        val networkApi = CloudApi("https://example.invalid") { url ->
+            object : HttpURLConnection(url) {
+                override fun connect() = Unit
+                override fun usingProxy() = false
+                override fun disconnect() { networkDisconnected = true }
+                override fun getResponseCode(): Int = throw IOException("socket reset")
+            }
+        }
+
+        try {
+            networkApi.bootstrap("token")
+            throw AssertionError("Expected network failure")
+        } catch (error: CloudApiException) {
+            assertEquals(0, error.status)
+            assertTrue(error.retryable)
+        }
+        assertTrue(networkDisconnected)
     }
 
     private fun denied(block: () -> Unit): CloudApiException {

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-alpha.12',
+    [string]$Version = '0.1.0-alpha.13',
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$ArchiveRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'DStationery-Executor-Releases')
@@ -20,7 +20,7 @@ try {
     $sourceApk = Join-Path $repo 'app\build\outputs\apk\production\release\app-production-release.apk'
     & (Join-Path $PSScriptRoot 'audit-apk.ps1') -Apk $sourceApk -AndroidHome $AndroidHome `
         -ExpectedPackage 'com.ds.localtaskmanager.connected.production' `
-        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 13 -Networked
+        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 14 -Networked
     if ($LASTEXITCODE -ne 0) { throw 'Production executor APK audit failed.' }
 
     $archive = Join-Path $ArchiveRoot $Version

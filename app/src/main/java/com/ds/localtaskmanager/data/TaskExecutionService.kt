@@ -56,6 +56,7 @@ class RoomTaskExecutionService(
     private val database: AppDatabase,
     private val clock: Clock,
     private val idGenerator: RecordIdGenerator,
+    private val onLocalMutationCommitted: (TaskInstanceKey) -> Unit = {},
 ) : TaskExecutionService {
     private val instanceDao: InstanceDao get() = database.instanceDao()
     private val executionDao: ExecutionDao get() = database.executionDao()
@@ -285,7 +286,8 @@ class RoomTaskExecutionService(
         ExecutionState.Mood(rating, text, null)
     }
 
-    override suspend fun complete(key: TaskInstanceKey) = database.withTransaction {
+    override suspend fun complete(key: TaskInstanceKey) {
+        database.withTransaction {
         val original = requireInstance(key)
         val before = resultService.capture(listOf(original.taskDate))
         val instance = reconcile(original)
@@ -351,9 +353,12 @@ class RoomTaskExecutionService(
             null,
             listOf(key.taskId),
         )
+        }
+        onLocalMutationCommitted(key)
     }
 
-    override suspend fun undoCompletion(key: TaskInstanceKey) = database.withTransaction {
+    override suspend fun undoCompletion(key: TaskInstanceKey) {
+        database.withTransaction {
         val instance = requireInstance(key)
         val before = resultService.capture(listOf(instance.taskDate))
         if (instance.status != TaskStatus.COMPLETED.name) {
@@ -399,6 +404,8 @@ class RoomTaskExecutionService(
             null,
             listOf(key.taskId),
         )
+        }
+        onLocalMutationCommitted(key)
     }
 
     override suspend fun reconcile(key: TaskInstanceKey): TaskInstanceEntity =

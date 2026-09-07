@@ -6,10 +6,10 @@
 
 ## 推送与部署流程
 
-用户已撤销此前所有自动调用 Luna 的设定。主代理负责验证、提交、推送、CI 跟进、部署和迁移；今后子智能体使用先讨论并取得新的明确授权。以下步骤由主代理执行。
+执行分工遵循 `AGENTS.md`。
 
 1. 读取当前工作区、远程和分支，确定本次授权范围及固定完整 commit SHA。已有提交不重复提交；只提交本次相关文件并添加 DCO sign-off，正常推送，不强制覆盖远程。
-2. 按[最小测试方案](minimal-testing.md)做本地针对性验证。对同一提交等待 `Cloud Connected`（含 `deploy-staging`）、`Android CI` 和 `Dom Web Pages` 的适用运行全部成功；只有推送成功不能报告部署完成。先查已有运行，避免重复触发。每次 Android 完整测试通过后，由主代理按该方案构建并交付已验证代码的 Debug APK。
+2. 按[最小测试方案](minimal-testing.md)做本地针对性验证。对同一提交等待 `Cloud Connected`、`Android CI` 和 `Dom Web Pages` 的适用运行全部成功；只有推送成功不能报告部署完成。先查已有运行，避免重复触发。每次 Android 完整测试通过后，按该方案构建并交付已验证代码的 Debug APK。
 3. 用户已明确授权本次 production 发布时，沿用该授权完成后续步骤，不重复询问。仅要求提交或推送时，说明 production 尚未更新，取得本次生产发布授权后继续。模型偏好本身不等于对所有未来生产发布的预先授权。
 4. 按本手册记录生产迁移前的恢复信息，在 `main` 仍指向已验证 SHA 时，用 `gh workflow run cloud-ci.yml --ref main -f target=production -f production_confirmation=DEPLOY_PRODUCTION -f release_commit=<完整SHA>` 触发。分支已经变化时先核对新版本，不替换为未经 staging 验证的提交。
 5. 等待 `verify` 通过；如 `cloud-production` 等待批准，查询该运行的 `pending_deployments`，在用户已授权且当前账号具有审批权限时，用 `gh api` 提交批准。保留环境保护规则；凭据不进入命令正文、日志或 Git。浏览器仅在登录授权或用户要求展示页面时使用。

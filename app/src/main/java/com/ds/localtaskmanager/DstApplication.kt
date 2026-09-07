@@ -12,6 +12,7 @@ import com.ds.localtaskmanager.data.RoomTaskNoteService
 import com.ds.localtaskmanager.data.TaskExecutionService
 import com.ds.localtaskmanager.data.TaskNoteService
 import com.ds.localtaskmanager.data.TaskRepository
+import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import com.ds.localtaskmanager.data.recurrence.InstanceGenerationService
 import com.ds.localtaskmanager.data.recurrence.RoomInstanceGenerationService
 import com.ds.localtaskmanager.data.result.ResultRepository
@@ -26,12 +27,17 @@ import com.ds.localtaskmanager.reminder.AndroidReminderNotifier
 import com.ds.localtaskmanager.reminder.AndroidReminderScheduler
 import com.ds.localtaskmanager.reminder.ReminderCoordinator
 import java.time.Clock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import com.ds.localtaskmanager.sharing.ShareImageService
 import com.ds.localtaskmanager.settings.AppSettingsRepository
 import com.ds.localtaskmanager.diagnostics.DiagnosticEventStore
 import com.ds.localtaskmanager.diagnostics.DiagnosticService
 
 class DstApplication : Application() {
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val database: AppDatabase by lazy { AppDatabase.create(this) }
     private val clock: Clock = Clock.systemDefaultZone()
     private val idGenerator = SecureRecordIdGenerator()
@@ -42,7 +48,11 @@ class DstApplication : Application() {
         RoomImportService(database, Dst1Parser(), clock, idGenerator)
     }
     val taskExecutionService: TaskExecutionService by lazy {
-        RoomTaskExecutionService(database, clock, idGenerator)
+        RoomTaskExecutionService(database, clock, idGenerator) { _: TaskInstanceKey ->
+            applicationScope.launch {
+                runCatching { notifyConnectivityLocalMutation(this@DstApplication) }
+            }
+        }
     }
     val taskNoteService: TaskNoteService by lazy {
         RoomTaskNoteService(database, clock)
@@ -88,6 +98,7 @@ class DstApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (System.getProperty("dstationery.unitTest") != "true") startConnectivitySync(this)
         reminderNotifier.createChannel()
         backupManager.cleanupTemporaryFiles()
         shareImageService.cleanupTemporaryFiles()
