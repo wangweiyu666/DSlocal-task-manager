@@ -1,13 +1,15 @@
 # 阶段四生产运行手册
 
+> 2026-09-07 流程变更：按[单一云端环境](production-only.md)执行。staging 部署和恢复演练退出当前工作流；生产发布基于固定 SHA 的 CI 验证和既有人工环境保护。正式管理域名目标改为 `prod.rochelimit.me`，API 保持 `api.rochelimit.me`。下方旧域名、staging 门禁及历史发布记录不代表当前切换状态。
+
 阶段四采用两道门。第一道门只完成仓库、staging 部署及恢复演练；第二道门必须在证据汇报后由管理者明确确认，才允许修改 production、发布执行者 APK或开始真实试运行。没有连续七天观察证据时，不得声明阶段四完成。
 
-## Luna 推送与部署流程
+## 推送与部署流程
 
-本项目的推送与部署工作默认交给 Luna（`gpt-5.6-luna`）执行。负责范围包括 Git 提交和推送、等待 CI、确认 staging、在已获 production 发布授权后触发和审批生产工作流，以及核验最终部署结果。主代理负责转达结果；遇到凭据失效、权限拒绝或需要改变发布范围的问题时再报告用户。
+用户已撤销此前所有自动调用 Luna 的设定。主代理负责验证、提交、推送、CI 跟进、部署和迁移；今后子智能体使用先讨论并取得新的明确授权。以下步骤由主代理执行。
 
 1. 读取当前工作区、远程和分支，确定本次授权范围及固定完整 commit SHA。已有提交不重复提交；只提交本次相关文件并添加 DCO sign-off，正常推送，不强制覆盖远程。
-2. 按[最小测试方案](minimal-testing.md)做本地针对性验证。对同一提交等待 `Cloud Connected`（含 `deploy-staging`）、`Android CI` 和 `Dom Web Pages` 的适用运行全部成功；只有推送成功不能报告部署完成。先查已有运行，避免重复触发。每次 Android 完整测试通过后，由 Luna 按该方案构建并交付已验证代码的 Debug APK。
+2. 按[最小测试方案](minimal-testing.md)做本地针对性验证。对同一提交等待 `Cloud Connected`（含 `deploy-staging`）、`Android CI` 和 `Dom Web Pages` 的适用运行全部成功；只有推送成功不能报告部署完成。先查已有运行，避免重复触发。每次 Android 完整测试通过后，由主代理按该方案构建并交付已验证代码的 Debug APK。
 3. 用户已明确授权本次 production 发布时，沿用该授权完成后续步骤，不重复询问。仅要求提交或推送时，说明 production 尚未更新，取得本次生产发布授权后继续。模型偏好本身不等于对所有未来生产发布的预先授权。
 4. 按本手册记录生产迁移前的恢复信息，在 `main` 仍指向已验证 SHA 时，用 `gh workflow run cloud-ci.yml --ref main -f target=production -f production_confirmation=DEPLOY_PRODUCTION -f release_commit=<完整SHA>` 触发。分支已经变化时先核对新版本，不替换为未经 staging 验证的提交。
 5. 等待 `verify` 通过；如 `cloud-production` 等待批准，查询该运行的 `pending_deployments`，在用户已授权且当前账号具有审批权限时，用 `gh api` 提交批准。保留环境保护规则；凭据不进入命令正文、日志或 Git。浏览器仅在登录授权或用户要求展示页面时使用。
@@ -66,7 +68,7 @@ Access 使用两个独立的 self-hosted 应用，分别覆盖两个完整主机
 1. 盘点 Zero Trust 组织、套餐、Access 应用、精确管理员邮箱及当前 Worker 自定义域映射。权限不足时由账号所有者登录控制台；不为读取配置输出令牌或完整邮箱。
 2. 保留旧生产入口和当前 Worker 版本作为回退信息。先为 `test.rochelimit.me` 与 `staging.rochelimit.me` 建立 Access 整站策略，确认没有更具体路径的放行策略；配置两个 Web Worker 的独立 Access secrets。先保护旧 staging 主机名，再转移它的用途。
 3. 提醒管理者先同步旧 staging 页面尚未上传的修改并关闭旧标签页。新域名不会自动搬迁旧源的 IndexedDB/未同步命令；数据库内容仍在 staging D1，不复制进 production。
-4. Luna 提交并推送固定 SHA，等待自动 staging 部署，将 staging Web 移到 `test.rochelimit.me` 并更新对应 API origin。检查测试入口 Access 跳转、管理员登录和 staging 服务绑定，确认旧 staging 域已从 staging Worker 解除。
+4. 主代理提交并推送固定 SHA，等待自动 staging 部署，将 staging Web 移到 `test.rochelimit.me` 并更新对应 API origin。检查测试入口 Access 跳转、管理员登录和 staging 服务绑定，确认旧 staging 域已从 staging Worker 解除。
 5. 记录生产两个 D1 的恢复 bookmark 与两个 Worker 版本；更新生产 API 的 `ALLOWED_ORIGIN`，然后按本次已获授权的流程发布相同 SHA。生产 Web 绑定 `staging.rochelimit.me`；核对旧生产域不再路由至该 Worker，不为旧域新增公开绕过入口。
 6. 验证两个站点根页面、静态资源和 `/v1/bootstrap` 均被 Access 拦截；验证管理员登录后可正常使用各自数据、非管理员不能进入，以及两个直接 API 仍返回应用认证响应、Android 地址不变。CI 的 `verify-access.mjs` 只验证匿名拦截，不能代替管理员登录成功验证。
 7. 回退时同时恢复 Worker 版本、域名映射和 API origin，维持 Access 保护。不能只回滚代码而留下错配的域名；新生产主机名不允许回指 staging 并继续用于生产操作。

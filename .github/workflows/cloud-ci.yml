@@ -14,17 +14,13 @@ on:
         type: choice
         required: true
         default: verify
-        options: [verify, staging, staging-recovery, production]
-      recovery_confirmation:
-        description: Type RESTORE_STAGING for the destructive staging recovery drill
-        type: string
-        required: false
+        options: [verify, production]
       production_confirmation:
-        description: Type DEPLOY_PRODUCTION only after staging evidence is approved
+        description: Type DEPLOY_PRODUCTION only after verification evidence is approved
         type: string
         required: false
       release_commit:
-        description: Full commit SHA approved by staging evidence for production
+        description: Full commit SHA approved by verification evidence for production
         type: string
         required: false
 
@@ -49,6 +45,9 @@ jobs:
             cloud-web/package-lock.json
             web/package-lock.json
       - run: npm ci
+        working-directory: cloud
+      - name: Verify production environment configuration
+        run: node scripts/guard-environment.mjs production
         working-directory: cloud
       - run: npm run check
         working-directory: cloud
@@ -91,169 +90,6 @@ jobs:
         run: npm run test:connected-smoke
         working-directory: web
 
-  deploy-staging:
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.target == 'staging')
-    needs: verify
-    runs-on: ubuntu-24.04
-    environment: cloud-staging
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: cloud/package-lock.json }
-      - run: npm ci
-        working-directory: cloud
-      - name: Guard environment isolation
-        run: node scripts/guard-environment.mjs staging
-        working-directory: cloud
-      - name: Verify staging Access bindings
-        working-directory: cloud-web
-        run: |
-          npm ci
-          secret_names="$(npx wrangler secret list --env staging | jq -r '.[].name')"
-          for required in ACCESS_TEAM_DOMAIN ACCESS_AUD MANAGEMENT_ADMIN_EMAIL; do
-            grep -qx "$required" <<< "$secret_names"
-          done
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Verify staging API Access bindings
-        working-directory: cloud
-        run: |
-          secret_names="$(npx wrangler secret list --env staging | jq -r '.[].name')"
-          for required in ACCESS_TEAM_DOMAIN ACCESS_AUD; do
-            grep -qx "$required" <<< "$secret_names"
-          done
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Apply staging migrations by database name
-        run: npx wrangler d1 migrations apply dstationery-staging --remote --env staging
-        working-directory: cloud
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Apply staging deletion-ledger migrations by database name
-        run: npx wrangler d1 migrations apply dstationery-deletion-ledger-staging --remote --env staging
-        working-directory: cloud
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - run: npx wrangler deploy --env staging
-        working-directory: cloud
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - run: npm ci
-        working-directory: web
-      - run: npm run build:connected
-        working-directory: web
-      - run: npx wrangler deploy --env staging
-        working-directory: cloud-web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Verify staging Access interception
-        run: node cloud-web/scripts/verify-access.mjs test.rochelimit.me
-
-  staging-recovery:
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'staging-recovery'
-    needs: verify
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    environment: cloud-staging
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: cloud/package-lock.json }
-      - run: npm ci
-        working-directory: cloud
-      - name: Require explicit destructive staging confirmation
-        if: inputs.recovery_confirmation != 'RESTORE_STAGING'
-        run: |
-          echo 'recovery_confirmation must equal RESTORE_STAGING' >&2
-          exit 1
-      - name: Guard, migrate and deploy staging maintenance
-        working-directory: cloud
-        run: |
-          mkdir -p stage4-evidence
-          node scripts/guard-environment.mjs staging
-          npx wrangler d1 migrations apply dstationery-staging --remote --env staging
-          npx wrangler d1 migrations apply dstationery-deletion-ledger-staging --remote --env staging
-          npx wrangler deploy --env staging
-      - name: Create a synthetic recovery canary and bookmark
-        id: canary
-        working-directory: cloud
-        run: |
-          account_id="stage4-canary-account-${GITHUB_RUN_ID}"
-          space_id="stage4-canary-space-${GITHUB_RUN_ID}"
-          member_id="stage4-canary-member-${GITHUB_RUN_ID}"
-          ledger_id="stage4-canary-ledger-${GITHUB_RUN_ID}"
-          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
-          echo "space_id=$space_id" >> "$GITHUB_OUTPUT"
-          npx wrangler d1 execute dstationery-staging --remote --env staging --json --command \
-            "INSERT INTO accounts(id,email_normalized,email_delivery,status,created_at,verified_at,privacy_notice_version,privacy_acknowledged_at) VALUES('$account_id','stage4-canary-${GITHUB_RUN_ID}@invalid.local','stage4-canary-${GITHUB_RUN_ID}@invalid.local','ACTIVE',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),1,strftime('%Y-%m-%dT%H:%M:%fZ','now')); INSERT INTO spaces(id,name,status,created_at,current_sequence,time_zone,time_zone_version) VALUES('$space_id','Stage 4 recovery canary','ACTIVE',strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,'UTC',1); INSERT INTO memberships(id,space_id,account_id,role,status,joined_at) VALUES('$member_id','$space_id','$account_id','ADMIN','ACTIVE',strftime('%Y-%m-%dT%H:%M:%fZ','now'));" \
-            > stage4-evidence/canary-created.json
-          npx wrangler d1 time-travel info dstationery-staging --env staging --json > "$RUNNER_TEMP/staging-bookmark.json"
-          bookmark="$(jq -r '.. | .bookmark? // empty' "$RUNNER_TEMP/staging-bookmark.json" | head -n 1)"
-          test -n "$bookmark"
-          echo "::add-mask::$bookmark"
-          echo "bookmark=$bookmark" >> "$GITHUB_OUTPUT"
-          printf '%s' "$bookmark" | sha256sum | awk '{print $1}' > stage4-evidence/bookmark.sha256
-          npx wrangler d1 execute dstationery-deletion-ledger-staging --remote --env staging --json --command \
-            "INSERT INTO deletion_ledger(id,scope,target_id,created_at,expires_at) VALUES('$ledger_id','SPACE','$space_id',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now','+35 days'));" \
-            > stage4-evidence/ledger-recorded.json
-          npx wrangler d1 execute dstationery-staging --remote --env staging --json --command \
-            "DELETE FROM memberships WHERE space_id='$space_id'; DELETE FROM spaces WHERE id='$space_id';" \
-            > stage4-evidence/canary-deleted.json
-      - name: Restore the staging main database
-        working-directory: cloud
-        run: |
-          npx wrangler d1 time-travel restore dstationery-staging --env staging --json \
-            --bookmark '${{ steps.canary.outputs.bookmark }}' > "$RUNNER_TEMP/staging-restore.json"
-          jq -r '.. | .bookmark? // empty, .previous_bookmark? // empty' "$RUNNER_TEMP/staging-restore.json" | \
-            while IFS= read -r value; do test -z "$value" || echo "::add-mask::$value"; done
-          jq -n --arg bookmarkSha256 "$(cat stage4-evidence/bookmark.sha256)" \
-            '{status:"restored",bookmarkSha256:$bookmarkSha256}' > stage4-evidence/restore-summary.json
-          npx wrangler d1 execute dstationery-staging --remote --env staging --json --command \
-            "SELECT COUNT(*) AS count FROM spaces WHERE id='${{ steps.canary.outputs.space_id }}';" \
-            > stage4-evidence/after-restore.json
-          test "$(jq -r '.[0].results[0].count' stage4-evidence/after-restore.json)" = 1
-      - name: Wait for deletion-ledger replay by the scheduled Worker
-        working-directory: cloud
-        run: |
-          replayed=0
-          for attempt in $(seq 1 80); do
-            npx wrangler d1 execute dstationery-staging --remote --env staging --json --command \
-              "SELECT COUNT(*) AS count FROM spaces WHERE id='${{ steps.canary.outputs.space_id }}';" \
-              > stage4-evidence/replay-status.json
-            if test "$(jq -r '.[0].results[0].count' stage4-evidence/replay-status.json)" = 0; then
-              replayed=1
-              break
-            fi
-            sleep 15
-          done
-          test "$replayed" = 1
-      - name: Clean synthetic canary residue
-        if: always()
-        working-directory: cloud
-        run: |
-          npx wrangler d1 execute dstationery-staging --remote --env staging --json --command \
-            "DELETE FROM memberships WHERE space_id='${{ steps.canary.outputs.space_id }}'; DELETE FROM spaces WHERE id='${{ steps.canary.outputs.space_id }}'; DELETE FROM accounts WHERE id='${{ steps.canary.outputs.account_id }}';" \
-            > stage4-evidence/cleanup.json || true
-      - name: Upload recovery evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stage4-staging-recovery-${{ github.sha }}
-          path: cloud/stage4-evidence
-          if-no-files-found: error
-          retention-days: 30
-
   deploy-production:
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'production'
     needs: verify
@@ -268,7 +104,7 @@ jobs:
       - name: Require approved commit and explicit production confirmation
         if: inputs.production_confirmation != 'DEPLOY_PRODUCTION' || inputs.release_commit != github.sha
         run: |
-          echo 'Production requires DEPLOY_PRODUCTION and the full approved staging commit SHA.' >&2
+          echo 'Production requires DEPLOY_PRODUCTION and the full approved verified commit SHA.' >&2
           exit 1
       - run: node scripts/guard-environment.mjs production
         working-directory: cloud
@@ -320,4 +156,4 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Verify production Access interception
-        run: node cloud-web/scripts/verify-access.mjs staging.rochelimit.me
+        run: node cloud-web/scripts/verify-access.mjs prod.rochelimit.me

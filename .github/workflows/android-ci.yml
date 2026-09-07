@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       full_android_matrix:
-        description: Run unit tests on all three variants (for flavor or build configuration changes)
+        description: Run unit tests on both variants (for flavor or build configuration changes)
         type: boolean
         default: false
 
@@ -60,13 +60,12 @@ jobs:
         id: gradle_verify
         continue-on-error: true
         run: |
-          unit_tests=(testConnectedDebugUnitTest)
+          unit_tests=(testProductionDebugUnitTest)
           if [[ "${{ inputs.full_android_matrix }}" == "true" ]]; then
-            unit_tests=(testOfflineDebugUnitTest testConnectedDebugUnitTest testProductionDebugUnitTest)
+            unit_tests=(testOfflineDebugUnitTest testProductionDebugUnitTest)
           fi
           ./gradlew "${unit_tests[@]}" \
             lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest \
-            lintConnectedDebug assembleConnectedDebug \
             lintProductionDebug assembleProductionDebug \
             --no-daemon
 

@@ -1,5 +1,7 @@
 # Android 模拟器测试环境
 
+> 2026-09-07 起只保留 offline、production 两个变体，联网设备测试使用 `connectedProductionDebugAndroidTest`；详见[单一云端环境](production-only.md)。本文历史版本的测试结果保持原样。
+
 项目使用三档 Google APIs x86_64 AVD：
 
 | API | AVD | 用途 |

@@ -1,5 +1,5 @@
 const host = process.argv[2];
-if (!["test.rochelimit.me", "staging.rochelimit.me"].includes(host)) throw new Error("expected an approved management hostname");
+if (host !== "prod.rochelimit.me") throw new Error("expected the production management hostname");
 
 // Do not follow redirects: a final 200 may be a login page or accidentally public application.
 for (const path of ["/", "/manifest.webmanifest", "/v1/bootstrap"]) {

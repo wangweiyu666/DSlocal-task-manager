@@ -6,90 +6,119 @@
   "workers_dev": true,
   "preview_urls": false,
   "ratelimits": [
-    { "name": "API_RATE_LIMITER", "namespace_id": "71001", "simple": { "limit": 1200, "period": 60 } },
-    { "name": "AUTH_RATE_LIMITER", "namespace_id": "71002", "simple": { "limit": 120, "period": 60 } }
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "71001",
+      "simple": {
+        "limit": 1200,
+        "period": 60
+      }
+    },
+    {
+      "name": "AUTH_RATE_LIMITER",
+      "namespace_id": "71002",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
   ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
   },
-  "triggers": { "crons": ["17 * * * *"] },
+  "triggers": {
+    "crons": [
+      "17 * * * *"
+    ]
+  },
   "vars": {
     "ENVIRONMENT": "local",
     "ALLOWED_ORIGIN": "http://localhost:5173",
     "RESEND_FROM": "DStationery Local <onboarding@resend.dev>"
   },
-  "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY"] },
-  "d1_databases": [{
-    "binding": "DB",
-    "database_name": "dstationery-local",
-    "database_id": "00000000-0000-0000-0000-000000000000",
-    "migrations_dir": "migrations"
-  }, {
-    "binding": "DELETION_LEDGER",
-    "database_name": "dstationery-deletion-ledger-local",
-    "database_id": "11111111-1111-1111-1111-111111111111",
-    "migrations_dir": "deletion-ledger-migrations"
-  }],
-  "env": {
-    "staging": {
-      "name": "dstationery-api-staging",
-      "ratelimits": [
-        { "name": "API_RATE_LIMITER", "namespace_id": "71011", "simple": { "limit": 120, "period": 60 } },
-        { "name": "AUTH_RATE_LIMITER", "namespace_id": "71012", "simple": { "limit": 20, "period": 60 } }
-      ],
-      "workers_dev": false,
-      "triggers": { "crons": ["*/5 * * * *"] },
-      "routes": [{
-        "pattern": "api-staging.rochelimit.me",
-        "custom_domain": true
-      }],
-      "vars": {
-        "ENVIRONMENT": "staging",
-        "ALLOWED_ORIGIN": "https://test.rochelimit.me",
-        "RESEND_FROM": "DStationery Staging <no-reply@staging.notify.rochelimit.me>"
-      },
-      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"] },
-      "d1_databases": [{
-        "binding": "DB",
-        "database_name": "dstationery-staging",
-        "database_id": "a06ff962-17e8-4873-b48a-a66040920b60",
-        "migrations_dir": "migrations"
-      }, {
-        "binding": "DELETION_LEDGER",
-        "database_name": "dstationery-deletion-ledger-staging",
-        "database_id": "f7fd98cf-4800-47de-8341-e9a72a9d2c68",
-        "migrations_dir": "deletion-ledger-migrations"
-      }]
+  "secrets": {
+    "required": [
+      "AUTH_PEPPER",
+      "ADMIN_EMAIL",
+      "RESEND_API_KEY"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dstationery-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
     },
+    {
+      "binding": "DELETION_LEDGER",
+      "database_name": "dstationery-deletion-ledger-local",
+      "database_id": "11111111-1111-1111-1111-111111111111",
+      "migrations_dir": "deletion-ledger-migrations"
+    }
+  ],
+  "env": {
     "production": {
       "name": "dstationery-api-production",
       "ratelimits": [
-        { "name": "API_RATE_LIMITER", "namespace_id": "71021", "simple": { "limit": 120, "period": 60 } },
-        { "name": "AUTH_RATE_LIMITER", "namespace_id": "71022", "simple": { "limit": 20, "period": 60 } }
+        {
+          "name": "API_RATE_LIMITER",
+          "namespace_id": "71021",
+          "simple": {
+            "limit": 120,
+            "period": 60
+          }
+        },
+        {
+          "name": "AUTH_RATE_LIMITER",
+          "namespace_id": "71022",
+          "simple": {
+            "limit": 20,
+            "period": 60
+          }
+        }
       ],
       "workers_dev": false,
-      "triggers": { "crons": ["17 * * * *"] },
-      "routes": [{
-        "pattern": "api.rochelimit.me",
-        "custom_domain": true
-      }],
+      "triggers": {
+        "crons": [
+          "17 * * * *"
+        ]
+      },
+      "routes": [
+        {
+          "pattern": "api.rochelimit.me",
+          "custom_domain": true
+        }
+      ],
       "vars": {
         "ENVIRONMENT": "production",
         "RESEND_FROM": "DStationery <no-reply@notify.rochelimit.me>"
       },
-      "secrets": { "required": ["AUTH_PEPPER", "ADMIN_EMAIL", "RESEND_API_KEY", "ALLOWED_ORIGIN", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"] },
-      "d1_databases": [{
-        "binding": "DB",
-        "database_name": "dstationery-production",
-        "database_id": "e3c77149-a800-4843-9209-5226264109bd",
-        "migrations_dir": "migrations"
-      }, {
-        "binding": "DELETION_LEDGER",
-        "database_name": "dstationery-deletion-ledger-production",
-        "database_id": "ecacc9e4-0c7c-484a-9045-d846b0950c7f",
-        "migrations_dir": "deletion-ledger-migrations"
-      }]
+      "secrets": {
+        "required": [
+          "AUTH_PEPPER",
+          "ADMIN_EMAIL",
+          "RESEND_API_KEY",
+          "ALLOWED_ORIGIN",
+          "ACCESS_TEAM_DOMAIN",
+          "ACCESS_AUD"
+        ]
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "dstationery-production",
+          "database_id": "e3c77149-a800-4843-9209-5226264109bd",
+          "migrations_dir": "migrations"
+        },
+        {
+          "binding": "DELETION_LEDGER",
+          "database_name": "dstationery-deletion-ledger-production",
+          "database_id": "ecacc9e4-0c7c-484a-9045-d846b0950c7f",
+          "migrations_dir": "deletion-ledger-migrations"
+        }
+      ]
     }
   }
 }

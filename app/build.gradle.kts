@@ -27,13 +27,11 @@ android {
     }
 
     val offlineSigningPropertiesFile = File(gradle.gradleUserHomeDir, "local-task-manager-signing.properties")
-    val connectedSigningPropertiesFile = File(gradle.gradleUserHomeDir, "local-task-manager-connected-signing.properties")
     val productionSigningPropertiesFile = File(gradle.gradleUserHomeDir, "local-task-manager-connected-production-signing.properties")
     fun loadSigning(file: File) = Properties().apply { if (file.isFile) file.inputStream().use(::load) }
     fun Properties.isReady() = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
         .all { !getProperty(it).isNullOrBlank() }
     val offlineSigning = loadSigning(offlineSigningPropertiesFile)
-    val connectedSigning = loadSigning(connectedSigningPropertiesFile)
     val productionSigning = loadSigning(productionSigningPropertiesFile)
 
     signingConfigs {
@@ -43,18 +41,6 @@ android {
                 storePassword = offlineSigning.getProperty("storePassword")
                 keyAlias = offlineSigning.getProperty("keyAlias")
                 keyPassword = offlineSigning.getProperty("keyPassword")
-                enableV1Signing = false
-                enableV2Signing = true
-                enableV3Signing = true
-                enableV4Signing = true
-            }
-        }
-        if (connectedSigning.isReady()) {
-            create("connectedRelease") {
-                storeFile = file(requireNotNull(connectedSigning.getProperty("storeFile")))
-                storePassword = connectedSigning.getProperty("storePassword")
-                keyAlias = connectedSigning.getProperty("keyAlias")
-                keyPassword = connectedSigning.getProperty("keyPassword")
                 enableV1Signing = false
                 enableV2Signing = true
                 enableV3Signing = true
@@ -84,18 +70,6 @@ android {
             buildConfigField("String", "CLOUD_ENVIRONMENT", "\"none\"")
             buildConfigField("String", "CLOUD_API_BASE_URL", "\"\"")
             if (offlineSigning.isReady()) signingConfig = signingConfigs.getByName("offlineRelease")
-        }
-        create("connected") {
-            dimension = "connectivity"
-            applicationIdSuffix = ".connected"
-            versionCode = 11
-            versionName = "0.1.0-alpha.10"
-            versionNameSuffix = "-connected"
-            manifestPlaceholders["appLabel"] = "@string/app_name"
-            buildConfigField("boolean", "CONNECTED_BUILD", "true")
-            buildConfigField("String", "CLOUD_ENVIRONMENT", "\"staging\"")
-            buildConfigField("String", "CLOUD_API_BASE_URL", "\"https://api-staging.rochelimit.me\"")
-            if (connectedSigning.isReady()) signingConfig = signingConfigs.getByName("connectedRelease")
         }
         create("production") {
             dimension = "connectivity"
@@ -191,10 +165,8 @@ fun registerSigningVerification(taskName: String, fileName: String) = tasks.regi
 }
 
 val verifyOfflineReleaseSigning = registerSigningVerification("verifyOfflineReleaseSigning", "local-task-manager-signing.properties")
-val verifyConnectedReleaseSigning = registerSigningVerification("verifyConnectedReleaseSigning", "local-task-manager-connected-signing.properties")
 val verifyProductionReleaseSigning = registerSigningVerification("verifyProductionReleaseSigning", "local-task-manager-connected-production-signing.properties")
 tasks.matching { it.name in setOf("assembleOfflineRelease", "bundleOfflineRelease") }.configureEach { dependsOn(verifyOfflineReleaseSigning) }
-tasks.matching { it.name in setOf("assembleConnectedRelease", "bundleConnectedRelease") }.configureEach { dependsOn(verifyConnectedReleaseSigning) }
 tasks.matching { it.name in setOf("assembleProductionRelease", "bundleProductionRelease") }.configureEach { dependsOn(verifyProductionReleaseSigning) }
 
 kapt {
@@ -218,8 +190,6 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
-    "connectedImplementation"(libs.sqlcipher.android)
-    "connectedImplementation"(libs.androidx.sqlite)
     "productionImplementation"(libs.sqlcipher.android)
     "productionImplementation"(libs.androidx.sqlite)
 

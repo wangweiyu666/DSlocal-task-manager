@@ -1,5 +1,7 @@
 # 联网版开发、同步与运维指南
 
+> 2026-09-07：当前部署与 Android 构建以[单一云端环境](production-only.md)为准。staging 退出使用，正式管理入口目标为 `prod.rochelimit.me`，API 保持 `api.rochelimit.me`；下方旧域名、三变体和双环境部署说明为迁移前记录。
+
 本文合并联网版路线图、阶段验收、同步协议、状态矩阵和环境恢复规则。完整任务业务语义以[需求总稿](preview.md)为准，机器契约以 `cloud/openapi.yaml`、`cloud/schemas/` 与 `cloud-protocol-test-vectors/` 为准。
 
 > 当前状态：阶段 1、阶段 2 和阶段 3 已完成。阶段 4 的生产执行者变体、独立签名与发布门禁正在构建；staging/production 删除账本、恢复演练、生产部署、三账号真实试运行和连续七天观察仍必须按[阶段四生产运行手册](stage4-production-runbook.md)留存证据后才能声明完成。

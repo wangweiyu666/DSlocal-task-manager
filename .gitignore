@@ -41,3 +41,6 @@ release-output/
 *.apk
 *.aab
 release-evidence.json
+
+# Local Cloudflare migration credential (never commit)
+/09.07cloudflareToken*

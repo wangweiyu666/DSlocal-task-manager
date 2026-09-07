@@ -133,7 +133,7 @@ switch ($Action) {
         $env:ANDROID_SDK_ROOT = $sdkRoot
         $env:JAVA_HOME = $javaRoot
         $env:ANDROID_SERIAL = $serial
-        & $gradle testOfflineDebugUnitTest testConnectedDebugUnitTest connectedOfflineDebugAndroidTest connectedConnectedDebugAndroidTest --no-daemon
+        & $gradle testOfflineDebugUnitTest testProductionDebugUnitTest connectedOfflineDebugAndroidTest connectedProductionDebugAndroidTest --no-daemon
         if ($LASTEXITCODE -ne 0) { throw "Gradle tests failed with exit code $LASTEXITCODE" }
     }
     "stop" {
