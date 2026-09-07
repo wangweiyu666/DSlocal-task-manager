@@ -4,7 +4,7 @@
 
 ## 入口和兼容
 
-- 正式管理网页目标：`https://prod.rochelimit.me`。原正式入口 `staging.rochelimit.me` 在新域名与 Access 验收成功后退役；配置变更不代表远程切换已经完成。
+- 正式管理网页：`https://prod.rochelimit.me`。原正式入口 `staging.rochelimit.me` 已解除 Worker 绑定，新入口已通过真实管理员登录和刷新验收。
 - 正式 API：`https://api.rochelimit.me`。
 - Android 只构建 `offline` 和 `production`。保留现有 production 包名、签名、版本和本机存储身份；联网共享源码仍位于 `src/connected`，测试仍位于 `src/testConnected`。
 - 旧 staging 包停止构建，不把其 API 地址改为 production；旧测试空间、会话和待上传数据不能直接提交到正式环境。
@@ -31,6 +31,23 @@ Wrangler 配置及 npm scripts 已移除 staging 部署入口。旧云资源退�
 发布同一验证版本的 API/Web，核对网页路由、`MANAGEMENT_HOST`、API service binding 以及 Access 同源身份交换。新入口匿名 HTML、静态资源和代理 API 必须经过 Access；管理员登录后可进入任务库并刷新。旧域名停止服务或在受保护条件下引导到新入口，不能变成旁路。迁移前提醒使用者同步旧网页未上传的变更：IndexedDB 和会话属于旧源，不会随域名自动迁移。
 
 ## 2026-09-07 执行记录
+
+### 最新发布状态（覆盖下方切换前记录）
+
+- 固定提交：`ca776ed1ac2d69510069ca19638f41d17f6a75f4`，已推送 main；[Cloud CI](https://github.com/wangweiyu666/DSlocal-task-manager/actions/runs/34133433080) 和 [Android CI](https://github.com/wangweiyu666/DSlocal-task-manager/actions/runs/34133433030) 均成功。
+- [正式发布](https://github.com/wangweiyu666/DSlocal-task-manager/actions/runs/34134020166) 的 verify、deploy-production 均成功。生产管理域名现为 `prod.rochelimit.me`；API 保持 `api.rochelimit.me`。API 的允许来源及 API/Web 的 Access audience 已同步切换，其他 secrets 保留。
+- 迁移前已在本机忽略目录保存两个生产 Worker 的部署版本、两个生产 D1 的 Time Travel bookmark、旧域名映射及 Access 恢复配置。未执行数据库恢复或删除。
+- 真实管理员验收通过后已解除 `test.rochelimit.me`、`api-staging.rochelimit.me`；旧 `staging.rochelimit.me` 已随部署解除。API 读回确认 Worker 自定义域仅剩 `prod.rochelimit.me` 和 `api.rochelimit.me`，均绑定对应 production Worker。
+- 两个 staging Worker 的 cron 均为空，workers.dev 与 preview URLs 均关闭。读回确认 `dstationery-staging` 和 `dstationery-deletion-ledger-staging` 两个 D1 仍存在；Worker 与旧 Access 配置保留供回退。未合并、恢复或删除业务数据库。
+- 匿名门禁检查通过；用户完成 Access 登录后，主代理在真实管理员会话中确认任务库显示 5 项任务、状态为“已联网”。刷新后安全会话恢复成功，同样 5 项任务正常显示，两次控制台 error 检查均为空。验收仅查看和刷新，未修改业务数据。
+- 本次无 GitHub APK Release。下面独立交付来自上述固定提交，不包含工作树中尚未提交的 WorkManager 功能。
+
+| Debug APK | 来源及环境 | SHA-256 |
+| --- | --- | --- |
+| `build/delivery-ca776ed/offline/app-offline-debug.apk` | 同提交 Android CI artifact；离线 | `6A633EF8878B77465E5238FA175716C7FBD334251A75FEFB9FA1EACC310E6699` |
+| `build/delivery-ca776ed/production/app-production-debug.apk` | `git archive` 独立源码，JDK 17.0.19，`assembleProductionDebug --offline --no-daemon` 成功；正式 API | `C8FC283CDD1673C33B87CD616188D13961F5DD79ED14E06E347D8CE592A6C937` |
+
+### 切换前记录
 
 - 本地完成：移除 staging flavor、Wrangler 环境和 CI 部署任务，正式管理目标改为 `prod.rochelimit.me`。域名发布与真实登录验收结果单独记录。
 - Luna 验证：Cloud 36/36、Cloud Web 7/7 测试通过；production guard 通过，staging guard 按预期拒绝。工作流静态审查通过，未进行专用 YAML 解析。
