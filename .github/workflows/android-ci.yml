@@ -11,6 +11,10 @@ on:
         description: Run unit tests on both variants (for flavor or build configuration changes)
         type: boolean
         default: false
+      full_unit_suite:
+        description: Run every independent unit test once (including performance)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,10 +65,31 @@ jobs:
         continue-on-error: true
         run: |
           unit_tests=(testProductionDebugUnitTest)
+          profile=release
+          if [[ "${{ inputs.full_unit_suite }}" == "true" ]]; then
+            profile=full
+          fi
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          # Features outside the core profile must regain their coverage when changed.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            : # Explicit manual profile inputs above apply without a push base.
+          elif [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}"; then
+            profile=full
+          else
+            while IFS= read -r path; do
+              case "$path" in
+                */ui/execution/*) ;;
+                app/src/*/java/*/ui/*|app/src/*/java/*/settings/*|app/src/*/java/*/sharing/*|app/src/*/java/*/history/*|app/src/*/java/*/statistics/*|app/src/main/res/*|app/build.gradle.kts|gradle/*|scripts/testing/*)
+                  profile=full ;;
+              esac
+            done < <(git diff --name-only "$base" HEAD)
+          fi
           if [[ "${{ inputs.full_android_matrix }}" == "true" ]]; then
             unit_tests=(testOfflineDebugUnitTest testProductionDebugUnitTest)
+            profile=full
           fi
           ./gradlew "${unit_tests[@]}" \
+            "-PandroidTestProfile=$profile" \
             lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest \
             lintProductionDebug assembleProductionDebug \
             --no-daemon

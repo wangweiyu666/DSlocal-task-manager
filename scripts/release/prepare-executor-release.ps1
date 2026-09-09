@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-alpha.13',
+    [ValidateSet('release', 'full')][string]$TestProfile = 'release',
+    [string]$Version = '0.1.0-alpha.14',
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$ArchiveRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'DStationery-Executor-Releases')
@@ -14,13 +15,13 @@ try {
     $commit = (git rev-parse HEAD).Trim()
     $env:JAVA_HOME = $JavaHome
     $env:ANDROID_HOME = $AndroidHome
-    & .\gradlew.bat testProductionDebugUnitTest lintProductionRelease assembleProductionRelease --no-daemon
+    & .\gradlew.bat testProductionDebugUnitTest "-PandroidTestProfile=$TestProfile" lintProductionRelease assembleProductionRelease --no-daemon
     if ($LASTEXITCODE -ne 0) { throw 'Production executor verification build failed.' }
 
     $sourceApk = Join-Path $repo 'app\build\outputs\apk\production\release\app-production-release.apk'
     & (Join-Path $PSScriptRoot 'audit-apk.ps1') -Apk $sourceApk -AndroidHome $AndroidHome `
         -ExpectedPackage 'com.ds.localtaskmanager.connected.production' `
-        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 14 -Networked
+        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 15 -Networked
     if ($LASTEXITCODE -ne 0) { throw 'Production executor APK audit failed.' }
 
     $archive = Join-Path $ArchiveRoot $Version
@@ -39,6 +40,8 @@ try {
         status = 'candidate'
         version = $Version
         commit = $commit
+        testProfile = $TestProfile
+        testVariant = 'productionDebug'
         packageName = 'com.ds.localtaskmanager.connected.production'
         cloudEnvironment = 'production'
         apkSha256 = $hash

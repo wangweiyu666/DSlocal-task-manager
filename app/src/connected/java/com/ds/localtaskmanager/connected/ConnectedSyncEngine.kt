@@ -1,6 +1,7 @@
 package com.ds.localtaskmanager.connected
 
 import android.content.Context
+import com.ds.localtaskmanager.diagnostics.SyncTrace
 import android.net.ConnectivityManager
 import android.net.Network
 import androidx.room.withTransaction
@@ -31,6 +32,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -117,7 +121,7 @@ open class ConnectedSyncEngine(
     private var serviceMode: String = "NORMAL"
     private val synchronizationRequested = AtomicBoolean(false)
     private val synchronizationWorkerActive = AtomicBoolean(false)
-    private val foregroundLifecycleStarted = AtomicBoolean(false)
+    private val foregroundLifecycleMutex = Mutex()
     private val syncCoordinator = ConnectedSyncCoordinator(application)
     private var scheduledSignature: String? = null
     @Volatile private var visibleSessionGeneration: String? = null
@@ -130,6 +134,7 @@ open class ConnectedSyncEngine(
     suspend fun synchronizeNow(): SyncAttemptResult = sessionOperationMutex.withLock { attemptSynchronization(null) }
 
     private suspend fun attemptSynchronization(input: androidx.work.Data?): SyncAttemptResult {
+        SyncTrace.event("ATTEMPT", detail = if (input == null) "FOREGROUND" else "WORKER")
         val session = dao.session() ?: return SyncAttemptResult.INVALID_IDENTITY
         if (!hasSyncIdentity(session)) return SyncAttemptResult.INVALID_IDENTITY
         if (input != null && (session.accountId != input.getString(ConnectedSyncCoordinator.KEY_ACCOUNT_ID) ||
@@ -197,26 +202,41 @@ open class ConnectedSyncEngine(
         !session.spaceId.isNullOrBlank() && session.sessionGeneration.isNotBlank()
 
     private suspend fun scheduleBackground(session: CloudSessionEntity) {
-        if (!hasSyncIdentity(session) || session.blockedReason != null) return
+        if (!hasSyncIdentity(session) || session.blockedReason != null) {
+            SyncTrace.event("SCHEDULE_BLOCKED")
+            return
+        }
         val signature = session.sessionGeneration + ":" + session.needsSync + ":" +
             dao.outbox(requireNotNull(session.spaceId)).filter { it.state != "PERMANENT_FAILURE" }.joinToString { it.commandId }
-        if (signature == scheduledSignature) return
+        if (signature == scheduledSignature) {
+            SyncTrace.event("SCHEDULE_DUPLICATE", signature)
+            return
+        }
+        SyncTrace.event("SCHEDULE_REQUEST", signature)
         (enqueueWork ?: { value -> syncCoordinator.request(value, requireNotNull(value.spaceId)) })(session)
         scheduledSignature = signature
     }
     fun requestBackground(session: CloudSessionEntity, spaceId: String) = syncCoordinator.request(session, spaceId)
     fun onLocalMutationCommitted() {
+        SyncTrace.event("ENGINE_MUTATION")
         scope.launch {
             catchSyncFailure {
                 recoverPendingLocalWork(schedule = true)
                 if (mutableState.value is ConnectedState.Ready) synchronize()
-            }.onFailure { application.diagnosticEvents.record("connected-sync", "RECOVERY_SCHEDULE_FAILED", false) }
+            }.onFailure {
+                SyncTrace.event("RECOVERY_FAILED", detail = it.javaClass.simpleName)
+                application.diagnosticEvents.record("CONNECTED_SYNC", "RECOVERY_SCHEDULE_FAILED", false)
+            }
         }
     }
     fun recoverAfterStartup() {
+        SyncTrace.event("PROCESS_RECOVERY")
         scope.launch {
             catchSyncFailure { recoverPendingLocalWork(schedule = true) }
-                .onFailure { application.diagnosticEvents.record("connected-sync", "STARTUP_RECOVERY_FAILED", false) }
+                .onFailure {
+                    SyncTrace.event("STARTUP_RECOVERY_FAILED", detail = it.javaClass.simpleName)
+                    application.diagnosticEvents.record("CONNECTED_SYNC", "STARTUP_RECOVERY_FAILED", false)
+                }
         }
     }
 
@@ -231,29 +251,42 @@ open class ConnectedSyncEngine(
             enqueueLocalWork(session, membership, dao.entities(spaceId))
         }
         val pending = session.blockedReason == null && (session.needsSync || dao.outbox(spaceId).any { it.state != "PERMANENT_FAILURE" })
+        SyncTrace.event("RECOVERY_QUEUE", detail = "pending=$pending,count=${dao.outbox(spaceId).size}")
         if (pending && schedule) scheduleBackground(session)
         return pending
     }
 
-    internal fun startForegroundLifecycle() {
-        if (!foregroundLifecycleStarted.compareAndSet(false, true)) return
-        val connectivity = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        connectivity.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                if (mutableState.value is ConnectedState.Ready) synchronize()
+    internal suspend fun runForegroundLifecycle(): Unit = foregroundLifecycleMutex.withLock {
+        coroutineScope {
+            val connectivity = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    SyncTrace.event("NETWORK_CALLBACK")
+                    if (isActive && mutableState.value is ConnectedState.Ready) synchronize()
+                }
             }
-        })
-        scope.launch {
-            application.database.instanceDao().observeLatestUpdateEpochMillis().collectLatest {
-                val current = mutableState.value as? ConnectedState.Ready ?: return@collectLatest
-                val session = dao.session() ?: return@collectLatest
-                mutableState.value = readyState(session, current.lastSyncedAt, current.isolatedTaskCount, current.syncing)
-            }
-        }
-        scope.launch {
-            while (isActive) {
-                delay(autoSyncIntervalMillis ?: PROTECTED_POLL_RECHECK_MILLIS)
-                if (autoSyncIntervalMillis != null) refreshNotifications()
+            connectivity.registerDefaultNetworkCallback(callback)
+            try {
+                launch {
+                    application.database.instanceDao().observeLatestUpdateEpochMillis().collectLatest {
+                        val current = mutableState.value as? ConnectedState.Ready ?: return@collectLatest
+                        val session = dao.session() ?: return@collectLatest
+                        mutableState.value = readyState(session, current.lastSyncedAt, current.isolatedTaskCount, current.syncing)
+                    }
+                }
+                // These children belong to the visible lifecycle, not the persistent engine scope.
+                launch {
+                    while (isActive) {
+                        delay(autoSyncIntervalMillis ?: PROTECTED_POLL_RECHECK_MILLIS)
+                        if (autoSyncIntervalMillis != null) {
+                            SyncTrace.event("NOTIFICATION_POLL")
+                            refreshNotifications()
+                        }
+                    }
+                }
+                kotlinx.coroutines.awaitCancellation()
+            } finally {
+                connectivity.unregisterNetworkCallback(callback)
             }
         }
     }
@@ -532,6 +565,7 @@ open class ConnectedSyncEngine(
                 }
             }
         }
+        currentCoroutineContext().ensureActive()
         if (shouldSynchronize) synchronize()
     }
 
@@ -851,6 +885,7 @@ open class ConnectedSyncEngine(
     }
 
     private suspend fun enqueueResult(spaceId: String, assignmentId: String, occurrenceKey: String, revision: Int, instance: TaskInstanceEntity) {
+        SyncTrace.event("RESULT_PREPARE", "${instance.taskId}:${instance.occurrenceKey}")
         val semantic = "result:${instance.taskId}:${instance.occurrenceKey}:${instance.updatedAtEpochMillis}"
         val prepared = application.database.withTransaction {
             val current = application.database.instanceDao().getInstance(instance.taskId, instance.occurrenceKey)
@@ -898,8 +933,12 @@ open class ConnectedSyncEngine(
     }
 
     private suspend fun enqueue(spaceId: String, semanticKey: String, command: JsonObject) {
-        if (dao.hasSemanticKey(semanticKey) > 0) return
+        if (dao.hasSemanticKey(semanticKey) > 0) {
+            SyncTrace.event("COMMAND_DUPLICATE", semanticKey)
+            return
+        }
         dao.enqueue(CloudOutboxEntity(command.requiredString("commandId"), spaceId, semanticKey, command.toString(), Instant.now().toString()))
+        SyncTrace.event("COMMAND_PERSISTED", command.requiredString("commandId"), "semantic=${SyncTrace.id(semanticKey)}")
     }
 
     private suspend fun flush(session: CloudSessionEntity, spaceId: String) {
@@ -916,12 +955,14 @@ open class ConnectedSyncEngine(
                 }
             }
             val command = json.parseToJsonElement(item.commandJson)
+            SyncTrace.event("UPLOAD_START", item.commandId)
             val result = try {
                 val results = api.commands(session.accessToken, spaceId, JsonArray(listOf(command)))["results"]?.jsonArray.orEmpty()
                 results.singleOrNull()?.jsonObject?.takeIf { it["commandId"]?.jsonPrimitive?.contentOrNull == item.commandId }
             }
             catch (error: CancellationException) { throw error }
             catch (error: CloudApiException) {
+                SyncTrace.event("UPLOAD_ERROR", item.commandId, "status=${error.status},retryable=${error.retryable}")
                 if (error.retryable) {
                     val retryAt = error.retryAfterSeconds?.let { nowMillis() + it * 1000L }
                     dao.markRetryable(item.commandId, retryAt, error.message ?: error.code)
@@ -942,6 +983,7 @@ open class ConnectedSyncEngine(
                         dao.markSent(CloudSentSemanticEntity(item.semanticKey, spaceId, item.commandId, Instant.now().toString()))
                         dao.deleteCommand(item.commandId)
                     }
+                    SyncTrace.event("UPLOAD_ACK", item.commandId)
                 }
                 "retryable" -> {
                     val error = CloudApiException(503, "COMMAND_RETRYABLE", result["message"]?.jsonPrimitive?.contentOrNull ?: "命令稍后重试", true, 30)

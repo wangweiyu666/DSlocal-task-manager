@@ -19,6 +19,18 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,6 +62,59 @@ class ConnectedSyncEngineTest {
             syncDatabase.close()
         } finally {
             application.database.close()
+        }
+    }
+
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `notification polling stops in background resumes once and leaves worker usable`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val notifications = java.util.concurrent.LinkedBlockingQueue<Unit>()
+        val requests = AtomicInteger()
+        val activeSession = session()
+        syncDatabase.dao().saveSession(activeSession)
+        syncDatabase.dao().saveMeta(CloudSyncMetaEntity(SPACE_ID, "cursor-1", null, "Asia/Hong_Kong", 1))
+        val engine = ConnectedSyncEngine(application, scriptedApi(requests, "accepted", notifications), syncDatabase, { NOW }, {})
+        val owner = object : LifecycleOwner {
+            override val lifecycle = LifecycleRegistry.createUnsafe(this)
+        }
+        owner.lifecycle.currentState = Lifecycle.State.CREATED
+        val monitoring = launch {
+            owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { engine.runForegroundLifecycle() }
+        }
+        try {
+            assertEquals(SyncAttemptResult.COMPLETE, kotlinx.coroutines.withContext(Dispatchers.IO) { engine.synchronizeNow() })
+            runCurrent()
+            val before = requests.get()
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertEquals(before, requests.get())
+            repeat(3) {
+                owner.lifecycle.currentState = Lifecycle.State.STARTED
+                runCurrent()
+                advanceTimeBy(14_999)
+                runCurrent()
+                assertTrue(notifications.isEmpty())
+                advanceTimeBy(1)
+                runCurrent()
+                // Room uses real executors; pump continuations without advancing the polling clock.
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                while (notifications.isEmpty() && System.nanoTime() < deadline) {
+                    runCurrent()
+                    Thread.sleep(5)
+                }
+                assertEquals(Unit, notifications.poll())
+                owner.lifecycle.currentState = Lifecycle.State.CREATED
+                runCurrent()
+                advanceTimeBy(60_000)
+                runCurrent()
+                assertTrue("Background must not poll or leave a duplicate loop", notifications.isEmpty())
+            }
+            assertEquals(SyncAttemptResult.COMPLETE, kotlinx.coroutines.withContext(Dispatchers.IO) { engine.runBackground(validInput(activeSession)) })
+        } finally {
+            owner.lifecycle.currentState = Lifecycle.State.DESTROYED
+            monitoring.cancelAndJoin()
+            Dispatchers.resetMain()
         }
     }
 
@@ -500,12 +565,16 @@ class ConnectedSyncEngineTest {
             cursor.getString(0)
         }
 
-    private fun scriptedApi(requests: AtomicInteger, commandStatus: String): CloudApi = CloudApi("https://example.invalid") { url ->
+    private fun scriptedApi(requests: AtomicInteger, commandStatus: String, notifications: java.util.concurrent.LinkedBlockingQueue<Unit>? = null): CloudApi = CloudApi("https://example.invalid") { url ->
         requests.incrementAndGet()
         val path = url.path + url.query?.let { "?$it" }.orEmpty()
         val response = when {
             path == "/v1/account" -> "{\"account\":{\"status\":\"ACTIVE\",\"privacyNoticeVersion\":1,\"requiredPrivacyNoticeVersion\":1}}"
-            path == "/v1/bootstrap" -> "{\"account\":{\"id\":\"$ACCOUNT_ID\"},\"memberships\":[{\"id\":\"$MEMBERSHIP_ID\",\"role\":\"EXECUTOR\",\"space\":{\"id\":\"$SPACE_ID\",\"name\":\"测试空间\",\"timeZone\":\"Asia/Hong_Kong\",\"timeZoneVersion\":1}}]}"
+            path == "/v1/bootstrap" -> "{\"service\":{\"autoSyncIntervalSeconds\":15},\"account\":{\"id\":\"$ACCOUNT_ID\"},\"memberships\":[{\"id\":\"$MEMBERSHIP_ID\",\"role\":\"EXECUTOR\",\"space\":{\"id\":\"$SPACE_ID\",\"name\":\"测试空间\",\"timeZone\":\"Asia/Hong_Kong\",\"timeZoneVersion\":1}}]}"
+            path == "/v1/spaces/$SPACE_ID/notifications" -> {
+                requireNotNull(notifications).add(Unit)
+                "{\"notifications\":[]}"
+            }
             path.startsWith("/v1/spaces/$SPACE_ID/changes") -> "{\"changes\":[],\"nextCursor\":\"cursor-2\",\"hasMore\":false}"
             path == "/v1/spaces/$SPACE_ID/commands" -> "{\"results\":[{\"commandId\":\"reject-1\",\"status\":\"$commandStatus\"}]}"
             else -> error("unexpected route $path")

@@ -19,8 +19,9 @@ android {
         applicationId = "com.ds.localtaskmanager"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.1.0-alpha.9"
+        versionCode = 11
+        versionName = "0.1.0-alpha.10"
+        buildConfigField("boolean", "SYNC_DIAGNOSTICS", providers.gradleProperty("syncDiagnostics").orElse("false").get().toBoolean().toString())
         manifestPlaceholders["appLabel"] = "@string/app_name"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -74,8 +75,8 @@ android {
         create("production") {
             dimension = "connectivity"
             applicationIdSuffix = ".connected.production"
-            versionCode = 14
-            versionName = "0.1.0-alpha.13"
+            versionCode = 15
+            versionName = "0.1.0-alpha.14"
             versionNameSuffix = "-executor"
             manifestPlaceholders["appLabel"] = "@string/app_name"
             buildConfigField("boolean", "CONNECTED_BUILD", "true")
@@ -145,6 +146,21 @@ android {
 
     sourceSets["test"].resources.srcDir(rootProject.file("protocol-test-vectors"))
     sourceSets["test"].resources.srcDir(rootProject.file("cloud-protocol-test-vectors"))
+}
+
+// Explicit profiles reduce routine runs; an unfiltered test task still runs the full suite.
+val androidTestProfile = providers.gradleProperty("androidTestProfile").orElse("full").get()
+require(androidTestProfile in setOf("daily", "release", "full")) { "Unknown androidTestProfile: $androidTestProfile" }
+if (androidTestProfile != "full") {
+    val profileFile = rootProject.file("scripts/testing/android-$androidTestProfile.txt")
+    val selectedTests = profileFile.readLines().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("#") }
+    require(selectedTests.isNotEmpty()) { "Android test profile must not be empty" }
+    tasks.withType<Test>().configureEach {
+        if (name.endsWith("UnitTest")) {
+            inputs.file(profileFile)
+            filter { selectedTests.forEach { includeTestsMatching(it) } }
+        }
+    }
 }
 
 fun registerSigningVerification(taskName: String, fileName: String) = tasks.register(taskName) {

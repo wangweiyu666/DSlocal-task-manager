@@ -1,0 +1,9 @@
+# Daily smoke: task-day boundary, import/transactions, completion, edits and connected recovery.
+com.ds.localtaskmanager.domain.TaskDayTest
+com.ds.localtaskmanager.data.ImportAndExecutionServiceTest
+com.ds.localtaskmanager.data.StepsExecutionRegressionTest
+com.ds.localtaskmanager.ui.execution.W22ExecutionViewModelTest
+com.ds.localtaskmanager.ui.execution.MoodSaveRaceRegressionTest
+com.ds.localtaskmanager.connected.CloudApiRateLimitTest
+com.ds.localtaskmanager.connected.ConnectedSyncCoordinatorTest
+com.ds.localtaskmanager.connected.ConnectedSyncEngineTest

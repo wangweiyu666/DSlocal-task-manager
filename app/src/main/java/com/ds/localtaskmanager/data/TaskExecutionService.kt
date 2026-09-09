@@ -354,6 +354,7 @@ class RoomTaskExecutionService(
             listOf(key.taskId),
         )
         }
+        com.ds.localtaskmanager.diagnostics.SyncTrace.event("COMPLETE_COMMITTED", "${key.taskId}:${key.occurrenceKey}")
         onLocalMutationCommitted(key)
     }
 
@@ -405,6 +406,7 @@ class RoomTaskExecutionService(
             listOf(key.taskId),
         )
         }
+        com.ds.localtaskmanager.diagnostics.SyncTrace.event("UNDO_COMMITTED", "${key.taskId}:${key.occurrenceKey}")
         onLocalMutationCommitted(key)
     }
 

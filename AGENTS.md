@@ -11,7 +11,7 @@
 
 # Work ownership and subagents
 
-- Delegate execution of existing tests and APK builds from already verified source versions to Luna (`gpt-5.6-luna`) by default. The primary agent sets the scope and reviews results; other work stays with the primary agent unless separately authorized. If Luna is unavailable, report that limitation and let the primary agent continue.
+- Delegate simple existing test execution and APK builds from already verified source versions to Luna (`gpt-5.6-luna`) by default. Complex testing, including real-device background synchronization, concurrency and lifecycle recovery, is designed and executed by the primary agent. The current real-device verification task is entirely primary-agent owned, including any builds. Other work stays with the primary agent unless separately authorized. If Luna is unavailable, report that limitation and let the primary agent continue.
 - Follow `docs/stage4-production-runbook.md` (current workflow section). Keep the verified commit fixed, inspect existing runs before dispatching, and report completion only after the relevant workflow jobs finish successfully.
 - Carry existing authorization through the current release without repeatedly asking. A model preference does not authorize unrelated or future production releases; a push-only request requires clarifying production scope before production changes.
 
@@ -24,8 +24,8 @@
 
 # Test delegation
 
-- Default Android CI runs the shared and connected unit suites once with `testProductionDebugUnitTest`, while retaining both variants' builds, lint, and the offline connectivity boundary check. Do not repeat the shared unit suite on offline for ordinary shared-code changes. Use focused tests during development; run the full two-variant matrix only when explicitly requested or needed for flavor-specific code, source-set, environment, signing, or build-configuration changes. Manual Android CI exposes `full_android_matrix` for that purpose.
-- Delegate running existing tests to Luna (`gpt-5.6-luna`). Test design, writing or changing tests, and fixing failures remain with the primary agent unless separately authorized.
+- Android CI and release preparation use the `release` test profile once on production; use the `daily` profile or focused tests during development. See `docs/android-test-profiles.md` for the exact scope and affected-feature additions. Preserve both variants' builds, lint, screenshots, and the offline connectivity boundary check. CI expands coverage for changes outside the core profile. Unfiltered Gradle unit tasks and `full_unit_suite` retain the full independent suite; `full_android_matrix` adds offline coverage for flavor-specific changes. Do not repeat shared tests solely to package an APK.
+- Delegate running simple existing tests to Luna (`gpt-5.6-luna`). The primary agent runs complex tests and owns test design, writing or changing tests, and fixing failures unless separately authorized.
 - The primary agent defines the scope and acceptance criteria, designs concurrency and recovery scenarios, and reviews assertions.
 - Follow `docs/minimal-testing.md`: reuse existing coverage, run the smallest relevant suite, and avoid repeating passing checks without a new reason. Report actual commands, tested source state, passed/failed/skipped counts, failures and coverage limits.
 - Never hide failures by skipping tests or weakening assertions. Escalate unresolved failures to the primary agent.

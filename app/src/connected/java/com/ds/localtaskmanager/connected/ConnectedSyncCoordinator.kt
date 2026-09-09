@@ -1,6 +1,7 @@
 package com.ds.localtaskmanager.connected
 
 import android.content.Context
+import com.ds.localtaskmanager.diagnostics.SyncTrace
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.Data
@@ -23,6 +24,7 @@ class ConnectedSyncCoordinator internal constructor(
 ) {
     fun request(session: CloudSessionEntity, spaceId: String) {
         val (name, request) = buildRequest(session, spaceId)
+        SyncTrace.event("WORK_ENQUEUE", request.id.toString())
         scheduler.enqueue(name, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 
@@ -59,20 +61,35 @@ internal fun interface SyncWorkScheduler {
 
 private class WorkManagerSyncWorkScheduler(private val context: Context) : SyncWorkScheduler {
     override fun enqueue(name: String, policy: ExistingWorkPolicy, request: androidx.work.OneTimeWorkRequest) {
-        WorkManager.getInstance(context).enqueueUniqueWork(name, policy, request)
+        val operation = WorkManager.getInstance(context).enqueueUniqueWork(name, policy, request)
+        operation.result.addListener({
+            runCatching { operation.result.get() }
+                .onSuccess { SyncTrace.event("WORK_REGISTERED", request.id.toString()) }
+                .onFailure { SyncTrace.event("WORK_REGISTER_FAILED", request.id.toString(), it.javaClass.simpleName) }
+        }, androidx.core.content.ContextCompat.getMainExecutor(context))
     }
 }
 
 
 class ConnectedSyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result = try {
-        when (ConnectedSyncEngine.get(applicationContext as com.ds.localtaskmanager.DstApplication).runBackground(inputData)) {
+        SyncTrace.event("WORK_START", id.toString(), "attempt=$runAttemptCount")
+        val outcome = ConnectedSyncEngine.get(applicationContext as com.ds.localtaskmanager.DstApplication).runBackground(inputData)
+        SyncTrace.event("WORK_OUTCOME", id.toString(), outcome.name)
+        when (outcome) {
         SyncAttemptResult.COMPLETE -> Result.success()
         SyncAttemptResult.RETRY -> Result.retry()
         SyncAttemptResult.USER_ACTION -> Result.success()
         SyncAttemptResult.INVALID_IDENTITY -> Result.success()
         }
     } catch (_: TimeoutCancellationException) {
+        SyncTrace.event("WORK_TIMEOUT", id.toString())
         Result.retry()
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        SyncTrace.event("WORK_CANCELLED", id.toString())
+        throw error
+    } catch (error: Exception) {
+        SyncTrace.event("WORK_EXCEPTION", id.toString(), error.javaClass.simpleName)
+        throw error
     }
 }

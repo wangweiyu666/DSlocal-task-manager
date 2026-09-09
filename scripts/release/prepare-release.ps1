@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-alpha.9',
+    [ValidateSet('release', 'full')][string]$TestProfile = 'release',
+    [string]$Version = '0.1.0-alpha.10',
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$ArchiveRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'DStationery-Releases')
@@ -14,7 +15,7 @@ try {
     $commit = (git rev-parse HEAD).Trim()
     $env:JAVA_HOME = $JavaHome
     $env:ANDROID_HOME = $AndroidHome
-    & .\gradlew.bat testOfflineDebugUnitTest validateOfflineDebugScreenshotTest lintOfflineRelease assembleOfflineRelease --no-daemon
+    & .\gradlew.bat testProductionDebugUnitTest "-PandroidTestProfile=$TestProfile" validateOfflineDebugScreenshotTest lintOfflineRelease assembleOfflineRelease --no-daemon
     if ($LASTEXITCODE -ne 0) { throw 'Release verification build failed.' }
 
     $sourceApk = Join-Path $repo 'app\build\outputs\apk\offline\release\app-offline-release.apk'
@@ -34,6 +35,8 @@ try {
         status = 'candidate'
         version = $Version
         commit = $commit
+        testProfile = $TestProfile
+        testVariant = 'productionDebug'
         apkSha256 = $hash
         localChecks = [ordered]@{ jvm = 'passed'; screenshots = 'passed'; lintRelease = 'passed'; releaseAudit = 'passed' }
         deviceChecks = [ordered]@{ api26 = 'pending'; api33 = 'pending'; api35 = 'pending'; android13PlusDevice = 'pending' }

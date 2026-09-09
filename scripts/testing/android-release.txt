@@ -1,0 +1,17 @@
+# Release core. Add affected feature tests separately without this profile.
+com.ds.localtaskmanager.domain.*Test
+com.ds.localtaskmanager.protocol.*Test
+com.ds.localtaskmanager.data.AppDatabaseMigrationTest
+com.ds.localtaskmanager.data.ImportAndExecutionServiceTest
+com.ds.localtaskmanager.data.W10ExecutionServiceTest
+com.ds.localtaskmanager.data.W11RecurrenceServiceTest
+com.ds.localtaskmanager.data.W12ResultServiceTest
+com.ds.localtaskmanager.data.W20DelayServiceTest
+com.ds.localtaskmanager.data.W21ReminderServiceTest
+com.ds.localtaskmanager.data.MoodInstanceIsolationTest
+com.ds.localtaskmanager.data.StepsImportRegressionTest
+com.ds.localtaskmanager.data.StepsExecutionRegressionTest
+com.ds.localtaskmanager.backup.*Test
+com.ds.localtaskmanager.diagnostics.*Test
+com.ds.localtaskmanager.ui.execution.*Test
+com.ds.localtaskmanager.connected.*Test

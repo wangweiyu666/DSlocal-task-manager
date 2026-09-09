@@ -7,16 +7,12 @@ import org.junit.Test
 
 class TaskDayTest {
     @Test
-    fun `time before four belongs to previous task day`() {
-        val result = TaskDay.from(LocalDateTime.of(2026, 7, 18, 3, 59))
-
-        assertEquals(LocalDate.of(2026, 7, 17), result)
-    }
-
-    @Test
-    fun `four o'clock starts a new task day`() {
-        val result = TaskDay.from(LocalDateTime.of(2026, 7, 18, 4, 0))
-
-        assertEquals(LocalDate.of(2026, 7, 18), result)
+    fun `task day changes exactly at four`() {
+        listOf(
+            LocalDateTime.of(2026, 7, 18, 3, 59) to LocalDate.of(2026, 7, 17),
+            LocalDateTime.of(2026, 7, 18, 4, 0) to LocalDate.of(2026, 7, 18),
+        ).forEach { (time, expected) ->
+            assertEquals("task day at $time", expected, TaskDay.from(time))
+        }
     }
 }

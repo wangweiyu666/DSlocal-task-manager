@@ -5,9 +5,8 @@ import com.ds.localtaskmanager.DstApplication
 /** Foreground facade over the Application-scoped synchronization engine. */
 class ConnectedRuntime(private val engine: ConnectedSyncEngine) {
     constructor(application: DstApplication) : this(ConnectedSyncEngine.get(application))
-    init { engine.startForegroundLifecycle() }
     val state get() = engine.state
-    fun start() = engine.startForegroundLifecycle()
+    suspend fun runForegroundLifecycle(): Unit = engine.runForegroundLifecycle()
     fun restore() = engine.restore()
     fun requestCode(email: String) = engine.requestCode(email)
     fun verifyCode(email: String, code: String) = engine.verifyCode(email, code)

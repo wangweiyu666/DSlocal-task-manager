@@ -1,5 +1,7 @@
 # 最小测试方案
 
+> **2026-09-09 当前入口：[Android 测试集合](android-test-profiles.md)。** 日常使用 `daily` 或指定受影响测试，发布使用 `release` 核心集合并补测受影响功能。下面关于默认完整套件、connected/staging 和三变体的说明属于历史记录，不再作为命令入口。两个安装包共用一次 production 单元测试结果。
+
 > 2026-09-07 起以[单一云端环境](production-only.md)为准：staging 已取消，下面历史命令中的 `testConnectedDebugUnitTest` 改用 `testProductionDebugUnitTest`，`assembleConnectedDebug` / `lintConnectedDebug` 不再执行；交付仅 offline、production 两个包。默认共享及联网单元套件仍只跑一次，保留两个变体构建、Lint 和离线边界检查。域名验收使用 `prod.rochelimit.me`；旧三变体与 staging 记录仅作历史证据。
 
 日常按改动选择一组测试，通过后停止；只有出现新改动、失败或未覆盖风险才扩大范围。本方案针对同步修复的快速反馈，不代表所有产品功能已经验证。Web／Cloud 的 `npm test` 继续运行各自完整套件。Android 默认 CI 在 connected 变体执行一次全部共用及联网单元测试，保留三个变体的构建、Lint、离线网络边界和截图检查；发布继续遵循对应主指南。

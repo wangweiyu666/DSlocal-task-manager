@@ -48,9 +48,11 @@ class DstApplication : Application() {
         RoomImportService(database, Dst1Parser(), clock, idGenerator)
     }
     val taskExecutionService: TaskExecutionService by lazy {
-        RoomTaskExecutionService(database, clock, idGenerator) { _: TaskInstanceKey ->
+        RoomTaskExecutionService(database, clock, idGenerator) { key: TaskInstanceKey ->
+            com.ds.localtaskmanager.diagnostics.SyncTrace.event("MUTATION_CALLBACK", "${key.taskId}:${key.occurrenceKey}")
             applicationScope.launch {
                 runCatching { notifyConnectivityLocalMutation(this@DstApplication) }
+                    .onFailure { com.ds.localtaskmanager.diagnostics.SyncTrace.event("MUTATION_CALLBACK_FAILED", detail = it.javaClass.simpleName) }
             }
         }
     }

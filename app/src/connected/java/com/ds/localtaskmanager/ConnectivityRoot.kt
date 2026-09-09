@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ds.localtaskmanager.connected.ConnectedNotification
 import com.ds.localtaskmanager.connected.ConnectedRuntime
@@ -69,6 +70,11 @@ internal fun ConnectivityContent(
         if (export != null) runtime.leaveSensitiveAction()
     }
     LaunchedEffect(Unit) { runtime.restore() }
+    LaunchedEffect(lifecycleOwner, runtime) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            runtime.runForegroundLifecycle()
+        }
+    }
     DisposableEffect(lifecycleOwner, runtime) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) runtime.synchronizeIfStale()
