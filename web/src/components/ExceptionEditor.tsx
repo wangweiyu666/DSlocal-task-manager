@@ -1,3 +1,5 @@
+import { ChoiceNoticeEditor, defaultLeafExecution } from "./ChoiceNoticeEditor";
+import { validateConditionalSteps, validateExecutionConfiguration } from "../../../shared/protocol/execution";
 import { useMemo, useState } from "react";
 import type { TaskRecord } from "../model/types";
 import type { Dst11Exception, Dst1Execution, Dst1Step } from "../protocol/types";
@@ -38,6 +40,7 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
   const [message, setMessage] = useState(typeof initial?.m === "string" ? initial.m : task.completionMessage);
   const [remindersText, setRemindersText] = useState((initial?.h ?? task.reminders).join(", "));
   const initialExecution = normalizedInitial.execution;
+  const [specialExecution, setSpecialExecution] = useState<Dst1Execution | null>(initialExecution ?? null);
   const [executionKind, setExecutionKind] = useState(initialExecution?.k ?? 0);
   const [executionAction, setExecutionAction] = useState(initialExecution?.k === 1 ? initialExecution.a : 2);
   const [executionTarget, setExecutionTarget] = useState(initialExecution?.k === 1 || initialExecution?.k === 2 ? initialExecution.v : 10);
@@ -82,6 +85,7 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       else if (executionKind === 3) execution = { k: 3 };
       else if (executionKind === 4) execution = { k: 4 };
       else if (executionKind === 5) execution = { k: 5 };
+      else if (executionKind === 6 || executionKind === 7) execution = specialExecution;
       if (selected.has("s") && steps.length > 0) {
         value.s = steps;
         value.u = { k: 5 };
@@ -94,6 +98,7 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       }
       if (executionKind !== 5 && task.steps.length > 0 && !selected.has("s")) value.s = [];
     }
+    try { validateExecutionConfiguration(value.u === undefined ? task.execution : value.u); validateConditionalSteps(value.s ?? task.steps); } catch (error) { setError(error instanceof Error ? error.message : "执行配置无效"); return; }
     onSave(value);
   };
 
@@ -114,8 +119,9 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       {selected.has("s") && <div className="field"><span>当天步骤</span><StepListEditor steps={steps} taskId={task.id} onChange={setSteps} /></div>}
       {selected.has("m") && <div className="form-grid"><label className="field"><span>完成提示方式</span><select value={messageMode} onChange={(event) => setMessageMode(event.target.value as "value" | "default")}><option value="value">指定提示</option><option value="default">系统默认</option></select></label>{messageMode === "value" && <label className="field"><span>完成提示</span><input maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} /></label>}</div>}
       {selected.has("h") && <label className="field"><span>提醒分钟数（逗号分隔，留空清除）</span><input value={remindersText} onChange={(event) => setRemindersText(event.target.value)} /></label>}
-      {selected.has("u") && !(selected.has("s") && steps.length > 0) && <div className="form-grid"><label className="field"><span>执行方式</span><select value={executionKind} onChange={(event) => setExecutionKind(Number(event.target.value))}><option value={0}>普通完成</option><option value={1}>计数</option><option value={2}>计时</option><option value={3}>信息告知</option><option value={4}>心情记录</option><option value={5}>分步骤</option></select></label>{executionKind === 1 && <label className="field"><span>计数方式</span><select value={executionAction} onChange={(event) => setExecutionAction(Number(event.target.value) as 1 | 2)}><option value={1}>拖动</option><option value={2}>点击</option></select></label>}{(executionKind === 1 || executionKind === 2) && <label className="field"><span>目标值</span><input type="number" value={executionTarget} onChange={(event) => setExecutionTarget(Number(event.target.value))} /></label>}</div>}
+      {selected.has("u") && !(selected.has("s") && steps.length > 0) && <div className="form-grid"><label className="field"><span>执行方式</span><select value={executionKind} onChange={(event) => { const kind = Number(event.target.value); setExecutionKind(kind); setSpecialExecution(defaultLeafExecution(kind) ?? null); }}><option value={0}>普通完成</option><option value={1}>计数</option><option value={2}>计时</option><option value={3}>信息告知</option><option value={4}>心情记录</option><option value={5}>分步骤</option><option value={6}>通知确认</option><option value={7}>单选积分</option></select></label>{executionKind === 1 && <label className="field"><span>计数方式</span><select value={executionAction} onChange={(event) => setExecutionAction(Number(event.target.value) as 1 | 2)}><option value={1}>拖动</option><option value={2}>点击</option></select></label>}{(executionKind === 1 || executionKind === 2) && <label className="field"><span>目标值</span><input type="number" value={executionTarget} onChange={(event) => setExecutionTarget(Number(event.target.value))} /></label>}</div>}
     </>}
+    {selected.has("u") && (executionKind === 6 || executionKind === 7) && !(selected.has("s") && steps.length > 0) && <ChoiceNoticeEditor execution={specialExecution} onChange={setSpecialExecution} />}
     {selected.has("u") && executionKind === 4 && !cancelled && <p className="supporting">需要更新到支持心情记录的 Android 版本。</p>}
     {error && <div className="validation-box">{error}</div>}
     <div className="modal-actions"><button className="button text" onClick={onCancel}>取消</button><button className="button primary" onClick={save}>保存并加入草稿</button></div>

@@ -45,7 +45,7 @@ fun HistoryDetailRoute(
         onCounterChange = {},
         onTimerToggle = {},
         onInformationChange = {},
-        onInformationSave = {},
+        onInformationRetry = {},
         onNoteChange = viewModel::updateNote,
         onComplete = {},
         onUndo = {},

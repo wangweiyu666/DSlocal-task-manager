@@ -100,6 +100,51 @@ describe("session rotation", () => {
 });
 
 describe("completion undo", () => {
+  it("derives conditional choice scores and rejects forged branches and values on retries", async () => {
+    const a = "Option0000000001", b = "Option0000000002";
+    const source = "Step000000000001", branch = "Step000000000002";
+    const choiceContent = { v: 1, b: "ChoiceBatch00001", t: [{ i: "CloudTask0000001", n: "条件积分", r: 1, p: 3, u: { k: 5 }, s: [
+      { i: source, n: "单选", r: 1, u: { k: 7, o: [{ i: a, n: "零分", p: 0 }, { i: b, n: "九分", p: 9 }] } },
+      { i: branch, n: "通知", r: 1, u: { k: 6, t: "请知晓" }, c: { s: source, o: b } },
+    ] }] };
+    const published = await submit(command("TASK_PUBLISH", undefined, { content: choiceContent }));
+    expect(published.status).toBe("accepted");
+    const assignmentId = published.details!.assignmentId as string;
+    const occurrenceKey = "CloudTask0000001:1:1:2026-09-05T00:00";
+    expect(await submit(command("OCCURRENCE_UPSERT", occurrenceKey, { taskId: "CloudTask0000001", assignmentId, occurrenceKey, taskRevision: 1, timeZoneVersion: 1, localDate: "2026-09-05", scheduledAt: "2026-09-04T16:00:00Z" }), "EXECUTOR")).toMatchObject({ status: "accepted" });
+    const event = (stepResults: unknown[], extra = {}) => command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType: "RESULT_SUBMITTED", occurredAt: "2026-09-05T01:00:00Z", data: { status: "COMPLETED", executionKind: "STEPS", localOccurrenceKey: "once", completedAt: "2026-09-05T01:00:00Z", stepResults, ...extra } });
+    const valid = [{ stepId: source, status: "CONFIRMED", selectedOptionId: b }, { stepId: branch, status: "CONFIRMED" }];
+    for (const invalid of [
+      event(valid, { awardedPoints: 999 }),
+      event([{ ...valid[0], selectedOptionId: "forged" }, valid[1]]),
+      event([valid[0], { stepId: branch, status: "NOT_APPLICABLE" }]),
+      event([valid[0], { stepId: branch, status: "SKIPPED" }]),
+      event([{ ...valid[0], selectedOptionId: a }, valid[1]]),
+      event([{ ...valid[0], selectedOptionId: a }, { stepId: branch, status: "NOT_APPLICABLE", selectedOptionId: a }]),
+    ]) expect(await submit(invalid, "EXECUTOR")).toMatchObject({ status: "rejected", code: "INVALID_REQUEST" });
+    const completed = event(valid);
+    expect(await submit(completed, "EXECUTOR")).toMatchObject({ status: "accepted" });
+    expect(await submit(completed, "EXECUTOR")).toMatchObject({ status: "duplicate" });
+    const stored = JSON.parse(String(row("SELECT payload_json FROM execution_events WHERE id='" + completed.entityId + "'").payload_json));
+    expect(stored).toMatchObject({ awardedPoints: 12, basePoints: 3, stepResults: [{ selectedOptionName: "九分", optionPoints: 9 }, { noticeContent: "请知晓" }] });
+    const zero = event([{ ...valid[0], selectedOptionId: a }, { stepId: branch, status: "NOT_APPLICABLE" }]);
+    expect(await submit(zero, "EXECUTOR")).toMatchObject({ status: "accepted" });
+    expect(JSON.parse(String(row("SELECT payload_json FROM execution_events WHERE id='" + zero.entityId + "'").payload_json)).awardedPoints).toBe(3);
+  });
+
+  it("snapshots standalone choices from date exceptions and rejects client supplied scores", async () => {
+    const a = "Option0000000001", b = "Option0000000002";
+    const task = { i: "CloudTask0000001", n: "单选", r: 1, p: 2, u: { k: 7, o: [{ i: a, n: "原选项", p: 3 }, { i: b, n: "其他", p: 0 }] } };
+    const published = await submit(command("TASK_PUBLISH", undefined, { content: { v: 1, sv: 1, b: "ChoiceBatch00001", t: [task], e: [{ i: task.i, y: "2026-09-05", p: 4, u: { ...task.u, o: [{ i: a, n: "例外选项", p: 8 }, task.u.o[1]] } }] } }));
+    expect(published.status).toBe("accepted");
+    const assignmentId = published.details!.assignmentId as string, occurrenceKey = "CloudTask0000001:1:1:2026-09-05T00:00";
+    expect(await submit(command("OCCURRENCE_UPSERT", occurrenceKey, { taskId: task.i, assignmentId, occurrenceKey, taskRevision: 1, timeZoneVersion: 1, localDate: "2026-09-05", scheduledAt: "2026-09-04T16:00:00Z" }), "EXECUTOR")).toMatchObject({ status: "accepted" });
+    const event = (extra = {}) => command("EXECUTION_EVENT", uuidV7(), { assignmentId, occurrenceKey, taskRevision: 1, eventType: "COMPLETED", occurredAt: "2026-09-05T01:00:00Z", data: { status: "COMPLETED", executionKind: "CHOICE", localOccurrenceKey: "once", selectedOptionId: a, completedAt: "2026-09-05T01:00:00Z", ...extra } });
+    expect(await submit(event({ optionPoints: 999 }), "EXECUTOR")).toMatchObject({ status: "rejected" });
+    const completed = event();
+    expect(await submit(completed, "EXECUTOR")).toMatchObject({ status: "accepted" });
+    expect(JSON.parse(String(row("SELECT payload_json FROM execution_events WHERE id='" + completed.entityId + "'").payload_json))).toMatchObject({ awardedPoints: 12, selectedOptionName: "例外选项", optionPoints: 8 });
+  });
   it("validates and snapshots ordered STEPS results from the occurrence revision", async () => {
     const stepsContent = {
       v: 1, b: "StepsBatch000001", t: [{ i: "CloudTask0000001", n: "步骤任务", r: 1, u: { k: 5 }, s: [

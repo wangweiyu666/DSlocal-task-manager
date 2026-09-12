@@ -191,6 +191,23 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
     }
 }
 
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        listOf("task_definition", "task_instance", "task_step_definition", "instance_step").forEach {
+            db.execSQL("ALTER TABLE `$it` ADD COLUMN `executionConfigJson` TEXT")
+        }
+        listOf("task_step_definition", "instance_step").forEach {
+            db.execSQL("ALTER TABLE `$it` ADD COLUMN `conditionStepId` TEXT")
+            db.execSQL("ALTER TABLE `$it` ADD COLUMN `conditionOptionId` TEXT")
+        }
+        listOf("execution_progress", "instance_step").forEach {
+            db.execSQL("ALTER TABLE `$it` ADD COLUMN `selectedOptionId` TEXT")
+        }
+        db.execSQL("ALTER TABLE `task_instance` ADD COLUMN `awardedPoints` INTEGER")
+        db.execSQL("UPDATE `task_instance` SET `awardedPoints` = `points` WHERE `status` = 'COMPLETED'")
+    }
+}
+
 val MIGRATION_7_8 = object : Migration(7, 8) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `task_step_definition` ADD COLUMN `stepId` TEXT")

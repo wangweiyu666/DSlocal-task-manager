@@ -53,14 +53,20 @@ class RoomBackupRepository(
         )
     }
 
-    suspend fun replace(payload: BackupPayload) = database.withTransaction { writePayload(payload) }
+    suspend fun replace(payload: BackupPayload) = database.withTransaction {
+        BackupValidator.validateExtendedSnapshots(payload)
+        writePayload(payload)
+    }
 
     suspend fun previewMerge(backup: BackupPayload, backupChoices: Set<String> = emptySet()): MergePreview {
         val local = snapshot()
-        return BackupMerger.merge(local, backup, backupChoices)
+        return BackupMerger.merge(local, backup, backupChoices).also { BackupValidator.validateExtendedSnapshots(it.merged) }
     }
 
-    suspend fun applyMerge(preview: MergePreview) = database.withTransaction { writePayload(preview.merged) }
+    suspend fun applyMerge(preview: MergePreview) = database.withTransaction {
+        BackupValidator.validateExtendedSnapshots(preview.merged)
+        writePayload(preview.merged)
+    }
 
     private suspend fun writePayload(payload: BackupPayload) {
         val dao = database.backupDao()
@@ -172,10 +178,14 @@ internal object BackupMerger {
                 }
             }
         }
+        val choiceKeys = instances.filter { it.executionKind == "CHOICE" }.mapTo(hashSetOf()) { it.taskId to it.occurrenceKey }
         val progress = updated(
-            local.progress, backup.progress, { "${it.taskId}|${it.occurrenceKey}" }, ProgressBackup::updatedAtEpochMillis,
+            local.progress.filter { (it.taskId to it.occurrenceKey) !in choiceKeys }, backup.progress.filter { (it.taskId to it.occurrenceKey) !in choiceKeys }, { "${it.taskId}|${it.occurrenceKey}" }, ProgressBackup::updatedAtEpochMillis,
             "progress", "任务进度", { it.taskId }, { "计数 ${it.counterValue ?: 0}，计时 ${it.elapsedMillis ?: 0} 毫秒" }, state,
-        )
+        ) + instances.filter { it.executionKind == "CHOICE" }.mapNotNull { instance ->
+            val source = if (instance in local.instances) local else backup
+            source.progress.firstOrNull { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }
+        }
         val information = updated(
             local.information, backup.information, { "${it.taskId}|${it.occurrenceKey}" }, InformationBackup::updatedAtEpochMillis,
             "information", "告知正文", { it.taskId }, InformationBackup::content, state,
@@ -202,7 +212,14 @@ internal object BackupMerger {
             local.notes, backup.notes, { "${it.taskId}|${it.occurrenceKey}" }, NoteBackup::updatedAtEpochMillis,
             "note", "任务备注", { it.taskId }, NoteBackup::content, state,
         )
-        val ledger = immutable(local.ledger, backup.ledger, LedgerBackup::ledgerId, "积分流水", state)
+        val scoredKeys = instances.filter { it.executionKind in setOf("CHOICE", "NOTICE", "STEPS") }.mapTo(hashSetOf()) { it.taskId to it.occurrenceKey }
+        val ledger = immutable(local.ledger.filter { (it.taskId to it.occurrenceKey) !in scoredKeys }, backup.ledger.filter { (it.taskId to it.occurrenceKey) !in scoredKeys }, LedgerBackup::ledgerId, "积分流水", state) +
+            instances.filter { (it.taskId to it.occurrenceKey) in scoredKeys }.flatMap { instance ->
+                val fromBackup = instance !in local.instances ||
+                    (instance in backup.instances && "instance-steps:${instance.taskId}|${instance.occurrenceKey}" in state.backupChoices)
+                val source = if (fromBackup) backup else local
+                source.ledger.filter { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }
+            }
         val actionLogs = immutable(local.actionLogs, backup.actionLogs, ActionLogBackup::eventId, "操作记录", state)
         val resultRevisions = immutable(
             local.resultRevisions, backup.resultRevisions, ResultRevisionBackup::revisionId, "结果版本", state,
@@ -216,7 +233,7 @@ internal object BackupMerger {
                 definitions = definitions.sortedBy { it.taskId },
                 definitionSteps = definitionSteps.sortedWith(compareBy({ it.taskId }, { it.position })),
                 recurrenceExceptions = recurrenceExceptions.sortedWith(compareBy({ it.taskId }, { it.occurrenceDate })),
-                instances = instances.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
+                instances = instances.map { it.copy(awardedPoints = it.awardedPoints ?: it.points.takeIf { _ -> it.status == "COMPLETED" }) }.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 instanceSteps = instanceSteps.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey }, { it.position })),
                 progress = progress.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 information = information.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),

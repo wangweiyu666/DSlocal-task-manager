@@ -12,6 +12,10 @@ import com.ds.localtaskmanager.data.result.ResultRevisionReason
 import com.ds.localtaskmanager.domain.RecordIdGenerator
 import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
+import com.ds.localtaskmanager.domain.execution.configJson
+import com.ds.localtaskmanager.domain.execution.extendedExecution
+import com.ds.localtaskmanager.domain.execution.choiceOptions
+import com.ds.localtaskmanager.domain.execution.StepCondition
 import com.ds.localtaskmanager.domain.execution.ExecutionSpec
 import com.ds.localtaskmanager.domain.recurrence.EffectiveRecurrence
 import com.ds.localtaskmanager.domain.recurrence.RecurrenceDeadline
@@ -203,6 +207,9 @@ class RoomInstanceGenerationService(
                     executionKind = step.execution.kindName(),
                     executionAction = step.execution.actionValue(),
                     executionTarget = step.execution.targetValue(),
+                executionConfigJson = step.execution.configJson(),
+                conditionStepId = step.condition?.stepId,
+                conditionOptionId = step.condition?.optionId,
                 )
             } ?: stepDefinitions.map { step ->
                 InstanceStepEntity(
@@ -217,6 +224,9 @@ class RoomInstanceGenerationService(
                     executionKind = step.executionKind,
                     executionAction = step.executionAction,
                     executionTarget = step.executionTarget,
+                    executionConfigJson = step.executionConfigJson,
+                    conditionStepId = step.conditionStepId,
+                    conditionOptionId = step.conditionOptionId,
                 )
             }
             val instance = TaskInstanceEntity(
@@ -240,6 +250,7 @@ class RoomInstanceGenerationService(
                 executionKind = execution.kindName(),
                 executionAction = execution.actionValue(),
                 executionTarget = execution.targetValue(),
+            executionConfigJson = execution.configJson(),
                 reminderMinutesJson = reminders.toStorageJson(),
                 publishedAtEpochMillis = now,
                 groupNameSnapshot = groupNameSnapshot,
@@ -325,6 +336,7 @@ class RoomInstanceGenerationService(
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
         "MOOD" -> ExecutionSpec.Mood
+        "NOTICE", "CHOICE" -> extendedExecution(executionKind, executionConfigJson)
         "STEPS" -> ExecutionSpec.Steps
         else -> ExecutionSpec.Normal
     }
@@ -335,6 +347,8 @@ class RoomInstanceGenerationService(
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
         ExecutionSpec.Mood -> "MOOD"
+        is ExecutionSpec.Notice -> "NOTICE"
+        is ExecutionSpec.Choice -> "CHOICE"
         ExecutionSpec.Steps -> "STEPS"
     }
 

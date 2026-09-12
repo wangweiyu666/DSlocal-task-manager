@@ -11,6 +11,7 @@ com.ds.localtaskmanager.data.W21ReminderServiceTest
 com.ds.localtaskmanager.data.MoodInstanceIsolationTest
 com.ds.localtaskmanager.data.StepsImportRegressionTest
 com.ds.localtaskmanager.data.StepsExecutionRegressionTest
+com.ds.localtaskmanager.data.ConditionalChoiceTest
 com.ds.localtaskmanager.backup.*Test
 com.ds.localtaskmanager.diagnostics.*Test
 com.ds.localtaskmanager.ui.execution.*Test

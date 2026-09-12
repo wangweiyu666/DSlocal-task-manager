@@ -1,5 +1,10 @@
 package com.ds.localtaskmanager.ui.execution
 
+import com.ds.localtaskmanager.data.applicableSteps
+import com.ds.localtaskmanager.domain.execution.*
+import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
 import android.view.View
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
@@ -118,6 +123,7 @@ fun TaskDetailRoute(
         onStepSkip = viewModel::skipStep,
         onStepUndo = viewModel::undoStep,
         onStepInformationChange = viewModel::updateStepInformation,
+        onStepChoiceChange = viewModel::updateStepChoice,
         onStepMoodChange = viewModel::updateStepMood,
         onStepCounterChange = viewModel::updateStepCounter,
         onStepTimerToggle = { stepId -> if (state.activeStepTimerId == stepId) viewModel.pauseStepTimer(stepId) else viewModel.startStepTimer(stepId) },
@@ -125,7 +131,9 @@ fun TaskDetailRoute(
         onCounterChange = viewModel::setCounter,
         onTimerToggle = { if (state.timerRunning) viewModel.pauseTimer() else viewModel.startTimer() },
         onInformationChange = viewModel::updateInformationDraft,
-        onInformationSave = viewModel::saveInformationDraft,
+        onChoiceChange = viewModel::updateChoice,
+        onChoiceRetry = viewModel::retryChoiceSave,
+        onInformationRetry = viewModel::retryInformationSave,
         onNoteChange = viewModel::updateNoteDraft,
         onMoodRatingChange = viewModel::updateMoodRating,
         onMoodTextChange = viewModel::updateMoodText,
@@ -175,6 +183,7 @@ fun TaskDetailScreen(
     onStepConfirm: (String) -> Unit = {},
     onStepSkip: (Int) -> Unit = {},
     onStepUndo: (String) -> Unit = {},
+    onStepChoiceChange: (String, String) -> Unit = { _, _ -> },
     onStepInformationChange: (String, String) -> Unit = { _, _ -> },
     onStepMoodChange: (String, Int?, String) -> Unit = { _, _, _ -> },
     onStepCounterChange: (String, Int) -> Unit = { _, _ -> },
@@ -182,8 +191,10 @@ fun TaskDetailScreen(
     onStepRetrySave: (String) -> Unit = {},
     onCounterChange: (Int) -> Unit,
     onTimerToggle: () -> Unit,
+    onChoiceChange: (String) -> Unit = {},
+    onChoiceRetry: () -> Unit = {},
     onInformationChange: (String) -> Unit,
-    onInformationSave: () -> Unit,
+    onInformationRetry: () -> Unit,
     onNoteChange: (String) -> Unit,
     onComplete: () -> Unit,
     onUndo: () -> Unit,
@@ -226,7 +237,7 @@ fun TaskDetailScreen(
                             modifier = Modifier.fillMaxWidth(),
                             enabled = state.canComplete && !state.working,
                         ) {
-                            Text(if (state.working) "处理中…" else "完成任务")
+                            Text(if (state.working) "处理中…" else if (state.instance?.executionKind == "NOTICE") "确认已知晓" else "完成任务")
                         }
                     }
                     TaskStatus.COMPLETED.name -> ActionBar {
@@ -253,6 +264,7 @@ fun TaskDetailScreen(
                 onStepSkip = onStepSkip,
                 onStepUndo = onStepUndo,
                 onStepInformationChange = onStepInformationChange,
+                onStepChoiceChange = onStepChoiceChange,
                 onStepMoodChange = onStepMoodChange,
                 onStepCounterChange = onStepCounterChange,
                 onStepTimerToggle = onStepTimerToggle,
@@ -260,7 +272,10 @@ fun TaskDetailScreen(
                 onCounterChange = onCounterChange,
                 onTimerToggle = onTimerToggle,
                 onInformationChange = onInformationChange,
-                onInformationSave = onInformationSave,
+                onChoiceChange = onChoiceChange,
+                onChoiceRetry = onChoiceRetry,
+
+                onInformationRetry = onInformationRetry,
                 onCopyInformation = onCopyInformation,
                 onShareInformation = onShareInformation,
                 onNoteChange = onNoteChange,
@@ -316,6 +331,7 @@ private fun TaskDetailContent(
     onStepConfirm: (String) -> Unit,
     onStepSkip: (Int) -> Unit,
     onStepUndo: (String) -> Unit,
+    onStepChoiceChange: (String, String) -> Unit = { _, _ -> },
     onStepInformationChange: (String, String) -> Unit,
     onStepMoodChange: (String, Int?, String) -> Unit,
     onStepCounterChange: (String, Int) -> Unit,
@@ -323,8 +339,10 @@ private fun TaskDetailContent(
     onStepRetrySave: (String) -> Unit,
     onCounterChange: (Int) -> Unit,
     onTimerToggle: () -> Unit,
+    onChoiceChange: (String) -> Unit = {},
+    onChoiceRetry: () -> Unit = {},
     onInformationChange: (String) -> Unit,
-    onInformationSave: () -> Unit,
+    onInformationRetry: () -> Unit,
     onCopyInformation: () -> Unit,
     onShareInformation: () -> Unit,
     onNoteChange: (String) -> Unit,
@@ -373,6 +391,7 @@ private fun TaskDetailContent(
                 onSkip = onStepSkip,
                 onUndo = onStepUndo,
                 onInformationChange = onStepInformationChange,
+                onChoiceChange = onStepChoiceChange,
                 onMoodChange = onStepMoodChange,
                 onCounterChange = onStepCounterChange,
                 onTimerToggle = onStepTimerToggle,
@@ -386,11 +405,16 @@ private fun TaskDetailContent(
             editable = editable,
             working = state.working,
             informationDraft = state.informationDraft,
+            informationSaveState = state.informationSaveState,
             onCounterChange = onCounterChange,
             onTimerToggle = onTimerToggle,
             timerRunning = state.timerRunning,
             onInformationChange = onInformationChange,
-            onInformationSave = onInformationSave,
+            onChoiceChange = onChoiceChange,
+            onChoiceRetry = onChoiceRetry,
+            selectedOptionId = state.selectedOptionId,
+            choiceSaveState = state.choiceSaveState,
+            onInformationRetry = onInformationRetry,
             onCopyInformation = onCopyInformation,
             onShareInformation = onShareInformation,
         )
@@ -454,7 +478,7 @@ private fun Header(instance: TaskInstanceEntity) {
             StatusPill(instance.status)
             if (instance.singleDayAdjusted) Text("单日调整", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             Text(if (instance.required) "必做" else "选做", style = MaterialTheme.typography.labelLarge)
-            Text("${instance.points} 分", style = MaterialTheme.typography.labelLarge)
+            Text("${instance.awardedPoints ?: instance.points} 分", style = MaterialTheme.typography.labelLarge)
         }
         Text(
             buildString {
@@ -524,15 +548,28 @@ private fun ExecutionSection(
     editable: Boolean,
     working: Boolean,
     informationDraft: String,
+    informationSaveState: NoteSaveState,
+    selectedOptionId: String?,
+    choiceSaveState: NoteSaveState,
     onCounterChange: (Int) -> Unit,
     onTimerToggle: () -> Unit,
     timerRunning: Boolean,
+    onChoiceChange: (String) -> Unit = {},
+    onChoiceRetry: () -> Unit = {},
     onInformationChange: (String) -> Unit,
-    onInformationSave: () -> Unit,
+    onInformationRetry: () -> Unit,
     onCopyInformation: () -> Unit,
     onShareInformation: () -> Unit,
 ) {
     when (execution) {
+        is ExecutionState.Notice -> DetailCard("通知") { Text(execution.text); Text("阅读后请确认已知晓", style = MaterialTheme.typography.labelMedium) }
+        is ExecutionState.Choice -> DetailCard("单选") {
+            ChoiceAnswer(execution.options, selectedOptionId, editable && !working, onChoiceChange)
+            if (editable) {
+                Text(when (choiceSaveState) { NoteSaveState.SAVED -> "已自动保存"; NoteSaveState.SAVING -> "正在自动保存…"; NoteSaveState.ERROR -> "自动保存失败，请重试" }, style = MaterialTheme.typography.labelMedium)
+                if (choiceSaveState == NoteSaveState.ERROR) TextButton(onClick = onChoiceRetry, enabled = !working) { Text("重试保存") }
+            }
+        }
         is ExecutionState.Counter -> DetailCard("计数") {
             Text("${execution.value} / ${execution.target}", style = MaterialTheme.typography.titleLarge)
             if (execution.action == CounterAction.SLIDER) {
@@ -583,7 +620,20 @@ private fun ExecutionSection(
                 label = { Text("告知正文") },
                 supportingText = { Text("${informationDraft.codePointCount(0, informationDraft.length)} / 2000") },
             )
-            Button(onClick = onInformationSave, enabled = editable && !working) { Text("保存草稿") }
+            if (editable) {
+                Text(
+                    when (informationSaveState) {
+                        NoteSaveState.SAVING -> "正在自动保存…"
+                        NoteSaveState.SAVED -> "已自动保存"
+                        NoteSaveState.ERROR -> "自动保存失败，请重试"
+                    },
+                    color = if (informationSaveState == NoteSaveState.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                if (informationSaveState == NoteSaveState.ERROR) {
+                    TextButton(onClick = onInformationRetry, enabled = !working) { Text("重试保存") }
+                }
+            }
             if (informationDraft.trim().isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick = onCopyInformation, enabled = !working) { Text("复制正文") }
@@ -616,6 +666,7 @@ private fun StepsExecutionSection(
     onConfirm: (String) -> Unit,
     onSkip: (Int) -> Unit,
     onUndo: (String) -> Unit,
+    onChoiceChange: (String, String) -> Unit,
     onInformationChange: (String, String) -> Unit,
     onMoodChange: (String, Int?, String) -> Unit,
     onCounterChange: (String, Int) -> Unit,
@@ -623,8 +674,10 @@ private fun StepsExecutionSection(
     onRetrySave: (String) -> Unit,
 ) {
     DetailCard("分步骤执行") {
-        val openIndex = steps.indexOfFirst { it.stepStatus == "PENDING" }
-        steps.forEachIndexed { index, step ->
+        val visibleSteps = steps.applicableSteps()
+        val openIndex = visibleSteps.indexOfFirst { it.stepStatus == "PENDING" }
+        Text("${visibleSteps.count { it.stepStatus == "CONFIRMED" || it.stepStatus == "SKIPPED" }} / ${visibleSteps.size} 步", style = MaterialTheme.typography.labelMedium)
+        visibleSteps.forEachIndexed { index, step ->
             val confirmed = step.stepStatus == "CONFIRMED"
             val skipped = step.stepStatus == "SKIPPED"
             val open = editable && !working && (index == openIndex || confirmed)
@@ -635,12 +688,12 @@ private fun StepsExecutionSection(
                 }
                 if (!confirmed && !skipped && index != openIndex) Text("请先处理前一步", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 if (step.required) Text("必需步骤", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (confirmed || index == openIndex) StepAnswerEditor(step, editable && !working && index == openIndex, activeTimerId, step.stepId?.let { stepSaveStates[it] }, onInformationChange, onMoodChange, onCounterChange, onTimerToggle, onRetrySave)
+                if (confirmed || index == openIndex) StepAnswerEditor(step, editable && !working && index == openIndex, activeTimerId, step.stepId?.let { stepSaveStates[it] }, onChoiceChange, onInformationChange, onMoodChange, onCounterChange, onTimerToggle, onRetrySave)
                 if (confirmed || skipped) OutlinedButton(onClick = { onUndo(step.stepId ?: "") }, enabled = editable && !working && step.stepId != null) { Text(if (skipped) "重新处理此步骤" else "撤销此步骤") }
-                if (index == openIndex && !step.required && editable) OutlinedButton(onClick = { onSkip(index) }, enabled = !working) { Text("跳过选做步骤") }
-                if (index == openIndex && editable && step.stepId != null) Button(onClick = { onConfirm(step.stepId) }, enabled = !working && stepSatisfiedForUi(step)) { Text("完成此步骤") }
+                if (index == openIndex && !step.required && editable) OutlinedButton(onClick = { onSkip(step.position) }, enabled = !working) { Text("跳过选做步骤") }
+                if (index == openIndex && editable && step.stepId != null) Button(onClick = { onConfirm(step.stepId) }, enabled = !working && stepSatisfiedForUi(step)) { Text(if (step.executionKind == "NOTICE") "确认已知晓" else "完成此步骤") }
             }
-            if (index != steps.lastIndex) HorizontalDivider()
+            if (index != visibleSteps.lastIndex) HorizontalDivider()
         }
     }
 }
@@ -651,6 +704,7 @@ private fun StepAnswerEditor(
     editable: Boolean,
     activeTimerId: String?,
     saveState: NoteSaveState?,
+    onChoiceChange: (String, String) -> Unit,
     onInformationChange: (String, String) -> Unit,
     onMoodChange: (String, Int?, String) -> Unit,
     onCounterChange: (String, Int) -> Unit,
@@ -674,6 +728,8 @@ private fun StepAnswerEditor(
             style = MaterialTheme.typography.labelSmall,
         )
         when (step.executionKind) {
+        "NOTICE" -> Text((extendedExecution("NOTICE", step.executionConfigJson) as ExecutionSpec.Notice).text)
+        "CHOICE" -> ChoiceAnswer(choiceOptions(step.executionConfigJson), step.selectedOptionId, editable) { onChoiceChange(step.stepId, it) }
         "COUNTER" -> {
             Text("${step.counterValue ?: 0} / ${step.executionTarget ?: 0}", style = MaterialTheme.typography.titleLarge)
             if (step.executionAction == 2) {
@@ -711,6 +767,8 @@ private fun StepAnswerEditor(
 }
 
 private fun stepAnswerSummary(step: InstanceStepEntity): String = when (step.executionKind) {
+    "NOTICE" -> (if (step.stepStatus == "CONFIRMED") "已知晓：" else "") + (extendedExecution("NOTICE", step.executionConfigJson) as ExecutionSpec.Notice).text
+    "CHOICE" -> choiceOptions(step.executionConfigJson).find { it.id == step.selectedOptionId }?.let { "${it.name} · +${it.points} 分" } ?: "尚未选择"
     "COUNTER" -> "计数：${step.counterValue ?: 0} / ${step.executionTarget ?: 0}"
     "TIMER" -> "计时：${formatDuration(step.elapsedMillis ?: 0)} / ${formatDuration((step.executionTarget ?: 0) * 1000L)}"
     "INFORMATION" -> "填写：${step.informationContent.orEmpty().ifBlank { "未填写" }}"
@@ -726,6 +784,7 @@ private fun compactInformation(value: String): String {
 }
 
 private fun stepSatisfiedForUi(step: InstanceStepEntity): Boolean = when (step.executionKind) {
+    "CHOICE" -> choiceOptions(step.executionConfigJson).any { it.id == step.selectedOptionId }
     "COUNTER" -> (step.counterValue ?: 0) >= (step.executionTarget ?: Int.MAX_VALUE)
     "TIMER" -> (step.elapsedMillis ?: 0L) >= (step.executionTarget ?: Int.MAX_VALUE) * 1_000L
     "INFORMATION" -> !step.informationContent.isNullOrBlank() && step.informationContent!!.codePointCount(0, step.informationContent!!.length) <= 2000
@@ -775,4 +834,17 @@ private fun statusLabel(status: String): String = when (status) {
 private fun formatDuration(millis: Long): String {
     val seconds = millis / 1_000
     return "%02d:%02d".format(seconds / 60, seconds % 60)
+}
+
+@Composable
+internal fun ChoiceAnswer(options: List<ChoiceOption>, selectedOptionId: String?, editable: Boolean, onChange: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        options.forEach { option ->
+            Row(Modifier.fillMaxWidth().selectable(selected = selectedOptionId == option.id, enabled = editable, role = Role.RadioButton, onClick = { onChange(option.id) }).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = selectedOptionId == option.id, onClick = null, enabled = editable)
+                Text(option.name, Modifier.weight(1f).padding(horizontal = 8.dp))
+                Text("+${option.points} 分", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
 }

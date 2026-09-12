@@ -1,3 +1,5 @@
+import { evaluateBranches, validateConditionalSteps } from "../../shared/protocol/execution";
+import type { Dst1Step } from "../../shared/protocol/types";
 import { authenticate, requireAccountReady } from "./auth";
 import { decodeCursor, encodeCursor } from "./cursor";
 import { addSeconds, sha256, uuidV7 } from "./crypto";
@@ -46,10 +48,12 @@ interface EffectiveStep {
   n: string;
   r: number;
   u?: Record<string, unknown>;
+  c?: { s: string; o: string };
 }
 
 interface EffectiveTaskDefinition {
   name: string;
+  points: number;
   execution?: Record<string, unknown> | null;
   steps: EffectiveStep[];
 }
@@ -71,15 +75,17 @@ function effectiveTaskDefinition(content: Record<string, unknown>, localDate: st
     const required = integerField(step, "r", 0, 1);
     const execution = step.u === undefined ? undefined : object(step.u, `步骤[${index}].u`);
     if (execution && Number(execution.k) === 5) throw new ApiError(400, "INVALID_REQUEST", "步骤不能嵌套 STEPS 执行");
-    return { i: id, n: name, r: required, ...(execution ? { u: execution } : {}) };
+    return { i: id, n: name, r: required, ...(execution ? { u: execution } : {}), ...(step.c ? { c: step.c as { s: string; o: string } } : {}) };
   }) : [];
   if (new Set(steps.map((step) => step.i)).size !== steps.length) throw new ApiError(400, "INVALID_REQUEST", "步骤 ID 不能重复");
   const name = stringField(merged, "n", 100000);
   if (Array.from(name).length > 100) throw new ApiError(400, "INVALID_REQUEST", "任务名称过长");
-  return { name, execution, steps };
+  try { validateConditionalSteps(steps as Dst1Step[]); } catch { throw new ApiError(400, "INVALID_REQUEST", "条件步骤定义无效"); }
+  return { name, execution, steps, points: merged.p === undefined ? 0 : integerField(merged, "p", 0, 9999) };
 }
 
 function normalizedStepsData(data: Record<string, unknown>, definition: EffectiveTaskDefinition, localDate: string): Record<string, unknown> {
+  strictObject(data, ["status", "localOccurrenceKey", "taskName", "taskDate", "executionKind", "stepResults", "completedAt"], "data");
   const execution = definition.execution;
   if (!execution || Number(execution.k) !== 5 || definition.steps.length < 1 || definition.steps.length > 50) {
     throw new ApiError(400, "INVALID_REQUEST", "任务版本不是有效 STEPS 定义");
@@ -90,14 +96,25 @@ function normalizedStepsData(data: Record<string, unknown>, definition: Effectiv
   if (typeof data.localOccurrenceKey !== "string" || data.localOccurrenceKey.length > 160) throw new ApiError(400, "INVALID_REQUEST", "localOccurrenceKey 无效");
   const submitted = data.stepResults as unknown[];
   if (submitted.length !== definition.steps.length) throw new ApiError(400, "INVALID_REQUEST", "步骤结果必须完整且按顺序提交");
+  let awardedPoints = definition.points;
+  const answers = new Map<string, { status: string; selectedOptionId?: string }>();
   const normalized = definition.steps.map((step, index) => {
     const raw = object(submitted[index], `stepResults[${index}]`);
-    const allowed = ["stepId", "status", "counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText"];
+    const allowed = ["stepId", "status", "counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText", "selectedOptionId"];
     if (Object.keys(raw).some((key) => !allowed.includes(key))) throw new ApiError(400, "INVALID_REQUEST", "步骤结果包含未知字段");
-    if (raw.stepId !== step.i || (raw.status !== "CONFIRMED" && raw.status !== "SKIPPED")) throw new ApiError(400, "INVALID_REQUEST", "步骤结果 ID、状态或顺序无效");
+    if (raw.stepId !== step.i || (raw.status !== "CONFIRMED" && raw.status !== "SKIPPED" && raw.status !== "NOT_APPLICABLE")) throw new ApiError(400, "INVALID_REQUEST", "步骤结果 ID、状态或顺序无效");
     const result: Record<string, unknown> = { stepId: step.i, status: raw.status, name: step.n, required: step.r === 1, execution: step.u ?? null };
-    const answerKeys = ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText"];
+    const answerKeys = ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText", "selectedOptionId"];
     const suppliedAnswers = answerKeys.filter((key) => raw[key] !== undefined);
+    const branch = evaluateBranches(definition.steps as Dst1Step[], answers)[index];
+    if (branch === "WAITING") throw new ApiError(400, "INVALID_REQUEST", "条件步骤的前置选择尚未确认");
+    if (branch === "NOT_APPLICABLE") {
+      if (raw.status !== "NOT_APPLICABLE" || suppliedAnswers.length) throw new ApiError(400, "INVALID_REQUEST", "不适用步骤不能执行或携带答案");
+      answers.set(step.i, { status: "NOT_APPLICABLE" });
+      return result;
+    }
+    if (raw.status === "NOT_APPLICABLE") throw new ApiError(400, "INVALID_REQUEST", "适用步骤不能标为不适用");
+    answers.set(step.i, { status: String(raw.status), selectedOptionId: typeof raw.selectedOptionId === "string" ? raw.selectedOptionId : undefined });
     if (raw.status === "SKIPPED") {
       if (step.r === 1 || suppliedAnswers.length > 0) throw new ApiError(400, "INVALID_REQUEST", "必需步骤不能跳过，跳过步骤不能携带答案");
       return result;
@@ -117,10 +134,19 @@ function normalizedStepsData(data: Record<string, unknown>, definition: Effectiv
     } else if (leaf.k === 4) {
       if (suppliedAnswers.length !== 2 || !Number.isInteger(raw.moodRating) || Number(raw.moodRating) < 1 || Number(raw.moodRating) > 5 || typeof raw.moodText !== "string" || Array.from(raw.moodText).length > 2000) throw new ApiError(400, "INVALID_REQUEST", "心情步骤答案无效");
       result.moodRating = raw.moodRating; result.moodText = raw.moodText;
+    } else if (leaf.k === 6) {
+      if (suppliedAnswers.length) throw new ApiError(400, "INVALID_REQUEST", "通知确认不能携带填写答案");
+      result.noticeContent = leaf.t;
+    } else if (leaf.k === 7) {
+      const options = leaf.o as Array<{ i: string; n: string; p: number }>;
+      const option = options.find((item) => item.i === raw.selectedOptionId);
+      if (suppliedAnswers.length !== 1 || !option) throw new ApiError(400, "INVALID_REQUEST", "请选择有效选项");
+      result.selectedOptionId = option.i; result.selectedOptionName = option.n; result.optionPoints = option.p;
+      awardedPoints += option.p;
     } else throw new ApiError(400, "INVALID_REQUEST", "步骤执行类型无效");
     return result;
   });
-  return { status: "COMPLETED", executionKind: "STEPS", taskName: definition.name, taskDate: localDate, localOccurrenceKey: data.localOccurrenceKey, stepResults: normalized };
+  return { status: "COMPLETED", executionKind: "STEPS", taskName: definition.name, taskDate: localDate, localOccurrenceKey: data.localOccurrenceKey, stepResults: normalized, basePoints: definition.points, awardedPoints };
 }
 
 function receiptStatus(result: CommandResult): "ACCEPTED" | "CONFLICT" | "REJECTED" {
@@ -386,7 +412,7 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
   const eventData = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data as Record<string, unknown> : {};
   let storedData: Record<string, unknown> | null = payload.data === undefined ? null : eventData;
   const hasMood = "moodRating" in eventData || "moodText" in eventData;
-  if (!undo && (terminal || hasMood || eventData.executionKind === "MOOD" || eventData.executionKind === "STEPS" || "stepResults" in eventData)) {
+  if (!undo && (terminal || hasMood || eventData.executionKind === "NOTICE" || eventData.executionKind === "CHOICE" || "selectedOptionId" in eventData || eventData.executionKind === "MOOD" || eventData.executionKind === "STEPS" || "stepResults" in eventData)) {
     const revision = await env.DB.prepare("SELECT r.content_json,o.local_date FROM task_revisions r JOIN task_occurrences o ON o.task_id=r.task_id AND o.space_id=r.space_id WHERE o.space_id=? AND o.assignment_id=? AND o.occurrence_key=? AND r.revision=?")
       .bind(spaceId, assignmentId, storedOccurrenceKey, taskRevision).first<{ content_json: string; local_date: string }>();
     if (!revision) throw new ApiError(400, "INVALID_REQUEST", "任务版本不存在");
@@ -406,6 +432,29 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
       }
     } else if (eventData.executionKind === "STEPS" || "stepResults" in eventData) {
       throw new ApiError(400, "INVALID_REQUEST", "只有 STEPS 任务可以提交 stepResults");
+    }
+    const specialKind = execution?.k;
+    if (execution && (specialKind === 6 || specialKind === 7)) {
+      if (!terminal) throw new ApiError(400, "INVALID_REQUEST", "通知和选项结果只能随整项完成提交");
+      strictObject(eventData, ["status", "localOccurrenceKey", "taskName", "taskDate", "executionKind", "selectedOptionId", "completedAt"], "data");
+      if (typeof eventData.localOccurrenceKey !== "string" || eventData.localOccurrenceKey.length > 160) throw new ApiError(400, "INVALID_REQUEST", "localOccurrenceKey 无效");
+      const kind = specialKind === 6 ? "NOTICE" : "CHOICE";
+      if (eventData.executionKind !== kind || !["COMPLETED", "MISSED"].includes(String(eventData.status))) throw new ApiError(400, "INVALID_REQUEST", "新类型结果状态不匹配");
+      if ((eventData.status !== "COMPLETED" || specialKind === 6) && eventData.selectedOptionId !== undefined) throw new ApiError(400, "INVALID_REQUEST", "此结果不能携带选择答案");
+      storedData = { status: eventData.status, executionKind: kind, localOccurrenceKey: eventData.localOccurrenceKey, taskName: definition.name, taskDate: revision.local_date };
+      if (eventData.status === "COMPLETED") {
+        storedData.basePoints = definition.points;
+        storedData.awardedPoints = definition.points;
+        if (specialKind === 6) storedData.noticeContent = execution.t;
+        else {
+          const option = (execution.o as Array<{ i: string; n: string; p: number }>).find((item) => item.i === eventData.selectedOptionId);
+          if (!option) throw new ApiError(400, "INVALID_REQUEST", "请选择任务版本中的有效选项");
+          storedData.selectedOptionId = option.i; storedData.selectedOptionName = option.n; storedData.optionPoints = option.p;
+          storedData.awardedPoints = definition.points + option.p;
+        }
+      }
+    } else if (eventData.executionKind === "NOTICE" || eventData.executionKind === "CHOICE" || eventData.selectedOptionId !== undefined) {
+      throw new ApiError(400, "INVALID_REQUEST", "选项或通知类型与任务版本不一致");
     }
     const isMood = execution !== null && typeof execution === "object" && (execution as Record<string, unknown>).k === 4;
     if (isMood && terminal && !["COMPLETED", "MISSED"].includes(String(eventData.status))) throw new ApiError(400, "INVALID_REQUEST", "心情结果状态无效");

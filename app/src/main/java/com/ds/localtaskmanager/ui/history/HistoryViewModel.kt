@@ -253,6 +253,7 @@ class HistoryDetailViewModel(
                         instance = result.instance,
                         steps = result.steps,
                         execution = result.execution,
+                        selectedOptionId = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Choice)?.selectedOptionId,
                         informationDraft = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Information)?.content.orEmpty(),
                         moodRating = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Mood)?.rating,
                         moodText = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Mood)?.text.orEmpty(),

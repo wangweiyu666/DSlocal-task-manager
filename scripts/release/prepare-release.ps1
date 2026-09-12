@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('release', 'full')][string]$TestProfile = 'release',
-    [string]$Version = '0.1.0-alpha.10',
+    [string]$Version = '0.1.0-alpha.11',
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$ArchiveRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'DStationery-Releases')
@@ -19,7 +19,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Release verification build failed.' }
 
     $sourceApk = Join-Path $repo 'app\build\outputs\apk\offline\release\app-offline-release.apk'
-    & (Join-Path $PSScriptRoot 'audit-apk.ps1') -Apk $sourceApk -AndroidHome $AndroidHome
+    & (Join-Path $PSScriptRoot 'audit-apk.ps1') -Apk $sourceApk -AndroidHome $AndroidHome -ExpectedVersionName $Version -ExpectedVersionCode 12
     $archive = Join-Path $ArchiveRoot $Version
     New-Item -ItemType Directory -Force -Path $archive | Out-Null
     $apk = Join-Path $archive "DStationery-$Version.apk"

@@ -244,7 +244,7 @@ private fun TaskCard(
                 Text(
                     buildString {
                         append(if (instance.required) "必做" else "选做")
-                        append(" · ${instance.points} 分")
+                        append(" · ${instance.awardedPoints ?: instance.points} 分")
                         instance.deadline?.let { append(" · 截止 ${formatDeadlineForDisplay(it)}") }
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

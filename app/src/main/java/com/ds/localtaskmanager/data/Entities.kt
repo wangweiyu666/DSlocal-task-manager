@@ -68,6 +68,7 @@ data class TaskDefinitionEntity(
     val executionAction: Int? = null,
     val executionTarget: Int? = null,
     val reminderMinutesJson: String? = null,
+    val executionConfigJson: String? = null,
 )
 
 @Entity(
@@ -93,6 +94,9 @@ data class TaskStepDefinitionEntity(
     val executionKind: String = "NORMAL",
     val executionAction: Int? = null,
     val executionTarget: Int? = null,
+    val executionConfigJson: String? = null,
+    val conditionStepId: String? = null,
+    val conditionOptionId: String? = null,
 )
 
 @Entity(
@@ -166,6 +170,8 @@ data class TaskInstanceEntity(
     val publishedAtEpochMillis: Long = createdAtEpochMillis,
     val groupNameSnapshot: String? = null,
     @ColumnInfo(defaultValue = "0") val singleDayAdjusted: Boolean = false,
+    val executionConfigJson: String? = null,
+    val awardedPoints: Int? = null,
 )
 
 @Entity(
@@ -200,6 +206,10 @@ data class InstanceStepEntity(
     val informationContent: String? = null,
     val moodRating: Int? = null,
     val moodText: String? = null,
+    val executionConfigJson: String? = null,
+    val conditionStepId: String? = null,
+    val conditionOptionId: String? = null,
+    val selectedOptionId: String? = null,
 )
 
 @Entity(
@@ -223,6 +233,7 @@ data class ExecutionProgressEntity(
     val elapsedMillis: Long?,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    val selectedOptionId: String? = null,
 )
 
 @Entity(

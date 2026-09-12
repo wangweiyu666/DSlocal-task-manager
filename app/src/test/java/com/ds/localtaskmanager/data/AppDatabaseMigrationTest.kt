@@ -33,6 +33,21 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
+    fun `version 8 migrates actual awards without converting old task types`() {
+        createLegacyDatabase(V7_DATABASE, 8) { db ->
+            insertV1Task(db, "LegacyTaskV80001", "LegacyGroupV8001")
+            listOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).forEach { it.migrate(db) }
+            db.execSQL("UPDATE task_instance SET status='COMPLETED', points=17, completedAtEpochMillis=400")
+        }
+        val database = openCurrent(V7_DATABASE)
+        val instance = kotlinx.coroutines.runBlocking { database.instanceDao().getInstance("LegacyTaskV80001") }!!
+        assertEquals(17, instance.awardedPoints)
+        assertEquals("NORMAL", instance.executionKind)
+        assertEquals(null, instance.executionConfigJson)
+        assertNoForeignKeyViolations(database)
+    }
+
+    @Test
     fun `version 3 migrates to current and preserves execution data`() {
         createLegacyDatabase(V3_DATABASE, 3) { db ->
             insertV1Task(db, "LegacyTaskV30001", "LegacyGroupV3001")
@@ -301,7 +316,7 @@ class AppDatabaseMigrationTest {
 
     private fun openCurrent(name: String): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
             .allowMainThreadQueries()
             .build()
             .also {

@@ -19,7 +19,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class BackupPayload(
-    val schemaVersion: Int = 4,
+    val schemaVersion: Int = 5,
     val settings: PortableSettings = PortableSettings(),
     val profiles: List<ProfileBackup> = emptyList(),
     val importBatches: List<ImportBatchBackup> = emptyList(),
@@ -50,7 +50,7 @@ data class BackupMetadata(
     val createdAtEpochMillis: Long,
     val appVersion: String,
     val sourceTimeZone: String,
-    val payloadSchemaVersion: Int = 4,
+    val payloadSchemaVersion: Int = 5,
     val counts: BackupCounts,
 )
 
@@ -102,12 +102,14 @@ data class DefinitionBackup(
     val executionAction: Int? = null,
     val executionTarget: Int? = null,
     val reminderMinutesJson: String? = null,
+    val executionConfigJson: String? = null,
 )
 
 @Serializable data class DefinitionStepBackup(
     val taskId: String, val position: Int, val name: String, val required: Boolean,
     val stepId: String? = null, val executionKind: String = "NORMAL",
     val executionAction: Int? = null, val executionTarget: Int? = null,
+    val executionConfigJson: String? = null, val conditionStepId: String? = null, val conditionOptionId: String? = null,
 )
 
 @Serializable data class RecurrenceExceptionBackup(
@@ -144,6 +146,8 @@ data class InstanceBackup(
     val publishedAtEpochMillis: Long,
     val groupNameSnapshot: String?,
     val singleDayAdjusted: Boolean = false,
+    val executionConfigJson: String? = null,
+    val awardedPoints: Int? = points.takeIf { status == "COMPLETED" },
 )
 
 @Serializable data class InstanceStepBackup(
@@ -164,6 +168,10 @@ data class InstanceBackup(
     val informationContent: String? = null,
     val moodRating: Int? = null,
     val moodText: String? = null,
+    val executionConfigJson: String? = null,
+    val conditionStepId: String? = null,
+    val conditionOptionId: String? = null,
+    val selectedOptionId: String? = null,
 )
 
 @Serializable data class ProgressBackup(
@@ -174,6 +182,7 @@ data class InstanceBackup(
     val elapsedMillis: Long?,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    val selectedOptionId: String? = null,
 )
 
 @Serializable data class MoodBackup(
@@ -247,26 +256,26 @@ internal fun ImportBatchEntity.toBackup() = ImportBatchBackup(batchId, note, imp
 internal fun ImportBatchBackup.toEntity() = ImportBatchEntity(batchId, note, importedAtEpochMillis)
 internal fun TaskGroupEntity.toBackup() = GroupBackup(groupId, name, completeMessage, incompleteMessage, archived, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun GroupBackup.toEntity() = TaskGroupEntity(groupId, name, completeMessage, incompleteMessage, archived, createdAtEpochMillis, updatedAtEpochMillis)
-internal fun TaskStepDefinitionEntity.toBackup() = DefinitionStepBackup(taskId, position, name, required, stepId, executionKind, executionAction, executionTarget)
+internal fun TaskStepDefinitionEntity.toBackup() = DefinitionStepBackup(taskId, position, name, required, stepId, executionKind, executionAction, executionTarget, executionConfigJson, conditionStepId, conditionOptionId)
 internal fun DefinitionStepBackup.toEntity() = TaskStepDefinitionEntity(
     taskId, position, name, required,
-    stepId ?: stableBackupStepId(taskId, position), executionKind, executionAction, executionTarget,
+    stepId ?: stableBackupStepId(taskId, position), executionKind, executionAction, executionTarget, executionConfigJson, conditionStepId, conditionOptionId,
 )
 internal fun RecurrenceExceptionEntity.toBackup() = RecurrenceExceptionBackup(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun RecurrenceExceptionBackup.toEntity() = RecurrenceExceptionEntity(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
-internal fun InstanceStepEntity.toBackup() = InstanceStepBackup(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis, stepId, executionKind, executionAction, executionTarget, stepStatus, counterValue, elapsedMillis, informationContent, moodRating, moodText)
+internal fun InstanceStepEntity.toBackup() = InstanceStepBackup(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis, stepId, executionKind, executionAction, executionTarget, stepStatus, counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId)
 internal fun InstanceStepBackup.toEntity() = InstanceStepEntity(
     taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis,
     stepId.takeIf { it.isNotBlank() } ?: stableBackupStepId(taskId, position), executionKind,
     executionAction, executionTarget,
     if (stepId.isBlank()) (if (completed) "CONFIRMED" else "PENDING") else stepStatus,
-    counterValue, elapsedMillis, informationContent, moodRating, moodText,
+    counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId,
 )
 
 private fun stableBackupStepId(taskId: String, position: Int): String =
     "s${taskId.take(12).padEnd(12, '0')}${position.toString(36).padStart(3, '0')}"
-internal fun ExecutionProgressEntity.toBackup() = ProgressBackup(taskId, occurrenceKey, executionKind, counterValue, elapsedMillis, createdAtEpochMillis, updatedAtEpochMillis)
-internal fun ProgressBackup.toEntity() = ExecutionProgressEntity(taskId, occurrenceKey, executionKind, counterValue, elapsedMillis, createdAtEpochMillis, updatedAtEpochMillis)
+internal fun ExecutionProgressEntity.toBackup() = ProgressBackup(taskId, occurrenceKey, executionKind, counterValue, elapsedMillis, createdAtEpochMillis, updatedAtEpochMillis, selectedOptionId)
+internal fun ProgressBackup.toEntity() = ExecutionProgressEntity(taskId, occurrenceKey, executionKind, counterValue, elapsedMillis, createdAtEpochMillis, updatedAtEpochMillis, selectedOptionId)
 internal fun InformationSubmissionEntity.toBackup() = InformationBackup(taskId, occurrenceKey, content, createdAtEpochMillis, updatedAtEpochMillis, submittedAtEpochMillis)
 internal fun InformationBackup.toEntity() = InformationSubmissionEntity(taskId, occurrenceKey, content, createdAtEpochMillis, updatedAtEpochMillis, submittedAtEpochMillis)
 internal fun TaskNoteEntity.toBackup() = NoteBackup(taskId, occurrenceKey, content, createdAtEpochMillis, updatedAtEpochMillis)
@@ -283,7 +292,7 @@ internal fun TaskDefinitionEntity.toBackup() = DefinitionBackup(
     completionMessage, stepsFingerprint, cancelled, createdAtEpochMillis, updatedAtEpochMillis,
     recurrenceFrequency, recurrenceStartDate, recurrenceEndDate, recurrenceCount,
     recurrenceWeekdaysMask, recurrenceDeadlineTime, executionKind, executionAction,
-    executionTarget, reminderMinutesJson,
+    executionTarget, reminderMinutesJson, executionConfigJson,
 )
 
 internal fun DefinitionBackup.toEntity() = TaskDefinitionEntity(
@@ -291,19 +300,19 @@ internal fun DefinitionBackup.toEntity() = TaskDefinitionEntity(
     completionMessage, stepsFingerprint, cancelled, createdAtEpochMillis, updatedAtEpochMillis,
     recurrenceFrequency, recurrenceStartDate, recurrenceEndDate, recurrenceCount,
     recurrenceWeekdaysMask, recurrenceDeadlineTime, executionKind, executionAction,
-    executionTarget, reminderMinutesJson,
+    executionTarget, reminderMinutesJson, executionConfigJson,
 )
 
 internal fun TaskInstanceEntity.toBackup() = InstanceBackup(
     taskId, occurrenceKey, name, description, taskDate, deadline, groupId, required, points,
     sortOrder, completionMessage, status, completedAtEpochMillis, createdAtEpochMillis,
     updatedAtEpochMillis, category, executionKind, executionAction, executionTarget,
-    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted,
+    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted, executionConfigJson, awardedPoints,
 )
 
 internal fun InstanceBackup.toEntity() = TaskInstanceEntity(
     taskId, occurrenceKey, name, description, taskDate, deadline, groupId, required, points,
     sortOrder, completionMessage, status, completedAtEpochMillis, createdAtEpochMillis,
     updatedAtEpochMillis, category, executionKind, executionAction, executionTarget,
-    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted,
+    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted, executionConfigJson, awardedPoints ?: points.takeIf { status == "COMPLETED" },
 )

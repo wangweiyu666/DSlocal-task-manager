@@ -13,7 +13,7 @@ internal class HistoricalPointsTransferService(
     suspend fun moveTaskToGroup(taskId: String, newGroupId: String?) {
         val balances = database.auditDao().getGroupBalances(taskId)
         balances.filter { it.groupId != newGroupId && it.balance != 0 }.forEach { balance ->
-            val now = clock.millis()
+            val now = maxOf(clock.millis(), (database.auditDao().getLedger(taskId, balance.occurrenceKey).maxOfOrNull { it.createdAtEpochMillis } ?: 0) + 1)
             database.auditDao().insertLedger(
                 PointsLedgerEntity(
                     ledgerId = idGenerator.next(),

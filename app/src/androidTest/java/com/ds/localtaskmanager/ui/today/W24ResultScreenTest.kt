@@ -124,7 +124,7 @@ class W24ResultScreenTest {
                         informationDraft = "正文",
                     ),
                     onBack = {}, onRetry = {}, onStepChange = { _, _ -> }, onCounterChange = {},
-                    onTimerToggle = {}, onInformationChange = {}, onInformationSave = {}, onNoteChange = {},
+                    onTimerToggle = {}, onInformationChange = {}, onInformationRetry = {}, onNoteChange = {},
                     onComplete = {}, onUndo = {}, onDismissCompletion = {}, onDismissError = {},
                     onCopyInformation = { copied++ }, onShareInformation = { shared++ }, readOnly = true,
                 )

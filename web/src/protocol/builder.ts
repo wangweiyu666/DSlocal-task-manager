@@ -17,7 +17,7 @@ export function draftTaskToDst1(task: DraftTask): Dst1Task {
   }
   if (task.points !== 0) result.p = task.points;
   if (task.order !== null) result.o = task.order;
-  if (task.steps.length) result.s = task.steps.map((step) => ({ i: step.i, n: step.n.trim().normalize("NFC"), r: step.r, ...(step.u ? { u: step.u } : {}) }));
+  if (task.steps.length) result.s = task.steps.map((step) => ({ i: step.i, n: step.n.trim().normalize("NFC"), r: step.r, ...(step.u ? { u: step.u } : {}), ...(step.c ? { c: { ...step.c } } : {}) }));
   if (task.execution) result.u = task.execution;
   if (task.recurrence) result.x = task.recurrence;
   if (task.completionMessage !== "") result.m = task.completionMessage.trim().normalize("NFC");

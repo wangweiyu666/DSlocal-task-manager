@@ -15,6 +15,28 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class ConnectedRuntimeTest {
     @Test
+    fun choicesAndInactiveBranchesSerializeOnlyConfirmedAnswers() {
+        val option = "Option0000000001"
+        val config = """{"o":[{"i":"$option","n":"零分","p":0},{"i":"Option0000000002","n":"九分","p":9}]}"""
+        val root = baseInstance("CHOICE").copy(executionConfigJson = config, awardedPoints = 2)
+        assertEquals(null, prepareResultSnapshot(root, root, null, null, null, "invalid"))
+        assertEquals(option, prepareResultSnapshot(root, root, null, null, null, option)?.selectedOptionId)
+        val data = buildExecutionResultData(root, null, selectedOptionId = option)
+        assertEquals(option, data["selectedOptionId"]?.jsonPrimitive?.content)
+        assertFalse(data.containsKey("awardedPoints"))
+        assertFalse(buildCompletionUndoData(root, root.updatedAtEpochMillis + 1, "UTC").containsKey("selectedOptionId"))
+        val steps = listOf(
+            InstanceStepEntity(root.taskId, "once", 0, "选择", true, true, 1, "Step000000000001", "CHOICE", stepStatus = "CONFIRMED", executionConfigJson = config, selectedOptionId = option),
+            InstanceStepEntity(root.taskId, "once", 1, "分支草稿", true, false, 1, "Step000000000002", "CHOICE", stepStatus = "NOT_APPLICABLE", executionConfigJson = config, conditionStepId = "Step000000000001", conditionOptionId = "Option0000000002", selectedOptionId = option),
+        )
+        assertTrue(hasFinalStepSnapshot(steps))
+        val results = buildExecutionResultData(baseInstance("STEPS"), null, steps = steps)["stepResults"]!!.jsonArray
+        assertEquals(option, results[0].jsonObject["selectedOptionId"]!!.jsonPrimitive.content)
+        assertEquals(setOf("stepId", "status"), results[1].jsonObject.keys)
+        assertFalse(hasFinalStepSnapshot(steps.map { if (it.position == 1) it.copy(stepStatus = "CONFIRMED", completed = true) else it }))
+    }
+
+    @Test
     fun unauthorizedSessionFailureRequiresLocalPurge() {
         assertTrue(isTerminalSessionFailure(CloudApiException(401, "SESSION_EXPIRED", "expired", false)))
         assertTrue(isTerminalSessionFailure(CloudApiException(401, "SESSION_REPLAYED", "replayed", false)))

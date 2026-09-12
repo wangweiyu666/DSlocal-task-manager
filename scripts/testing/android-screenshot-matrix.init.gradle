@@ -1,0 +1,21 @@
+// Reuse shared references, with reviewed overrides for flavor-specific UI text.
+gradle.projectsEvaluated {
+    allprojects { project ->
+        def validation = project.tasks.findByName('validateProductionDebugScreenshotTest')
+        if (validation != null) {
+            def overrides = project.file('src/screenshotTestProductionDebug/reference')
+            def references = project.layout.buildDirectory.dir('screenshot-matrix/production-reference')
+            def prepare = project.tasks.register('prepareProductionScreenshotReferences', Sync) {
+                from(project.file('src/screenshotTestOfflineDebug/reference')) {
+                    exclude { entry -> new File(overrides, entry.relativePath.pathString).isFile() }
+                }
+                from(overrides)
+                into(references)
+            }
+            validation.dependsOn(prepare)
+            validation.testEngineInput.referenceImageDir.set(
+                references
+            )
+        }
+    }
+}

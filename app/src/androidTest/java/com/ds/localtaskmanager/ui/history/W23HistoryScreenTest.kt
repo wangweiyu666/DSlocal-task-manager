@@ -89,7 +89,7 @@ class W23HistoryScreenTest {
                     onCounterChange = {},
                     onTimerToggle = {},
                     onInformationChange = {},
-                    onInformationSave = {},
+                    onInformationRetry = {},
                     onNoteChange = { note = it },
                     onComplete = {},
                     onUndo = {},

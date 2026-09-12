@@ -65,7 +65,7 @@ fun MoodTaskDetailScreenshot() {
                 executionTargetReached = true, canComplete = true,
             ),
             onBack = {}, onRetry = {}, onStepChange = { _, _ -> }, onCounterChange = {}, onTimerToggle = {},
-            onInformationChange = {}, onInformationSave = {}, onNoteChange = {}, onComplete = {}, onUndo = {},
+            onInformationChange = {}, onInformationRetry = {}, onNoteChange = {}, onComplete = {}, onUndo = {},
             onDismissCompletion = {}, onDismissError = {},
         )
     }

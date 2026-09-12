@@ -15,6 +15,10 @@ export interface ExecutionResultPresentation {
   reviewMessage: string | null;
   duplicateMessage: string | null;
   stepResults: StepResultPresentation[];
+  noticeContent: string | null;
+  selectedOptionName: string | null;
+  optionPoints: number | null;
+  awardedPoints: number | null;
 }
 
 export interface StepResultPresentation {
@@ -22,7 +26,7 @@ export interface StepResultPresentation {
   name: string;
   required: boolean;
   execution: Record<string, unknown> | null;
-  status: "CONFIRMED" | "SKIPPED";
+  status: "CONFIRMED" | "SKIPPED" | "NOT_APPLICABLE";
   answer: string;
 }
 
@@ -41,6 +45,8 @@ function stepAnswer(row: Record<string, unknown>, execution: Record<string, unkn
   if (kind === 2 && Number.isFinite(row.elapsedMillis)) return `用时 ${(Number(row.elapsedMillis) / 1000).toFixed(1)} / ${Number(execution.v)} 秒`;
   if (kind === 3) return nonEmptyString(row.informationContent) ?? "已填写";
   if (kind === 4 && Number.isInteger(row.moodRating) && Number(row.moodRating) >= 1 && Number(row.moodRating) <= 5) return `${["很差", "较差", "一般", "不错", "很好"][Number(row.moodRating) - 1]}${nonEmptyString(row.moodText) ? ` · ${row.moodText}` : ""}`;
+  if (kind === 6) return `已知晓 · ${String(execution.t ?? "")}`;
+  if (kind === 7) return `${String(row.selectedOptionName ?? "已选择")} · +${Number(row.optionPoints ?? 0)} 分`;
   return "已完成";
 }
 
@@ -115,7 +121,7 @@ export function presentExecutionResult(
     ? entities.filter((item) => item.entityType === "information_submission" && item.payload.occurrenceKey === occurrenceKey && item.payload.assignmentId === assignmentId)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
     : undefined;
-  const informationContent = eventType === "COMPLETION_UNDONE" || data.executionKind === "MOOD"
+  const informationContent = eventType === "COMPLETION_UNDONE" || ["MOOD", "NOTICE", "CHOICE"].includes(String(data.executionKind))
     ? null
     : data.executionKind === "STEPS" ? null : nonEmptyString(data.informationContent) ?? nonEmptyString(separateSubmission?.payload.content);
   const stepResults: StepResultPresentation[] = eventType !== "COMPLETION_UNDONE" && data.executionKind === "STEPS" && status === "COMPLETED" && Array.isArray(data.stepResults)
@@ -123,10 +129,10 @@ export function presentExecutionResult(
       const row = record(item);
       const stepId = nonEmptyString(row.stepId);
       const name = nonEmptyString(row.name);
-      const stepStatus = row.status === "CONFIRMED" || row.status === "SKIPPED" ? row.status : null;
+      const stepStatus = row.status === "CONFIRMED" || row.status === "SKIPPED" || row.status === "NOT_APPLICABLE" ? row.status : null;
       if (!stepId || !name || !stepStatus || typeof row.required !== "boolean") return [];
       const execution = row.execution === null ? {} : record(row.execution);
-      return [{ stepId, name, required: row.required, execution: row.execution === null ? null : execution, status: stepStatus, answer: stepAnswer(row, execution, stepStatus === "SKIPPED") }];
+      return [{ stepId, name, required: row.required, execution: row.execution === null ? null : execution, status: stepStatus, answer: stepAnswer(row, execution, stepStatus !== "CONFIRMED") }];
     }) : [];
   const reviewReason = nonEmptyString(result.payload.reviewReason);
   const moodRating = eventType !== "COMPLETION_UNDONE" && data.status === "COMPLETED" && data.executionKind === "MOOD" && Number.isInteger(data.moodRating) && Number(data.moodRating) >= 1 && Number(data.moodRating) <= 5 ? Number(data.moodRating) : null;
@@ -145,5 +151,9 @@ export function presentExecutionResult(
     reviewMessage: reviewReason ? reviewMessages[reviewReason] ?? "这条结果需要管理员核对后采用。" : null,
     duplicateMessage: nonEmptyString(result.payload.duplicateOf) ? "同一任务已有更早提交，本条作为候选结果保留。" : null,
     stepResults,
+    noticeContent: status === "COMPLETED" && eventType !== "COMPLETION_UNDONE" ? nonEmptyString(data.noticeContent) : null,
+    selectedOptionName: status === "COMPLETED" && eventType !== "COMPLETION_UNDONE" ? nonEmptyString(data.selectedOptionName) : null,
+    optionPoints: status === "COMPLETED" && eventType !== "COMPLETION_UNDONE" && Number.isInteger(data.optionPoints) ? Number(data.optionPoints) : null,
+    awardedPoints: status === "COMPLETED" && eventType !== "COMPLETION_UNDONE" && Number.isInteger(data.awardedPoints) ? Number(data.awardedPoints) : null,
   };
 }

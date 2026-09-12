@@ -273,6 +273,7 @@ class Dst1Parser {
             if (steps.any { it.id == null }) invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, "$context.s.i", "STEPS 步骤必须包含稳定 ID")
             if (steps.map { it.id }.distinct().size != steps.size) invalid(Dst1ErrorCode.DUPLICATE_VALUE, "$context.s", "步骤 ID 必须唯一")
         }
+        validateConditionalDefinition(execution, steps)
         val recurrence = parseRecurrence(task["x"], "$context.x")
         val reminderMinutes = parseReminders(task["h"], task["l"], "$context.h")
         return DstTask(
@@ -305,7 +306,12 @@ class Dst1Parser {
         val id = step["i"]?.asId("$context.i")
         val execution = parseExecution(step["u"], "$context.u")
         if (execution is ExecutionSpec.Steps) invalid(Dst1ErrorCode.INVALID_VALUE, "$context.u.k", "步骤不能嵌套 STEPS")
-        return DstStep(step.requiredText("n", 100, context), requiredFlag == 1, id, execution)
+        val condition = step["c"]?.let { raw ->
+            val c = raw.asObject("$context.c")
+            c.requireKeys(setOf("s", "o"), "$context.c")
+            com.ds.localtaskmanager.domain.execution.StepCondition(c.requiredId("s", "$context.c"), c.requiredId("o", "$context.c"))
+        }
+        return DstStep(step.requiredText("n", 100, context), requiredFlag == 1, id, execution, condition)
     }
 
     private fun parseDeadline(
@@ -429,6 +435,26 @@ class Dst1Parser {
         if (element == null) return ExecutionSpec.Normal
         val execution = element.asObject(context)
         execution.requireKeys(EXECUTION_KEYS, context)
+        val extendedKind = execution.requiredInt("k", context)
+        if (extendedKind == 6) {
+            execution.requireKeys(setOf("k", "t"), context)
+            return ExecutionSpec.Notice(execution.requiredText("t", 2000, context).also { if (it.isBlank()) invalid(Dst1ErrorCode.INVALID_VALUE, context, "通知正文不能为空") })
+        }
+        if (extendedKind == 7) {
+            execution.requireKeys(setOf("k", "o"), context)
+            val raw = execution.optionalNonEmptyArray("o", context) ?: invalid(Dst1ErrorCode.REQUIRED_FIELD_MISSING, "$context.o", "选项缺失")
+            if (raw.size !in 2..50) invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.o", "需要 2～50 个选项")
+            val options = raw.mapIndexed { index, item ->
+                val option = item.asObject("$context.o[$index]")
+                option.requireKeys(setOf("i", "n", "p"), "$context.o[$index]")
+                val points = option.requiredInt("p", "$context.o[$index]")
+                if (points !in 0..9999) invalid(Dst1ErrorCode.VALUE_OUT_OF_RANGE, "$context.o[$index].p", "选项积分必须在 0～9999")
+                com.ds.localtaskmanager.domain.execution.ChoiceOption(option.requiredId("i", "$context.o[$index]"), option.requiredText("n", 100, "$context.o[$index]").also { if (it.isBlank()) invalid(Dst1ErrorCode.INVALID_VALUE, context, "选项名称不能为空") }, points)
+            }
+            if (options.map { it.id }.distinct().size != options.size) invalid(Dst1ErrorCode.DUPLICATE_VALUE, "$context.o", "选项 ID 重复")
+            return ExecutionSpec.Choice(options)
+        }
+        execution.requireKeys(setOf("k", "a", "v"), context)
         return when (val kind = execution.requiredInt("k", context)) {
             1 -> {
                 val action = execution.requiredInt("a", context)
@@ -612,9 +638,9 @@ class Dst1Parser {
         val TOP_KEYS = setOf("v", "sv", "b", "d", "m", "g", "t", "z", "e")
         val GROUP_KEYS = setOf("i", "n", "cm", "im", "t")
         val TASK_KEYS = setOf("i", "n", "r", "d", "y", "l", "p", "o", "s", "x", "m", "h", "u")
-        val STEP_KEYS = setOf("i", "n", "r", "u")
+        val STEP_KEYS = setOf("i", "n", "r", "u", "c")
         val RECURRENCE_KEYS = setOf("f", "s", "e", "c", "w", "t")
-        val EXECUTION_KEYS = setOf("k", "a", "v")
+        val EXECUTION_KEYS = setOf("k", "a", "v", "t", "o")
         val EXCEPTION_KEYS = linkedSetOf("i", "y", "c", "n", "r", "d", "l", "p", "o", "s", "m", "h", "u")
     }
 }

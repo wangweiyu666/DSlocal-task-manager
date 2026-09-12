@@ -223,11 +223,16 @@ class W10ExecutionServiceTest {
     }
 
     @Test
-    fun `information enforces empty and 2000 code point limits`() = runTest {
+    fun `information can clear draft but requires content to complete and enforces 2000 code points`() = runTest {
         importJson(informationJson("InfoBatch0000001", "Tell me"))
 
-        assertOperation(TaskOperationCode.INFORMATION_EMPTY) {
-            executionService.saveInformationDraft(INFO_KEY, " \n ")
+        executionService.saveInformationDraft(INFO_KEY, "old content")
+        executionService.saveInformationDraft(INFO_KEY, " \n ")
+        val reconstructed = RoomTaskExecutionService(database, clock, ids)
+        assertEquals("", (reconstructed.getExecutionState(INFO_KEY) as ExecutionState.Information).content)
+        assertEquals(false, reconstructed.getCompletionReadiness(INFO_KEY).canComplete)
+        assertOperation(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED) {
+            reconstructed.complete(INFO_KEY)
         }
         executionService.saveInformationDraft(INFO_KEY, "😀".repeat(2_000))
         assertOperation(TaskOperationCode.INFORMATION_TOO_LONG) {

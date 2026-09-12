@@ -4,12 +4,16 @@
 
 | 场景 | 命令（仓库根目录） | 当前静态方法数 |
 | --- | --- | --- |
-| 日常冒烟 | `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=daily --no-daemon` | 37 |
-| 发布核心 | `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release --no-daemon` | 148 |
-| 所有独立单元测试 | `.\gradlew.bat testProductionDebugUnitTest --no-daemon` | 174 |
+| 日常冒烟 | `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=daily --no-daemon` | 57 |
+| 发布核心 | `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release --no-daemon` | 170 |
+| 所有独立单元测试 | `.\gradlew.bat testProductionDebugUnitTest --no-daemon` | 196 |
 | 已验证源码打包 | `.\gradlew.bat assembleOfflineDebug assembleProductionDebug --no-daemon` | 不附加单元测试 |
 
 实际选择由 `scripts/testing/android-daily.txt` 和 `android-release.txt` 定义；`python scripts/testing/inspect-android-profiles.py` 校验模式能匹配真实测试并报告源代码方法数。参数化测试以 JUnit XML 运行数量为准。未知 profile 会直接报错。
+
+2026-09-12：新增 7 条信息告知自动保存回归，日常与发布集合均纳入，覆盖防抖、立即完成、阻塞写入、离开页面、失败重试、分享与清空、刷新竞态；表中为静态数量，不代表整套执行结果。
+
+同日新增通知、单选积分与条件步骤验证：日常加入 `ConditionalChoiceTest` 和 `ChoiceAutoSaveTest`，发布集合另补齐新类型数据库回归；迁移及联网结果用例仍由原类模式覆盖。静态方法数见上表，实际执行记录另行记录。
 
 定向验证使用不带 profile 的 `--tests 完整类名`；不要将 `--tests` 和缩小后的 profile 混用，Gradle 会取交集，可能漏掉希望增加的测试。
 

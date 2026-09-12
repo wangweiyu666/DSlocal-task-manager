@@ -1,5 +1,6 @@
 package com.ds.localtaskmanager.data
 
+import com.ds.localtaskmanager.domain.execution.*
 import androidx.room.withTransaction
 import com.ds.localtaskmanager.data.dao.AuditDao
 import com.ds.localtaskmanager.data.dao.ExecutionDao
@@ -26,6 +27,8 @@ class TaskOperationException(
 ) : IllegalStateException(message)
 
 interface TaskExecutionService {
+    suspend fun saveChoice(key: TaskInstanceKey, optionId: String): ExecutionState.Choice { throw UnsupportedOperationException("choice unsupported") }
+    suspend fun saveStepChoice(key: TaskInstanceKey, stepId: String, optionId: String): StepState { throw UnsupportedOperationException("step choice unsupported") }
     suspend fun getExecutionState(key: TaskInstanceKey): ExecutionState
     suspend fun getCompletionReadiness(key: TaskInstanceKey): CompletionReadiness
     suspend fun setStep(key: TaskInstanceKey, position: Int, completed: Boolean)
@@ -78,7 +81,7 @@ class RoomTaskExecutionService(
                 null,
                 listOf(key.taskId),
             )
-            val stepsComplete = instanceDao.countIncompleteRequiredSteps(key.taskId, key.occurrenceKey) == 0
+            val stepsComplete = if (instance.executionKind == "STEPS") isExecutionTargetReached(instance) else instanceDao.countIncompleteRequiredSteps(key.taskId, key.occurrenceKey) == 0
             val targetReached = isExecutionTargetReached(instance)
             CompletionReadiness(
                 requiredStepsComplete = stepsComplete,
@@ -120,7 +123,7 @@ class RoomTaskExecutionService(
         val step = steps.getOrNull(position) ?: fail(TaskOperationCode.STEP_NOT_FOUND, "步骤不存在")
         if (step.stepStatus != "PENDING") fail(TaskOperationCode.STEP_NOT_FOUND, "步骤已经处理")
         if (step.required) fail(TaskOperationCode.REQUIRED_STEP_INCOMPLETE, "必需步骤不能跳过")
-        if (steps.take(position).any { it.stepStatus == "PENDING" }) fail(TaskOperationCode.STEP_NOT_FOUND, "必须按顺序处理步骤")
+        if (steps.applicableSteps().firstOrNull { it.stepStatus == "PENDING" }?.stepId != step.stepId) fail(TaskOperationCode.STEP_NOT_FOUND, "必须按顺序处理步骤")
         if (instanceDao.updateStepStatus(key.taskId, key.occurrenceKey, position, false, "SKIPPED", clock.millis()) != 1) {
             fail(TaskOperationCode.STEP_NOT_FOUND, "步骤不存在")
         }
@@ -134,7 +137,7 @@ class RoomTaskExecutionService(
         val steps = instanceDao.getInstanceSteps(key.taskId, key.occurrenceKey)
         val step = steps.firstOrNull { it.stepId == stepId } ?: fail(TaskOperationCode.STEP_NOT_FOUND, "步骤不存在")
         if (step.stepStatus != "PENDING") fail(TaskOperationCode.STEP_NOT_FOUND, "步骤已经处理")
-        if (steps.take(step.position).any { it.stepStatus == "PENDING" }) fail(TaskOperationCode.STEP_NOT_FOUND, "必须按顺序确认步骤")
+        if (steps.applicableSteps().firstOrNull { it.stepStatus == "PENDING" }?.stepId != step.stepId) fail(TaskOperationCode.STEP_NOT_FOUND, "必须按顺序确认步骤")
         if (!stepSatisfied(step)) fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "步骤目标尚未达成")
         instanceDao.insertInstanceSteps(listOf(step.copy(completed = true, stepStatus = "CONFIRMED", updatedAtEpochMillis = clock.millis())))
         touchInstance(instance)
@@ -242,6 +245,28 @@ class RoomTaskExecutionService(
         ExecutionState.Timer(updatedElapsed, targetMillis)
     }
 
+    override suspend fun saveChoice(key: TaskInstanceKey, optionId: String): ExecutionState.Choice = database.withTransaction {
+        val instance = requirePending(key)
+        if (instance.executionKind != "CHOICE") fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "任务不是单选类型")
+        val options = choiceOptions(instance.executionConfigJson)
+        if (options.none { it.id == optionId }) fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "选项已失效，请重新选择")
+        val old = executionDao.getProgress(key.taskId, key.occurrenceKey)
+        val now = clock.millis()
+        executionDao.upsertProgress(ExecutionProgressEntity(key.taskId, key.occurrenceKey, "CHOICE", null, null, old?.createdAtEpochMillis ?: now, now, optionId))
+        touchInstance(instance)
+        ExecutionState.Choice(options, optionId)
+    }
+
+    override suspend fun saveStepChoice(key: TaskInstanceKey, stepId: String, optionId: String): StepState = database.withTransaction {
+        val instance = requirePending(key)
+        val step = requireEditableStep(key, stepId)
+        if (step.executionKind != "CHOICE" || choiceOptions(step.executionConfigJson).none { it.id == optionId }) fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "步骤选项无效")
+        val updated = step.copy(selectedOptionId = optionId, updatedAtEpochMillis = clock.millis())
+        instanceDao.insertInstanceSteps(listOf(updated))
+        touchInstance(instance)
+        updated.toStepState()
+    }
+
     override suspend fun saveInformationDraft(
         key: TaskInstanceKey,
         content: String,
@@ -251,9 +276,7 @@ class RoomTaskExecutionService(
             fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "任务不是信息告知任务")
         }
         val normalized = content.trim()
-        if (normalized.isEmpty()) {
-            fail(TaskOperationCode.INFORMATION_EMPTY, "告知正文不能为空")
-        }
+        // Autosave must persist clearing the field; completion still requires non-empty content.
         val length = normalized.codePointCount(0, normalized.length)
         if (length > INFORMATION_MAX_CODE_POINTS) {
             fail(TaskOperationCode.INFORMATION_TOO_LONG, "告知正文不能超过 2000 个字符")
@@ -294,28 +317,23 @@ class RoomTaskExecutionService(
         if (instance.status != TaskStatus.PENDING.name) {
             fail(TaskOperationCode.INSTANCE_NOT_PENDING, "只有待完成任务可以完成")
         }
-        if (instanceDao.countIncompleteRequiredSteps(key.taskId, key.occurrenceKey) > 0) {
+        if (instance.executionKind != "STEPS" && instanceDao.countIncompleteRequiredSteps(key.taskId, key.occurrenceKey) > 0) {
             fail(TaskOperationCode.REQUIRED_STEP_INCOMPLETE, "仍有必需步骤未完成")
         }
         if (instance.executionKind == "STEPS") {
             val steps = instanceDao.getInstanceSteps(key.taskId, key.occurrenceKey)
             validateStepSnapshot(steps)
-            val pendingRequired = instanceDao.getInstanceSteps(key.taskId, key.occurrenceKey).any {
-                it.required && it.stepStatus == "PENDING"
-            }
-            if (pendingRequired) fail(TaskOperationCode.REQUIRED_STEP_INCOMPLETE, "仍有必需步骤未完成")
-            // Optional steps are explicitly skipped as part of the final completion
-            // transaction; their draft answers are never part of the result.
-            val optionalPending = instanceDao.getInstanceSteps(key.taskId, key.occurrenceKey)
-                .filter { !it.required && it.stepStatus == "PENDING" }
-            if (optionalPending.isNotEmpty()) {
-                val stamp = clock.millis()
-                instanceDao.insertInstanceSteps(optionalPending.map { it.copy(completed = false, stepStatus = "SKIPPED", updatedAtEpochMillis = stamp) })
-                touchInstance(instance)
-            }
+            val final = steps.completionSteps() ?: fail(TaskOperationCode.REQUIRED_STEP_INCOMPLETE, "适用的必需步骤尚未完成")
+            val now = clock.millis()
+            instanceDao.insertInstanceSteps(final.map { it.copy(updatedAtEpochMillis = now) })
         }
         requireExecutionTarget(instance)
-        val now = clock.millis()
+        val awardedPoints = instance.points + when (instance.executionKind) {
+            "CHOICE" -> choiceOptions(instance.executionConfigJson).single { it.id == executionDao.getProgress(key.taskId, key.occurrenceKey)?.selectedOptionId }.points
+            "STEPS" -> confirmedChoicePoints(instanceDao.getInstanceSteps(key.taskId, key.occurrenceKey).map { it.branchState() })
+            else -> 0
+        }
+        val now = nextMutationTime(instance)
         if (instance.executionKind == "INFORMATION") {
             val submission = executionDao.getSubmission(key.taskId, key.occurrenceKey)
                 ?: fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "告知正文尚未填写")
@@ -330,6 +348,7 @@ class RoomTaskExecutionService(
                 instance.copy(
                     status = TaskStatus.COMPLETED.name,
                     completedAtEpochMillis = now,
+                    awardedPoints = awardedPoints,
                     updatedAtEpochMillis = now,
                 ),
             ),
@@ -340,12 +359,12 @@ class RoomTaskExecutionService(
                 taskId = key.taskId,
                 occurrenceKey = key.occurrenceKey,
                 groupId = currentGroup(key.taskId),
-                delta = instance.points,
+                delta = awardedPoints,
                 reason = "COMPLETED",
                 createdAtEpochMillis = now,
             ),
         )
-        log(instance, "COMPLETED", null)
+        log(instance, "COMPLETED", null, now)
         resultService.writeChanges(
             before,
             listOf(instance.taskDate),
@@ -368,7 +387,7 @@ class RoomTaskExecutionService(
         val completionEntry = auditDao.getLedger(key.taskId, key.occurrenceKey)
             .lastOrNull { it.reason == "COMPLETED" }
             ?: fail(TaskOperationCode.COMPLETION_LEDGER_MISSING, "缺少完成积分流水")
-        val now = clock.millis()
+        val now = nextMutationTime(instance)
         val nextStatus = TaskStateMachine.statusAt(
             LocalDate.parse(instance.taskDate),
             instance.deadline?.let(LocalDateTime::parse),
@@ -379,6 +398,7 @@ class RoomTaskExecutionService(
                 instance.copy(
                     status = nextStatus.name,
                     completedAtEpochMillis = null,
+                awardedPoints = null,
                     updatedAtEpochMillis = now,
                 ),
             ),
@@ -397,7 +417,7 @@ class RoomTaskExecutionService(
         executionDao.getMood(key.taskId, key.occurrenceKey)?.let {
             executionDao.upsertMood(it.copy(submittedAtEpochMillis = null, updatedAtEpochMillis = now))
         }
-        log(instance, "COMPLETION_UNDONE", null)
+        log(instance, "COMPLETION_UNDONE", null, now)
         resultService.writeChanges(
             before,
             listOf(instance.taskDate),
@@ -439,16 +459,14 @@ class RoomTaskExecutionService(
         if (ids.any { it.length != 16 || !it.all { ch -> ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '_' || ch == '-' } } || ids.distinct().size != ids.size) {
             fail(TaskOperationCode.STEP_NOT_FOUND, "步骤 ID 无效")
         }
+        val applicability = stepApplicability(steps.map { it.branchState() })
         var pendingSeen = false
-        steps.forEach { step ->
-            when (step.stepStatus) {
-                "PENDING" -> {
-                    if (step.required) fail(TaskOperationCode.REQUIRED_STEP_INCOMPLETE, "必需步骤未完成")
-                    pendingSeen = true
-                }
-                "CONFIRMED" -> {
-                    if (pendingSeen || !stepSatisfied(step)) fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "步骤状态或目标无效")
-                }
+        steps.forEachIndexed { index, step ->
+            if (applicability[index] != StepApplicability.APPLICABLE) {
+                if (step.stepStatus !in setOf("PENDING", "NOT_APPLICABLE")) fail(TaskOperationCode.STEP_NOT_FOUND, "不适用步骤不能确认")
+            } else when (step.stepStatus) {
+                "PENDING" -> pendingSeen = true
+                "CONFIRMED" -> if (pendingSeen || !stepSatisfied(step)) fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "步骤状态或目标无效")
                 "SKIPPED" -> if (step.required || pendingSeen) fail(TaskOperationCode.STEP_NOT_FOUND, "步骤跳过状态无效")
                 else -> fail(TaskOperationCode.STEP_NOT_FOUND, "步骤状态无效")
             }
@@ -459,12 +477,13 @@ class RoomTaskExecutionService(
         val key = TaskInstanceKey(instance.taskId, instance.occurrenceKey)
         return when (instance.executionKind) {
             "STEPS" -> instanceDao.getInstanceSteps(instance.taskId, instance.occurrenceKey).let { steps ->
-                runCatching { validateStepSnapshot(steps) }.isSuccess &&
-                    steps.filter { it.required }.all { it.stepStatus == "CONFIRMED" && stepSatisfied(it) }
+                runCatching { validateStepSnapshot(steps) }.isSuccess && steps.completionSteps() != null
             }
             "MOOD" -> executionDao.getMood(key.taskId, key.occurrenceKey)?.let {
                 it.rating in 1..5 && it.text.codePointCount(0, it.text.length) <= 2000
             } ?: false
+            "NOTICE" -> (extendedExecution("NOTICE", instance.executionConfigJson) as ExecutionSpec.Notice).text.isNotBlank()
+            "CHOICE" -> choiceOptions(instance.executionConfigJson).any { it.id == executionDao.getProgress(key.taskId, key.occurrenceKey)?.selectedOptionId }
             "NORMAL" -> true
             "COUNTER" -> (executionDao.getProgress(key.taskId, key.occurrenceKey)?.counterValue ?: 0) >=
                 instance.requireTarget()
@@ -483,11 +502,13 @@ class RoomTaskExecutionService(
             "STEPS" -> ExecutionState.Steps(instanceDao.getInstanceSteps(instance.taskId, instance.occurrenceKey).map {
                 StepState(it.stepId, it.position, it.name, it.required, it.completed, it.executionKind,
                     it.executionAction, it.executionTarget, it.stepStatus, it.counterValue, it.elapsedMillis,
-                    it.informationContent, it.moodRating, it.moodText)
+                    it.informationContent, it.moodRating, it.moodText, it.executionConfigJson, it.conditionStepId, it.conditionOptionId, it.selectedOptionId)
             })
             "MOOD" -> executionDao.getMood(instance.taskId, instance.occurrenceKey).let {
                 ExecutionState.Mood(it?.rating, it?.text.orEmpty(), it?.submittedAtEpochMillis)
             }
+            "NOTICE" -> ExecutionState.Notice((extendedExecution("NOTICE", instance.executionConfigJson) as ExecutionSpec.Notice).text)
+            "CHOICE" -> ExecutionState.Choice(choiceOptions(instance.executionConfigJson), executionDao.getProgress(instance.taskId, instance.occurrenceKey)?.selectedOptionId)
             "NORMAL" -> ExecutionState.Normal
             "COUNTER" -> counterState(
                 instance,
@@ -545,20 +566,25 @@ class RoomTaskExecutionService(
             ?: fail(TaskOperationCode.STEP_NOT_FOUND, "步骤不存在")
 
     private suspend fun touchInstance(instance: TaskInstanceEntity) {
-        instanceDao.upsertInstances(listOf(instance.copy(updatedAtEpochMillis = clock.millis())))
+        instanceDao.upsertInstances(listOf(instance.copy(updatedAtEpochMillis = nextMutationTime(instance))))
     }
+
+    private suspend fun nextMutationTime(instance: TaskInstanceEntity): Long = maxOf(clock.millis(), instance.updatedAtEpochMillis + 1,
+        (auditDao.getLedger(instance.taskId, instance.occurrenceKey).maxOfOrNull { it.createdAtEpochMillis } ?: 0) + 1)
 
     private suspend fun requireEditableStep(key: TaskInstanceKey, stepId: String): InstanceStepEntity {
         val instance = requirePending(key)
         if (instance.executionKind != "STEPS") fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "任务不是分步骤任务")
         val step = findStep(key, stepId)
         if (step.stepStatus != "PENDING") fail(TaskOperationCode.STEP_NOT_FOUND, "步骤已经确认")
-        val prior = instanceDao.getInstanceSteps(key.taskId, key.occurrenceKey).filter { it.position < step.position }
-        if (prior.any { it.stepStatus == "PENDING" }) fail(TaskOperationCode.STEP_NOT_FOUND, "步骤尚未解锁")
+        val current = instanceDao.getInstanceSteps(key.taskId, key.occurrenceKey).applicableSteps().firstOrNull { it.stepStatus == "PENDING" }
+        if (current?.stepId != stepId) fail(TaskOperationCode.STEP_NOT_FOUND, "步骤尚未解锁")
         return step
     }
 
     private fun stepSatisfied(step: InstanceStepEntity): Boolean = when (step.executionKind) {
+        "NOTICE" -> (extendedExecution("NOTICE", step.executionConfigJson) as ExecutionSpec.Notice).text.isNotBlank()
+        "CHOICE" -> choiceOptions(step.executionConfigJson).any { it.id == step.selectedOptionId }
         "NORMAL" -> true
         "COUNTER" -> (step.counterValue ?: 0) == (step.executionTarget ?: Int.MAX_VALUE)
         "TIMER" -> (step.elapsedMillis ?: 0L) == (step.executionTarget ?: Int.MAX_VALUE) * 1_000L
@@ -569,7 +595,7 @@ class RoomTaskExecutionService(
 
     private fun InstanceStepEntity.toStepState() = StepState(
         stepId, position, name, required, completed, executionKind, executionAction, executionTarget, stepStatus,
-        counterValue, elapsedMillis, informationContent, moodRating, moodText,
+        counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId,
     )
 
     private suspend fun currentGroup(taskId: String): String? {
@@ -581,7 +607,7 @@ class RoomTaskExecutionService(
     private fun TaskInstanceEntity.requireTarget(): Int =
         executionTarget ?: fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "执行目标缺失")
 
-    private suspend fun log(instance: TaskInstanceEntity, action: String, detail: String?) {
+    private suspend fun log(instance: TaskInstanceEntity, action: String, detail: String?, eventTime: Long = clock.millis()) {
         auditDao.insertLogs(
             listOf(
                 ActionLogEntity(
@@ -591,7 +617,7 @@ class RoomTaskExecutionService(
                     batchId = null,
                     action = action,
                     detail = detail,
-                    createdAtEpochMillis = clock.millis(),
+                    createdAtEpochMillis = eventTime,
                 ),
             ),
         )

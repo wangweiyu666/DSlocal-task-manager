@@ -30,7 +30,7 @@ class StepsSectionTest {
                     onBack = {}, onRetry = {}, onStepChange = { _, _ -> },
                     onStepConfirm = { id -> state.value = state.value.copy(steps = state.value.steps.map { if (it.stepId == id) it.copy(stepStatus = "CONFIRMED", completed = true) else it }) },
                     onStepSkip = { position -> state.value = state.value.copy(steps = state.value.steps.map { if (it.position == position) it.copy(stepStatus = "SKIPPED") else it }) },
-                    onCounterChange = {}, onTimerToggle = {}, onInformationChange = { _ -> }, onInformationSave = {},
+                    onCounterChange = {}, onTimerToggle = {}, onInformationChange = { _ -> }, onInformationRetry = {},
                     onNoteChange = {}, onComplete = {}, onUndo = {}, onDismissCompletion = {}, onDismissError = {},
                 )
             }
@@ -54,7 +54,7 @@ class StepsSectionTest {
                 TaskDetailScreen(
                     state = state,
                     onBack = {}, onRetry = {}, onStepChange = { _, _ -> }, onStepUndo = {},
-                    onCounterChange = {}, onTimerToggle = {}, onInformationChange = { _ -> }, onInformationSave = {},
+                    onCounterChange = {}, onTimerToggle = {}, onInformationChange = { _ -> }, onInformationRetry = {},
                     onNoteChange = {}, onComplete = {}, onUndo = {}, onDismissCompletion = {}, onDismissError = {},
                     readOnly = true,
                 )

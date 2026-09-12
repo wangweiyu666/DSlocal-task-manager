@@ -1,6 +1,10 @@
 package com.ds.localtaskmanager.backup
 
 import com.ds.localtaskmanager.data.statistics.StatisticsPeriod
+import com.ds.localtaskmanager.data.branchState
+import com.ds.localtaskmanager.domain.execution.*
+import com.ds.localtaskmanager.protocol.*
+import kotlinx.serialization.json.*
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.settings.AppThemeMode
 import java.time.LocalDate
@@ -13,7 +17,8 @@ object BackupValidator {
     fun validate(decoded: DecodedBackup) {
         if (decoded.metadata.createdAtEpochMillis < 0) throw DstbException("备份创建时间无效")
         val payload = decoded.payload
-        if (payload.schemaVersion !in 1..4) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion !in 1..5) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion < 5 && (payload.definitions.any { it.executionConfigJson != null } || payload.instances.any { it.executionConfigJson != null } || payload.definitionSteps.any { it.executionConfigJson != null || it.conditionStepId != null || it.conditionOptionId != null } || payload.instanceSteps.any { it.executionConfigJson != null || it.conditionStepId != null || it.conditionOptionId != null || it.selectedOptionId != null } || payload.progress.any { it.selectedOptionId != null })) throw DstbException("通知、选项和条件需要备份数据 v5")
         if (payload.schemaVersion < 3 && (payload.moods.isNotEmpty() || payload.definitions.any { it.executionKind == "MOOD" } || payload.instances.any { it.executionKind == "MOOD" })) {
             throw DstbException("心情记录需要备份数据 v3")
         }
@@ -89,7 +94,7 @@ object BackupValidator {
                     steps.mapNotNull { step -> step.stepId }.distinct().size != steps.size ||
                     steps.map { it.position }.distinct().size != steps.size ||
                     steps.map { it.position }.sorted() != (0 until steps.size).toList() ||
-                    steps.any { step -> step.executionKind == "STEPS" || !validLeafConfig(step.executionKind, step.executionAction, step.executionTarget) }) {
+                    steps.any { step -> step.executionKind == "STEPS" || !validLeafConfig(step.executionKind, step.executionAction, step.executionTarget, step.executionConfigJson) }) {
                     throw DstbException("STEPS 任务“${it.name}”的步骤定义无效")
                 }
             }
@@ -137,7 +142,7 @@ object BackupValidator {
             if (payload.schemaVersion >= 4 && instance.executionKind == "STEPS") {
                 if (it.completed != (it.stepStatus == "CONFIRMED")) throw DstbException("实例步骤完成状态不一致")
                 if (it.stepStatus == "SKIPPED" && it.required) throw DstbException("必需步骤不能跳过")
-                if (!validLeafConfig(it.executionKind, it.executionAction, it.executionTarget)) throw DstbException("实例步骤执行配置无效")
+                if (!validLeafConfig(it.executionKind, it.executionAction, it.executionTarget, it.executionConfigJson)) throw DstbException("实例步骤执行配置无效")
                 if (it.stepStatus == "CONFIRMED" && !validLeafAnswer(it)) throw DstbException("实例步骤答案未达成目标")
             }
             if (it.counterValue != null && it.counterValue < 0) throw DstbException("实例步骤计数无效")
@@ -151,10 +156,15 @@ object BackupValidator {
                 val steps = payload.instanceSteps.filter { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }
                 if (steps.isEmpty() || steps.size > 50 || steps.map { it.position }.sorted() != (0 until steps.size).toList() ||
                     steps.map { it.stepId }.distinct().size != steps.size) throw DstbException("STEPS 实例步骤快照无效")
+                val ordered = steps.sortedBy { it.position }
+                val applicability = stepApplicability(ordered.map { it.toEntity().branchState() })
                 var pendingSeen = false
-                steps.sortedBy { it.position }.forEach { step ->
-                    if (step.stepStatus == "PENDING") pendingSeen = true
-                    else if (pendingSeen) throw DstbException("STEPS 实例步骤顺序无效")
+                ordered.forEachIndexed { index, step ->
+                    if (applicability[index] == StepApplicability.APPLICABLE) {
+                        if (step.stepStatus == "NOT_APPLICABLE") throw DstbException("适用步骤不能标记不适用")
+                        if (step.stepStatus == "PENDING") pendingSeen = true
+                        else if (pendingSeen) throw DstbException("STEPS 实例步骤顺序无效")
+                    } else if (step.stepStatus in setOf("CONFIRMED", "SKIPPED") || (instance.status == "COMPLETED" && step.stepStatus != "NOT_APPLICABLE")) throw DstbException("分支状态不一致")
                 }
                 if (instance.status == "COMPLETED" && (instance.completedAtEpochMillis == null || steps.any { it.stepStatus == "PENDING" })) {
                     throw DstbException("已完成 STEPS 实例缺少完整步骤")
@@ -188,6 +198,7 @@ object BackupValidator {
         payload.instances.filter { it.executionKind == "MOOD" && it.status == "COMPLETED" }.forEach { instance ->
             if (payload.moods.none { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }) throw DstbException("已完成的心情任务缺少答案")
         }
+        validateExtendedSnapshots(payload)
         payload.notes.forEach {
             requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "任务备注")
             requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "任务备注")
@@ -219,7 +230,77 @@ object BackupValidator {
         }
     }
 
-    private fun validLeafConfig(kind: String, action: Int?, target: Int?): Boolean = when (kind) {
+    internal fun validateExtendedSnapshots(payload: BackupPayload) {
+        fun spec(kind: String, action: Int?, target: Int?, config: String?): ExecutionSpec = when (kind) {
+            "STEPS" -> ExecutionSpec.Steps
+            "NOTICE", "CHOICE" -> extendedExecution(kind, config)
+            "COUNTER" -> ExecutionSpec.Counter(if (action == 1) CounterAction.SLIDER else CounterAction.CLICK, requireNotNull(target))
+            "TIMER" -> ExecutionSpec.Timer(requireNotNull(target))
+            "INFORMATION" -> ExecutionSpec.Information
+            "MOOD" -> ExecutionSpec.Mood
+            else -> ExecutionSpec.Normal
+        }
+        fun condition(source: String?, option: String?): StepCondition? {
+            require((source == null) == (option == null))
+            return source?.let { require(STEP_ID.matches(it) && STEP_ID.matches(option!!)); StepCondition(it, option) }
+        }
+        try {
+            payload.definitions.forEach { definition ->
+                val execution = spec(definition.executionKind, definition.executionAction, definition.executionTarget, definition.executionConfigJson)
+                val steps = payload.definitionSteps.filter { it.taskId == definition.taskId }.sortedBy { it.position }.map {
+                    DstStep(it.name, it.required, it.stepId, spec(it.executionKind, it.executionAction, it.executionTarget, it.executionConfigJson), condition(it.conditionStepId, it.conditionOptionId))
+                }
+                validateConditionalDefinition(execution, steps)
+                payload.recurrenceExceptions.filter { it.taskId == definition.taskId }.forEach { exception ->
+                    val raw = Json.parseToJsonElement(exception.patchJson).jsonObject
+                    require(raw["i"]?.jsonPrimitive?.content == definition.taskId && raw["y"]?.jsonPrimitive?.content == exception.occurrenceDate)
+                    // Early backups allowed local IDs longer/shorter than transport IDs.
+                    val portable = JsonObject(raw + ("i" to JsonPrimitive("BackupTask000001")))
+                    val patch = Dst1Parser().parseExceptionJson(portable.toString())
+                    val effectiveExecution = (patch.execution as? Field.Value)?.value ?: execution
+                    val effectiveSteps = (patch.steps as? Field.Value)?.value ?: steps
+                    validateConditionalDefinition(effectiveExecution, effectiveSteps)
+                    if (effectiveExecution is ExecutionSpec.Steps) require(effectiveSteps.size in 1..50 && effectiveSteps.all { it.id != null } && effectiveSteps.map { it.id }.distinct().size == effectiveSteps.size)
+                }
+            }
+            payload.instances.forEach { instance ->
+                val execution = spec(instance.executionKind, instance.executionAction, instance.executionTarget, instance.executionConfigJson)
+                val steps = payload.instanceSteps.filter { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }.sortedBy { it.position }
+                validateConditionalDefinition(execution, steps.map { DstStep(it.name, it.required, it.stepId, spec(it.executionKind, it.executionAction, it.executionTarget, it.executionConfigJson), condition(it.conditionStepId, it.conditionOptionId)) })
+                val progress = payload.progress.firstOrNull { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }
+                progress?.selectedOptionId?.let { id -> require(execution is ExecutionSpec.Choice && execution.options.any { it.id == id }) }
+                steps.forEach { step -> step.selectedOptionId?.let { id -> require(step.executionKind == "CHOICE" && choiceOptions(step.executionConfigJson).any { it.id == id }) } }
+                val hasExtended = instance.executionKind in setOf("CHOICE", "NOTICE") || steps.any { it.executionConfigJson != null || it.conditionStepId != null }
+                if (hasExtended && execution is ExecutionSpec.Steps) {
+                    val states = steps.map { it.toEntity().branchState() }
+                    val branches = stepApplicability(states)
+                    steps.forEachIndexed { index, step ->
+                        require(step.completed == (step.stepStatus == "CONFIRMED"))
+                        if (branches[index] == StepApplicability.APPLICABLE) {
+                            require(step.stepStatus in setOf("PENDING", "CONFIRMED", "SKIPPED"))
+                            require(step.stepStatus != "SKIPPED" || !step.required)
+                            if (step.stepStatus == "CONFIRMED") require(validLeafAnswer(step))
+                        } else require(step.stepStatus in setOf("PENDING", "NOT_APPLICABLE"))
+                    }
+                    if (instance.status == "COMPLETED") require(finalizedSteps(states) == states)
+                }
+                if (instance.status == "COMPLETED") {
+                    val extra = when (execution) {
+                        is ExecutionSpec.Choice -> execution.options.single { it.id == progress?.selectedOptionId }.points
+                        is ExecutionSpec.Steps -> confirmedChoicePoints(steps.map { it.toEntity().branchState() })
+                        else -> 0
+                    }
+                    if (payload.schemaVersion >= 5) require(instance.awardedPoints == instance.points + extra)
+                } else require(instance.awardedPoints == null)
+                if (hasExtended) require(payload.ledger.filter { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }.sumOf { it.delta } == (instance.awardedPoints ?: 0))
+            }
+        } catch (error: Exception) {
+            throw DstbException("备份执行配置、分支或积分快照无效：${error.message}")
+        }
+    }
+
+    private fun validLeafConfig(kind: String, action: Int?, target: Int?, config: String? = null): Boolean = when (kind) {
+        "NOTICE", "CHOICE" -> action == null && target == null && runCatching { extendedExecution(kind, config) }.isSuccess
         "NORMAL" -> action == null && target == null
         "COUNTER" -> action in 1..2 && target in 1..999
         "TIMER" -> action == null && target in 1..3_600
@@ -228,6 +309,8 @@ object BackupValidator {
     }
 
     private fun validLeafAnswer(step: InstanceStepBackup): Boolean = when (step.executionKind) {
+        "NOTICE" -> true
+        "CHOICE" -> choiceOptions(step.executionConfigJson).any { it.id == step.selectedOptionId }
         "NORMAL" -> true
         "COUNTER" -> step.counterValue == step.executionTarget
         "TIMER" -> step.elapsedMillis == (step.executionTarget ?: 0) * 1_000L
@@ -270,9 +353,9 @@ object BackupValidator {
     }
 
     private val TASK_STATUSES = TaskStatus.entries.mapTo(hashSetOf()) { it.name }
-    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION", "MOOD", "STEPS")
+    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION", "MOOD", "STEPS", "NOTICE", "CHOICE")
     private val STEP_ID = Regex("[A-Za-z0-9_-]{16}")
-    private val STEP_STATUSES = setOf("PENDING", "CONFIRMED", "SKIPPED")
+    private val STEP_STATUSES = setOf("PENDING", "CONFIRMED", "SKIPPED", "NOT_APPLICABLE")
     private val INSTANCE_CATEGORIES = setOf("DAILY", "WEEKLY", "TEMPORARY")
     private val RESULT_SCOPES = setOf("GLOBAL", "GROUP")
 }

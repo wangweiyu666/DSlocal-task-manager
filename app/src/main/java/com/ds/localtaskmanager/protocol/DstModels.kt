@@ -55,6 +55,7 @@ data class DstStep(
     /** Stable protocol identity. Null is retained only for legacy direct-completion steps. */
     val id: String? = null,
     val execution: ExecutionSpec = ExecutionSpec.Normal,
+    val condition: com.ds.localtaskmanager.domain.execution.StepCondition? = null,
 )
 
 data class DstOccurrenceException(

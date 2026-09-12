@@ -2,6 +2,7 @@ package com.ds.localtaskmanager.data.history
 
 import androidx.room.withTransaction
 import com.ds.localtaskmanager.data.ActionLogEntity
+import com.ds.localtaskmanager.data.applicableSteps
 import com.ds.localtaskmanager.data.AppDatabase
 import com.ds.localtaskmanager.data.InstanceStepEntity
 import com.ds.localtaskmanager.data.ResultRevisionEntity
@@ -9,6 +10,9 @@ import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.data.dao.HistoryDayRow
 import com.ds.localtaskmanager.data.dao.HistoryTaskRow
 import com.ds.localtaskmanager.domain.TaskStatus
+import com.ds.localtaskmanager.domain.execution.extendedExecution
+import com.ds.localtaskmanager.domain.execution.ExecutionSpec
+import com.ds.localtaskmanager.domain.execution.choiceOptions
 import com.ds.localtaskmanager.domain.execution.ExecutionState
 import com.ds.localtaskmanager.domain.execution.StepState
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
@@ -88,7 +92,12 @@ class RoomHistoryRepository(private val database: AppDatabase) : HistoryReposito
             categories = query.categories.nonEmptyOrAllCategories(),
             requiredFilter = required,
         )
-        val tasksByDate = tasks.groupBy { it.instance.taskDate }
+        val tasksByDate = tasks.map { row ->
+            if (row.instance.executionKind != "STEPS") row else {
+                val steps = database.instanceDao().getInstanceSteps(row.instance.taskId, row.instance.occurrenceKey).applicableSteps()
+                row.copy(totalSteps = steps.size, completedSteps = steps.count { it.stepStatus in setOf("CONFIRMED", "SKIPPED") })
+            }
+        }.groupBy { it.instance.taskDate }
         HistoryPage(
             days = rows.map { row -> row.toDomain(tasksByDate[row.taskDate].orEmpty()) },
             endReached = rows.size < pageSize || query.selectedDate != null,
@@ -128,8 +137,12 @@ class RoomHistoryRepository(private val database: AppDatabase) : HistoryReposito
                 ExecutionState.Steps(database.instanceDao().getInstanceSteps(key.taskId, key.occurrenceKey).map {
                     StepState(it.stepId, it.position, it.name, it.required, it.completed, it.executionKind,
                         it.executionAction, it.executionTarget, it.stepStatus, it.counterValue, it.elapsedMillis,
-                        it.informationContent, it.moodRating, it.moodText)
+                        it.informationContent, it.moodRating, it.moodText, it.executionConfigJson, it.conditionStepId, it.conditionOptionId, it.selectedOptionId)
                 })
+            } else if (instance.executionKind == "NOTICE") {
+                ExecutionState.Notice((extendedExecution("NOTICE", instance.executionConfigJson) as ExecutionSpec.Notice).text)
+            } else if (instance.executionKind == "CHOICE") {
+                ExecutionState.Choice(choiceOptions(instance.executionConfigJson), progress?.selectedOptionId)
             } else if (instance.executionKind == "MOOD") {
                 database.executionDao().getMood(key.taskId, key.occurrenceKey).let {
                     ExecutionState.Mood(it?.rating, it?.text.orEmpty(), it?.submittedAtEpochMillis)

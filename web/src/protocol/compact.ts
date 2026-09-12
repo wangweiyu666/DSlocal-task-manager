@@ -3,7 +3,8 @@ import type { Dst11Exception, Dst1Batch, Dst1Execution, Dst1Group, Dst1Recurrenc
 function compactStep(step: Dst1Step): Dst1Step {
   const result: Dst1Step = { n: step.n.normalize("NFC"), r: step.r };
   if (step.i !== undefined) result.i = step.i;
-  if (step.u !== undefined) result.u = { ...step.u };
+  if (step.u !== undefined) result.u = compactExecution(step.u) as NonNullable<Dst1Step["u"]>;
+  if (step.c !== undefined) result.c = { ...step.c };
   return result;
 }
 
@@ -22,6 +23,8 @@ function compactExecution(value: Dst1Execution): Dst1Execution {
   if (value.k === 2) return { k: 2, v: value.v };
   if (value.k === 4) return { k: 4 };
   if (value.k === 5) return { k: 5 };
+  if (value.k === 6) return { k: 6, t: value.t.normalize("NFC") };
+  if (value.k === 7) return { k: 7, o: value.o.map((option) => ({ ...option, n: option.n.normalize("NFC") })) };
   return { k: 3 };
 }
 

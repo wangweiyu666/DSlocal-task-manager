@@ -12,6 +12,8 @@ sealed interface ExecutionSpec {
 
     data object Information : ExecutionSpec
     data object Mood : ExecutionSpec
+    data class Notice(val text: String) : ExecutionSpec
+    data class Choice(val options: List<ChoiceOption>) : ExecutionSpec
     /** Ordered multi-step execution. The step definitions remain on the task/instance snapshot. */
     data object Steps : ExecutionSpec
 }
@@ -27,6 +29,8 @@ data class TaskInstanceKey(
 )
 
 sealed interface ExecutionState {
+    data class Notice(val text: String) : ExecutionState
+    data class Choice(val options: List<ChoiceOption>, val selectedOptionId: String?) : ExecutionState
     data class Mood(
         val rating: Int?,
         val text: String,
@@ -69,7 +73,14 @@ data class StepState(
     val informationContent: String? = null,
     val moodRating: Int? = null,
     val moodText: String? = null,
+    val executionConfigJson: String? = null,
+    val conditionStepId: String? = null,
+    val conditionOptionId: String? = null,
+    val selectedOptionId: String? = null,
 )
+
+data class ChoiceOption(val id: String, val name: String, val points: Int)
+data class StepCondition(val stepId: String, val optionId: String)
 
 data class CompletionReadiness(
     val requiredStepsComplete: Boolean,

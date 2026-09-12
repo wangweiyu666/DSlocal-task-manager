@@ -132,7 +132,7 @@ class MoodSectionTest {
                         requiredStepsComplete = true, executionTargetReached = true, canComplete = true,
                     ),
                     onBack = {}, onRetry = {}, onStepChange = { _, _ -> }, onCounterChange = {},
-                    onTimerToggle = {}, onInformationChange = {}, onInformationSave = {}, onNoteChange = {},
+                    onTimerToggle = {}, onInformationChange = {}, onInformationRetry = {}, onNoteChange = {},
                     onComplete = {}, onUndo = {}, onDismissCompletion = {}, onDismissError = {},
                 )
             }

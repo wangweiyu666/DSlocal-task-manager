@@ -1,4 +1,5 @@
 import { Dst1ProtocolError, type Dst11Exception, type Dst1Batch, type Dst1ErrorCode, type Dst1Group, type Dst1Step, type Dst1Task } from "./types";
+import { validateConditionalSteps, validateExecutionConfiguration } from "./execution";
 
 interface ErrorObject { instancePath: string; keyword: string; params: Record<string, unknown>; message?: string; }
 export interface SchemaValidator { (value: unknown): boolean; errors?: ErrorObject[] | null; }
@@ -34,6 +35,9 @@ function validDate(value: string): boolean {
 }
 
 function validateTaskRules(task: Dst1Task, path: string): void {
+  validateExecutionConfiguration(task.u, `${path}.u`);
+  validateConditionalSteps(task.s ?? [], `${path}.s`);
+  if (task.u?.k !== 5 && task.s?.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7)) fail("CONFLICTING_FIELDS", `${path}.s`, "通知、选项和条件步骤需要 STEPS 执行模式");
   const executionKind = task.u && typeof task.u === "object" ? task.u.k : undefined;
   if (executionKind === 5) {
     if (!task.s || task.s.length < 1 || task.s.length > 50) fail("REQUIRED_FIELD_MISSING", `${path}.s`, "STEPS 需要 1 至 50 个步骤");
@@ -70,9 +74,12 @@ function validateStepsForStepsExecution(steps: Dst1Step[] | undefined, path: str
   const ids = steps.map((step) => step.i);
   if (ids.some((id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{16}$/u.test(id))) fail("INVALID_VALUE", `${path}.s`, "STEPS 步骤必须有稳定 ID");
   if (new Set(ids).size !== ids.length) fail("DUPLICATE_VALUE", `${path}.s`, "STEPS 步骤 ID 重复");
+  validateConditionalSteps(steps, `${path}.s`);
 }
 
 function validateExceptionRules(value: Dst11Exception, path: string): void {
+  validateExecutionConfiguration(value.u, `${path}.u`);
+  if (value.s) validateConditionalSteps(value.s, `${path}.s`);
   if (!validDate(value.y)) fail("INVALID_DATE", `${path}.y`, "例外日期无效");
   if (typeof value.l === "string" && !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/u.test(value.l)) {
     fail("INVALID_DATE", `${path}.l`, "单日截止时间必须精确到分钟");
@@ -164,6 +171,8 @@ export function validateDst1Batch(value: unknown, validateSchema: SchemaValidato
       if (!Array.isArray(exception.s) || exception.s.length !== 0) fail("CONFLICTING_FIELDS", `e[${index}].s`, "切出 STEPS 必须明确清空步骤");
     } else if (effectiveExecution?.k === 5 && !(base === undefined && exception.s === undefined)) {
       validateStepsForStepsExecution(exception.s ?? base?.s, `e[${index}]`);
+    } else if (base && effectiveExecution?.k !== 5 && (exception.s ?? base.s)?.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7)) {
+      fail("CONFLICTING_FIELDS", `e[${index}].s`, "通知、选项和条件步骤需要 STEPS 执行模式");
     }
   });
 }

@@ -7,6 +7,8 @@ import android.net.Network
 import androidx.room.withTransaction
 import com.ds.localtaskmanager.DstApplication
 import com.ds.localtaskmanager.data.DuplicateBatchException
+import com.ds.localtaskmanager.data.branchState
+import com.ds.localtaskmanager.domain.execution.*
 import com.ds.localtaskmanager.data.TaskInstanceEntity
 import com.ds.localtaskmanager.domain.TaskStateMachine
 import com.ds.localtaskmanager.protocol.cloudOccurrenceKey
@@ -91,6 +93,7 @@ internal data class ResultSnapshot(
     val information: com.ds.localtaskmanager.data.InformationSubmissionEntity?,
     val mood: com.ds.localtaskmanager.data.MoodSubmissionEntity?,
     val steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>?,
+    val selectedOptionId: String? = null,
 )
 
 open class ConnectedSyncEngine(
@@ -898,7 +901,7 @@ open class ConnectedSyncEngine(
             val information = if (instance.executionKind == "INFORMATION") {
                 application.database.executionDao().getSubmission(instance.taskId, instance.occurrenceKey)
             } else null
-            prepareResultSnapshot(instance, current, information, mood, steps)
+            prepareResultSnapshot(instance, current, information, mood, steps, application.database.executionDao().getProgress(instance.taskId, instance.occurrenceKey)?.selectedOptionId)
         } ?: return
         prepared.information?.let { submission ->
             enqueue(
@@ -926,7 +929,7 @@ open class ConnectedSyncEngine(
                 payload = buildJsonObject {
                     put("assignmentId", assignmentId); put("occurrenceKey", occurrenceKey); put("taskRevision", revision)
                     put("eventType", "RESULT_SUBMITTED"); put("occurredAt", Instant.ofEpochMilli(instance.updatedAtEpochMillis).toString())
-                    put("data", buildExecutionResultData(prepared.instance, prepared.information?.content, prepared.mood, prepared.steps))
+                    put("data", buildExecutionResultData(prepared.instance, prepared.information?.content, prepared.mood, prepared.steps, prepared.selectedOptionId))
                 },
             ),
         )
@@ -1086,6 +1089,7 @@ internal fun prepareResultSnapshot(
     information: com.ds.localtaskmanager.data.InformationSubmissionEntity?,
     mood: com.ds.localtaskmanager.data.MoodSubmissionEntity?,
     steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>?,
+    selectedOptionId: String? = null,
 ): ResultSnapshot? {
     if (current != expected) return null
     if (expected.executionKind == "MOOD" && expected.status == "COMPLETED" &&
@@ -1094,16 +1098,23 @@ internal fun prepareResultSnapshot(
     val finalSteps = if (expected.executionKind == "STEPS" && expected.status == "COMPLETED") {
         steps?.takeIf(::hasFinalStepSnapshot) ?: return null
     } else null
-    return ResultSnapshot(expected, information?.takeIf { it.submittedAtEpochMillis != null }, mood, finalSteps)
+    if (expected.executionKind == "CHOICE" && expected.status == "COMPLETED" && choiceOptions(expected.executionConfigJson).none { it.id == selectedOptionId }) return null
+    return ResultSnapshot(expected, information?.takeIf { it.submittedAtEpochMillis != null }, mood, finalSteps, selectedOptionId)
 }
 
 internal fun hasFinalStepSnapshot(steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>): Boolean {
     if (steps.isEmpty() || steps.size > 50) return false
     val ordered = steps.sortedBy { it.position }
     if (ordered.map { it.position } != ordered.indices.toList()) return false
-    if (ordered.any { it.stepId.isBlank() || it.stepStatus !in setOf("CONFIRMED", "SKIPPED") }) return false
+    if (ordered.any { it.stepId.isBlank() || it.stepStatus !in setOf("CONFIRMED", "SKIPPED", "NOT_APPLICABLE") }) return false
     if (ordered.any { it.required && it.stepStatus == "SKIPPED" }) return false
     if (ordered.map { it.stepId }.distinct().size != ordered.size) return false
+    val applicability = stepApplicability(ordered.map { it.branchState() })
+    if (ordered.indices.any { i -> when (applicability[i]) {
+        StepApplicability.WAITING -> true
+        StepApplicability.NOT_APPLICABLE -> ordered[i].stepStatus != "NOT_APPLICABLE"
+        StepApplicability.APPLICABLE -> ordered[i].stepStatus == "NOT_APPLICABLE"
+    } }) return false
     return true
 }
 
@@ -1112,12 +1123,14 @@ internal fun buildExecutionResultData(
     informationContent: String?,
     mood: com.ds.localtaskmanager.data.MoodSubmissionEntity? = null,
     steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>? = null,
+    selectedOptionId: String? = null,
 ): JsonObject = buildJsonObject {
     put("status", instance.status)
     put("localOccurrenceKey", instance.occurrenceKey)
     put("taskName", instance.name)
     put("taskDate", instance.taskDate)
     put("executionKind", instance.executionKind)
+    if (instance.executionKind == "CHOICE" && instance.status == "COMPLETED") selectedOptionId?.let { put("selectedOptionId", it) }
     if (instance.executionKind == "MOOD" && instance.status == "COMPLETED" && mood?.submittedAtEpochMillis != null) {
         put("moodRating", requireNotNull(mood.rating))
         put("moodText", mood.text)
@@ -1130,6 +1143,7 @@ internal fun buildExecutionResultData(
                     put("status", step.stepStatus)
                     if (step.stepStatus == "CONFIRMED") {
                         when (step.executionKind) {
+                            "CHOICE" -> step.selectedOptionId?.let { put("selectedOptionId", it) }
                             "COUNTER" -> step.counterValue?.let { put("counterValue", it) }
                             "TIMER" -> step.elapsedMillis?.let { put("elapsedMillis", it) }
                             "INFORMATION" -> step.informationContent?.let { put("informationContent", it) }

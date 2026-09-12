@@ -1,5 +1,8 @@
 package com.ds.localtaskmanager.ui.execution
 
+import com.ds.localtaskmanager.data.applicableSteps
+import com.ds.localtaskmanager.data.completionSteps
+import com.ds.localtaskmanager.domain.execution.choiceOptions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -38,7 +41,10 @@ data class ExecutionUiState(
     val requiredStepsComplete: Boolean = false,
     val executionTargetReached: Boolean = false,
     val canComplete: Boolean = false,
+    val selectedOptionId: String? = null,
+    val choiceSaveState: NoteSaveState = NoteSaveState.SAVED,
     val informationDraft: String = "",
+    val informationSaveState: NoteSaveState = NoteSaveState.SAVED,
     val moodRating: Int? = null,
     val moodText: String = "",
     val moodSaveState: NoteSaveState = NoteSaveState.SAVED,
@@ -69,7 +75,13 @@ class ExecutionViewModel(
     private var timerTickerJob: Job? = null
     private var savedNote = ""
     private var timerBase: ExecutionState.Timer? = null
+    private var choiceDirty = false
+    private var choiceRevision = 0L
+    private val choiceSaveMutex = Mutex()
     private var informationDirty = false
+    private var informationRevision = 0L
+    private var informationDebounceJob: Job? = null
+    private val informationSaveMutex = Mutex()
     private var moodDirty = false
     private var moodRevision = 0L
     private var moodSaveJob: Job? = null
@@ -118,7 +130,7 @@ class ExecutionViewModel(
         val step = current.steps.firstOrNull { it.stepId == stepId } ?: return false
         return current.instance?.status == "PENDING" && current.instance.executionKind == "STEPS" &&
             !current.working && !completing && step.stepStatus == "PENDING" &&
-            current.steps.firstOrNull { it.stepStatus == "PENDING" }?.stepId == stepId
+            current.steps.applicableSteps().firstOrNull { it.stepStatus == "PENDING" }?.stepId == stepId
     }
 
     fun updateStepInformation(stepId: String, value: String) {
@@ -195,6 +207,7 @@ class ExecutionViewModel(
         val local = updated.firstOrNull { it.stepId == stepId }
         if (local != null) stepLocalDrafts[stepId] = local
         mutableState.value = mutableState.value.copy(steps = updated)
+        updateChoiceAndStepReadiness()
     }
 
     private fun scheduleStepSave(stepId: String, save: suspend () -> Any) {
@@ -253,21 +266,113 @@ class ExecutionViewModel(
         service.setCounter(key, value)
     }
 
-    fun updateInformationDraft(value: String) {
-        informationDirty = true
-        mutableState.value = mutableState.value.copy(informationDraft = value, errorMessage = null)
+    fun updateStepChoice(stepId: String, optionId: String) {
+        if (!canEditCurrentStep(stepId)) return
+        val step = mutableState.value.steps.first { it.stepId == stepId }
+        if (step.executionKind != "CHOICE" || choiceOptions(step.executionConfigJson).none { it.id == optionId }) return
+        updateStepLocal(stepId) { it.copy(selectedOptionId = optionId) }
+        enqueueStepSave(stepId) { service.saveStepChoice(key, stepId, optionId) }
     }
 
-    fun saveInformationDraft() {
-        viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(working = true, errorMessage = null)
-            runCatching { service.saveInformationDraft(key, mutableState.value.informationDraft) }
-                .onSuccess {
-                    informationDirty = false
-                    refreshNow()
+    fun updateChoice(optionId: String) {
+        val current = mutableState.value
+        val choice = current.execution as? ExecutionState.Choice ?: return
+        if (current.instance?.status != "PENDING" || current.working || completing || choice.options.none { it.id == optionId } || current.selectedOptionId == optionId) return
+        choiceDirty = true
+        choiceRevision++
+        mutableState.value = current.copy(selectedOptionId = optionId, choiceSaveState = NoteSaveState.SAVING, errorMessage = null)
+        updateChoiceAndStepReadiness()
+        viewModelScope.launch { saveChoiceNow() }
+    }
+
+    fun retryChoiceSave() { viewModelScope.launch { saveChoiceNow() } }
+
+    private suspend fun saveChoiceNow(): Boolean = choiceSaveMutex.withLock {
+        while (choiceDirty) {
+            val revision = choiceRevision
+            val option = mutableState.value.selectedOptionId ?: return@withLock false
+            mutableState.value = mutableState.value.copy(choiceSaveState = NoteSaveState.SAVING, errorMessage = null)
+            try {
+                val saved = service.saveChoice(key, option)
+                if (revision == choiceRevision) {
+                    choiceDirty = false
+                    mutableState.value = mutableState.value.copy(execution = saved, choiceSaveState = NoteSaveState.SAVED)
                 }
-                .onFailure(::showError)
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                if (revision != choiceRevision) continue
+                mutableState.value = mutableState.value.copy(choiceSaveState = NoteSaveState.ERROR, errorMessage = error.message ?: "选项保存失败，请重试")
+                return@withLock false
+            }
         }
+        true
+    }
+
+    private fun updateChoiceAndStepReadiness() {
+        val current = mutableState.value
+        val instance = current.instance ?: return
+        if (instance.executionKind == "CHOICE") {
+            val valid = (current.execution as? ExecutionState.Choice)?.options?.any { it.id == current.selectedOptionId } == true
+            mutableState.value = current.copy(executionTargetReached = valid, canComplete = instance.status == "PENDING" && current.requiredStepsComplete && valid)
+        } else if (instance.executionKind == "STEPS") {
+            val valid = current.steps.isNotEmpty() && current.steps.completionSteps() != null
+            mutableState.value = current.copy(requiredStepsComplete = valid, executionTargetReached = valid, canComplete = instance.status == "PENDING" && valid)
+        }
+    }
+
+    fun updateInformationDraft(value: String) {
+        val current = mutableState.value
+        if (current.instance?.executionKind != "INFORMATION" || current.instance.status != "PENDING" ||
+            current.working || completing || value == current.informationDraft) return
+        informationDirty = true
+        informationRevision++
+        mutableState.value = current.copy(informationDraft = value, informationSaveState = NoteSaveState.SAVING, errorMessage = null)
+        updateInformationReadiness()
+        informationDebounceJob?.cancel()
+        informationDebounceJob = viewModelScope.launch {
+            delay(NOTE_SAVE_DEBOUNCE_MILLIS)
+            // Cancel only the debounce, never an in-flight database write.
+            informationDebounceJob = null
+            saveInformationNow()
+        }
+    }
+
+    fun retryInformationSave() {
+        informationDebounceJob?.cancel()
+        informationDebounceJob = null
+        viewModelScope.launch { saveInformationNow() }
+    }
+
+    private fun updateInformationReadiness() {
+        val current = mutableState.value
+        if (current.instance?.executionKind != "INFORMATION") return
+        val content = current.informationDraft.trim()
+        val valid = content.isNotEmpty() && content.codePointCount(0, content.length) <= 2000
+        mutableState.value = current.copy(executionTargetReached = valid,
+            canComplete = current.instance.status == "PENDING" && current.requiredStepsComplete && valid)
+    }
+
+    private suspend fun saveInformationNow(): Boolean = informationSaveMutex.withLock {
+        while (informationDirty) {
+            val revision = informationRevision
+            val content = mutableState.value.informationDraft
+            mutableState.value = mutableState.value.copy(informationSaveState = NoteSaveState.SAVING, errorMessage = null)
+            try {
+                val saved = service.saveInformationDraft(key, content)
+                if (revision == informationRevision) {
+                    informationDirty = false
+                    mutableState.value = mutableState.value.copy(execution = saved, informationSaveState = NoteSaveState.SAVED)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (revision != informationRevision) continue
+                mutableState.value = mutableState.value.copy(informationSaveState = NoteSaveState.ERROR,
+                    errorMessage = error.message ?: "告知正文保存失败，请重试")
+                return@withLock false
+            }
+        }
+        true
     }
 
     fun prepareInformationForShare(onReady: (String) -> Unit) {
@@ -277,15 +382,17 @@ class ExecutionViewModel(
             if (draft.trim().isNotEmpty()) onReady(draft.trim())
             return
         }
+        if (mutableState.value.working || completing) return
+        informationDebounceJob?.cancel()
+        mutableState.value = mutableState.value.copy(working = true, errorMessage = null)
         viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(working = true, errorMessage = null)
-            runCatching { service.saveInformationDraft(key, draft) }
-                .onSuccess { saved ->
-                    informationDirty = false
-                    refreshNow()
-                    onReady(saved.content)
+            try {
+                if (saveInformationNow()) {
+                    mutableState.value.informationDraft.trim().takeIf(String::isNotEmpty)?.let(onReady)
                 }
-                .onFailure(::showError)
+            } finally {
+                mutableState.value = mutableState.value.copy(working = false)
+            }
         }
     }
 
@@ -386,7 +493,10 @@ class ExecutionViewModel(
     }
 
     fun onForegroundLost() {
+        informationDebounceJob?.cancel()
         viewModelScope.launch {
+            saveChoiceNow()
+            saveInformationNow()
             if (timer.isRunning) pauseTimer()
             stopStepTimerAndFlush()
             if (moodDirty) saveMoodNow()
@@ -399,6 +509,7 @@ class ExecutionViewModel(
         completing = true
         mutableState.value = mutableState.value.copy(working = true, errorMessage = null)
         moodSaveJob?.cancel()
+        informationDebounceJob?.cancel()
         viewModelScope.launch {
             try {
                 runCatching {
@@ -409,7 +520,7 @@ class ExecutionViewModel(
                         return@launch
                     }
                     timerBase = null
-                    if (!saveMoodNow()) return@launch
+                    if (!saveChoiceNow() || !saveInformationNow() || !saveMoodNow()) return@launch
                     service.complete(key)
                     reminderReconciler?.reconcileAll()
                 }.onSuccess {
@@ -455,11 +566,12 @@ class ExecutionViewModel(
     }
 
     fun flushNote(onSaved: () -> Unit) {
+        informationDebounceJob?.cancel()
         noteSaveJob?.cancel()
         noteSaveJob = null
         moodSaveJob?.cancel()
         viewModelScope.launch {
-            if (saveMoodNow() && stopStepTimerAndFlush() && flushStepDrafts()) {
+            if (saveChoiceNow() && saveInformationNow() && saveMoodNow() && stopStepTimerAndFlush() && flushStepDrafts()) {
                 if (mutableState.value.noteDraft == savedNote || saveNoteNow()) onSaved()
             }
         }
@@ -487,6 +599,10 @@ class ExecutionViewModel(
     }
 
     private suspend fun refreshNow(loadNote: Boolean = false) {
+        val refreshChoiceRevision = choiceRevision
+        val refreshChoiceWasDirty = choiceDirty
+        val refreshInformationRevision = informationRevision
+        val refreshInformationWasDirty = informationDirty
         val refreshMoodRevision = moodRevision
         val refreshMoodWasDirty = moodDirty
         runCatching {
@@ -506,10 +622,11 @@ class ExecutionViewModel(
                     if (stepPendingSaves.containsKey(remote.stepId)) stepLocalDrafts[remote.stepId] ?: remote else remote
                 },
                 execution = result.execution,
+                selectedOptionId = if (choiceDirty || refreshChoiceWasDirty || refreshChoiceRevision != choiceRevision) mutableState.value.selectedOptionId else (result.execution as? ExecutionState.Choice)?.selectedOptionId,
                 requiredStepsComplete = result.readiness.requiredStepsComplete,
                 executionTargetReached = result.readiness.executionTargetReached,
                 canComplete = result.readiness.canComplete,
-                informationDraft = if (informationDirty) {
+                informationDraft = if (informationDirty || refreshInformationWasDirty || refreshInformationRevision != informationRevision) {
                     mutableState.value.informationDraft
                 } else {
                     (result.execution as? ExecutionState.Information)?.content
@@ -524,6 +641,8 @@ class ExecutionViewModel(
                 errorMessage = null,
             )
             updateMoodReadiness()
+            updateInformationReadiness()
+            updateChoiceAndStepReadiness()
         }.onFailure(::showError)
     }
 

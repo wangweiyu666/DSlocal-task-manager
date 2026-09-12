@@ -7,13 +7,18 @@ export interface Dst1Step {
   r: RequiredFlag;
   /** Leaf execution override; k=5 is forbidden here. */
   u?: Dst1LeafExecution;
+  c?: { s: string; o: string };
 }
+
+export interface Dst1ChoiceOption { i: string; n: string; p: number; }
 
 export type Dst1LeafExecution =
   | { k: 1; a: 1 | 2; v: number }
   | { k: 2; v: number }
   | { k: 3 }
-  | { k: 4 };
+  | { k: 4 }
+  | { k: 6; t: string }
+  | { k: 7; o: Dst1ChoiceOption[] };
 
 export type Dst1Execution = Dst1LeafExecution | { k: 5 };
 

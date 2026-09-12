@@ -15,6 +15,10 @@ import com.ds.localtaskmanager.domain.StepFingerprint
 import com.ds.localtaskmanager.domain.TaskDay
 import com.ds.localtaskmanager.domain.TaskStatus
 import com.ds.localtaskmanager.domain.TaskStateMachine
+import com.ds.localtaskmanager.domain.execution.configJson
+import com.ds.localtaskmanager.domain.execution.extendedExecution
+import com.ds.localtaskmanager.domain.execution.choiceOptions
+import com.ds.localtaskmanager.domain.execution.StepCondition
 import com.ds.localtaskmanager.domain.execution.ExecutionSpec
 import com.ds.localtaskmanager.domain.update.InstanceUpdatePlan
 import com.ds.localtaskmanager.domain.update.InstanceUpdatePlanner
@@ -429,6 +433,7 @@ class RoomImportService(
                     task.taskId, index, step.name, step.required,
                     step.id ?: stableStepId(task.taskId, index),
                     step.execution.kindName(), step.execution.actionValue(), step.execution.targetValue(),
+                    step.execution.configJson(), step.condition?.stepId, step.condition?.optionId,
                 )
             }
         })
@@ -441,8 +446,6 @@ class RoomImportService(
                 val storedExceptions = database.recurrenceExceptionDao().forTask(task.taskId)
                     .associateBy { it.occurrenceDate }
                 (storedExceptions.keys + incomingExceptions.keys).forEach { occurrenceDate ->
-                    val existing = instanceDao.getInstance(task.taskId, occurrenceDate)
-                    if (existing != null && !existing.isMutableForImport()) return@forEach
                     val exception = incomingExceptions[occurrenceDate]
                         ?: storedExceptions[occurrenceDate]?.let { parser.parseExceptionJson(it.patchJson) }
                     if (exception != null && !exception.cancelled && !exception.clearsException) {
@@ -463,6 +466,7 @@ class RoomImportService(
                                 executionKind = effectiveExecution.kindName(),
                                 executionAction = effectiveExecution.actionValue(),
                                 executionTarget = effectiveExecution.targetValue(),
+                                executionConfigJson = effectiveExecution.configJson(),
                                 reminderMinutesJson = task.reminderMinutes.toStorageJson(),
                                 updatedAtEpochMillis = now,
                             )
@@ -473,6 +477,12 @@ class RoomImportService(
                         val incomingException = batch.exceptions.lastOrNull { it.taskId == task.taskId && it.occurrenceDate.toString() == existing.occurrenceKey }
                         val exception = incomingException ?: storedException?.let { parser.parseExceptionJson(it.patchJson) }
                         val effectiveExecution = exception?.let { it.execution.valueOr(task.execution) } ?: task.execution
+                        if (effectiveExecution !is ExecutionSpec.Steps && (existing.executionKind == "CHOICE" || effectiveExecution is ExecutionSpec.Choice)) {
+                            val progress = executionDao.getProgress(existing.taskId, existing.occurrenceKey)
+                            if (effectiveExecution !is ExecutionSpec.Choice || effectiveExecution.options.none { it.id == progress?.selectedOptionId }) {
+                                executionDao.deleteProgress(existing.taskId, existing.occurrenceKey)
+                            }
+                        }
                         if (effectiveExecution.kindName() == "STEPS") {
                             val effectiveSteps = exception?.let { it.steps.valueOr(task.steps) } ?: task.steps
                             replaceInstanceStepsPreservingProgress(
@@ -529,7 +539,7 @@ class RoomImportService(
                     deadline = updatePlan.deadline?.toString(),
                     updatedAtEpochMillis = now,
                 )
-                oldInstance?.status == TaskStatus.COMPLETED.name -> oldInstance.copy(updatedAtEpochMillis = now)
+                oldInstance?.status == TaskStatus.COMPLETED.name -> oldInstance
                 oldInstance?.status == TaskStatus.MISSED.name &&
                     (updatePlan.deadlineExtended || updatePlan.dateMoved) -> oldInstance.copy(
                         taskDate = updatePlan.taskDate.toString(),
@@ -630,7 +640,7 @@ class RoomImportService(
             val baseExecution = definition.toExecutionSpecForInstance()
             val effectiveExecution = exception.execution.valueOr(baseExecution)
             val baseSteps = definitionDao.getStepDefinitions(definition.taskId).sortedBy { it.position }.map {
-                DstStep(it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position), it.executionSpec())
+                DstStep(it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position), it.executionSpec(), it.conditionStepId?.let { source -> StepCondition(source, requireNotNull(it.conditionOptionId)) })
             }
             validateEffectiveException(baseExecution, baseSteps, exception)
             val date = exception.occurrenceDate.toString()
@@ -653,6 +663,11 @@ class RoomImportService(
             if (existing?.status == TaskStatus.COMPLETED.name ||
                 (existing?.status == TaskStatus.MISSED.name && !exception.cancelled && !exception.reopensMissed())
             ) {
+                // Definitions may evolve independently of a completed execution snapshot.
+                // Store explicit branch corrections without rewriting the historical result.
+                if (!exception.cancelled && batch.allTasks().any { it.taskId == exception.taskId }) {
+                    database.recurrenceExceptionDao().upsert(RecurrenceExceptionEntity(exception.taskId, date, false, exception.patchJson, stored?.createdAtEpochMillis ?: now, now))
+                }
                 auditOccurrence(exception, batch.batchId, "OCCURRENCE_EXCEPTION_IGNORED", now)
                 continue
             }
@@ -714,6 +729,7 @@ class RoomImportService(
             executionKind = execution.kindName(),
             executionAction = execution.actionValue(),
             executionTarget = execution.targetValue(),
+            executionConfigJson = execution.configJson(),
             reminderMinutesJson = reminderMinutes.toStorageJson(),
             publishedAtEpochMillis = now,
             updatedAtEpochMillis = now,
@@ -729,14 +745,14 @@ class RoomImportService(
                 definitionDao.getStepDefinitions(definition.taskId).map {
                     com.ds.localtaskmanager.protocol.DstStep(
                         it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position),
-                        it.executionSpec(),
+                        it.executionSpec(), it.conditionStepId?.let { source -> StepCondition(source, requireNotNull(it.conditionOptionId)) },
                     )
                 }
             } else if (exception.steps is Field.Value) {
                 exception.steps.valueOr(emptyList())
             } else {
                 definitionDao.getStepDefinitions(definition.taskId).map {
-                    DstStep(it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position), it.executionSpec())
+                    DstStep(it.name, it.required, it.stepId ?: stableStepId(definition.taskId, it.position), it.executionSpec(), it.conditionStepId?.let { source -> StepCondition(source, requireNotNull(it.conditionOptionId)) })
                 }
             }
             if (execution.kindName() == "STEPS") {
@@ -752,11 +768,18 @@ class RoomImportService(
             )
             auditOccurrence(exception, batchId, "OCCURRENCE_STEPS_RESET", now)
         }
+        if (updated.executionKind == "CHOICE") {
+            val progress = executionDao.getProgress(updated.taskId, updated.occurrenceKey)
+            if (progress?.selectedOptionId != null && choiceOptions(updated.executionConfigJson).none { it.id == progress.selectedOptionId }) executionDao.deleteProgress(updated.taskId, updated.occurrenceKey)
+        }
         if (updated.executionKind != "STEPS" && existing.executionKind != updated.executionKind) {
             executionDao.deleteMood(existing.taskId, existing.occurrenceKey)
         }
         if (clearing || exception.cancelled || exception.execution is Field.Value) {
-            executionDao.deleteProgress(existing.taskId, existing.occurrenceKey)
+            val progress = executionDao.getProgress(existing.taskId, existing.occurrenceKey)
+            val keepChoice = !exception.cancelled && updated.executionKind == "CHOICE" &&
+                choiceOptions(updated.executionConfigJson).any { it.id == progress?.selectedOptionId }
+            if (!keepChoice) executionDao.deleteProgress(existing.taskId, existing.occurrenceKey)
             auditOccurrence(exception, batchId, "OCCURRENCE_EXECUTION_RESET", now)
         }
     }
@@ -802,10 +825,13 @@ class RoomImportService(
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
         "MOOD" -> ExecutionSpec.Mood
+        "NOTICE", "CHOICE" -> extendedExecution(executionKind, executionConfigJson)
+        "STEPS" -> ExecutionSpec.Steps
         else -> ExecutionSpec.Normal
     }
 
     private fun validateEffectiveSteps(execution: ExecutionSpec, steps: List<DstStep>) {
+        com.ds.localtaskmanager.protocol.validateConditionalDefinition(execution, steps)
         if (execution !is ExecutionSpec.Steps) return
         if (steps.isEmpty() || steps.size > 50 || steps.any { it.id == null || !STEP_ID_PATTERN.matches(it.id!!) } ||
             steps.map { it.id }.distinct().size != steps.size || steps.any { it.execution is ExecutionSpec.Steps }) {
@@ -842,6 +868,8 @@ class RoomImportService(
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
         "MOOD" -> ExecutionSpec.Mood
+        "NOTICE", "CHOICE" -> extendedExecution(executionKind, executionConfigJson)
+        "STEPS" -> ExecutionSpec.Steps
         else -> ExecutionSpec.Normal
     }
 
@@ -942,6 +970,7 @@ class RoomImportService(
             executionKind = execution.kindName(),
             executionAction = execution.actionValue(),
             executionTarget = execution.targetValue(),
+            executionConfigJson = execution.configJson(),
             reminderMinutesJson = reminderMinutes.toStorageJson(),
         )
     }
@@ -971,6 +1000,7 @@ class RoomImportService(
             executionKind = execution.kindName(),
             executionAction = execution.actionValue(),
             executionTarget = execution.targetValue(),
+            executionConfigJson = execution.configJson(),
             reminderMinutesJson = reminderMinutes.toStorageJson(),
             publishedAtEpochMillis = if (updatePlan.reopened || old == null) now else old.publishedAtEpochMillis,
             groupNameSnapshot = groupNameSnapshot,
@@ -1023,7 +1053,9 @@ class RoomImportService(
             "\"counterValue\":${progress?.counterValue ?: "null"}," +
             "\"elapsedMillis\":${progress?.elapsedMillis ?: "null"}}"
         val convertingToSteps = task.execution.kindName() == "STEPS"
-        if (!convertingToSteps) executionDao.deleteProgress(oldInstance.taskId, oldInstance.occurrenceKey)
+        val keepChoice = oldInstance.executionKind == "CHOICE" && task.execution is ExecutionSpec.Choice &&
+            task.execution.options.any { it.id == progress?.selectedOptionId }
+        if (!convertingToSteps && !keepChoice) executionDao.deleteProgress(oldInstance.taskId, oldInstance.occurrenceKey)
         if (!convertingToSteps) executionDao.deleteMood(oldInstance.taskId, oldInstance.occurrenceKey)
         if (!convertingToSteps && oldDefinition.executionKind == "INFORMATION" && task.execution.kindName() != "INFORMATION") {
             executionDao.deleteSubmission(oldInstance.taskId, oldInstance.occurrenceKey)
@@ -1050,7 +1082,8 @@ class RoomImportService(
             val previous = old[step.id ?: stableStepId(taskId, index)]
             previous == null || previous.position != index ||
                 previous.required != step.required || previous.executionKind != step.execution.kindName() ||
-                previous.executionAction != step.execution.actionValue() || previous.executionTarget != step.execution.targetValue()
+                previous.executionAction != step.execution.actionValue() || previous.executionTarget != step.execution.targetValue() ||
+                previous.executionConfigJson != step.execution.configJson() || previous.conditionStepId != step.condition?.stepId || previous.conditionOptionId != step.condition?.optionId
         } ?: imported.size
         instanceDao.deleteInstanceSteps(taskId, occurrenceKey)
         instanceDao.insertInstanceSteps(imported.mapIndexed { index, step ->
@@ -1071,6 +1104,9 @@ class RoomImportService(
                 executionKind = step.execution.kindName(),
                 executionAction = step.execution.actionValue(),
                 executionTarget = step.execution.targetValue(),
+                executionConfigJson = step.execution.configJson(),
+                conditionStepId = step.condition?.stepId,
+                conditionOptionId = step.condition?.optionId,
                 stepStatus = when {
                     preserveConfirmed -> "CONFIRMED"
                     previous?.stepStatus == "SKIPPED" && index < changedAt && !step.required -> "SKIPPED"
@@ -1081,6 +1117,7 @@ class RoomImportService(
                 informationContent = previous?.informationContent?.takeIf { compatible },
                 moodRating = previous?.moodRating?.takeIf { compatible },
                 moodText = previous?.moodText?.takeIf { compatible },
+                selectedOptionId = previous?.selectedOptionId?.takeIf { id -> compatible && (step.execution as? ExecutionSpec.Choice)?.options?.any { it.id == id } == true },
             )
         })
         val rootIndex = imported.indexOfFirst { it.id == rootStepId(taskId) }
@@ -1097,6 +1134,7 @@ class RoomImportService(
                 informationContent = legacyInformation?.content?.takeIf { compatibleRoot && root.executionKind == "INFORMATION" },
                 moodRating = legacyMood?.rating?.takeIf { compatibleRoot && root.executionKind == "MOOD" },
                 moodText = legacyMood?.text?.takeIf { compatibleRoot && root.executionKind == "MOOD" },
+                selectedOptionId = legacyProgress?.selectedOptionId?.takeIf { id -> compatibleRoot && root.executionKind == "CHOICE" && choiceOptions(root.executionConfigJson).any { it.id == id } },
             )))
             executionDao.deleteProgress(taskId, occurrenceKey)
             executionDao.deleteSubmission(taskId, occurrenceKey)
@@ -1226,10 +1264,10 @@ class RoomImportService(
         ).joinToString(":")
 
     private fun TaskDefinitionEntity.executionSignature(): String =
-        "$executionKind:${executionAction ?: ""}:${executionTarget ?: ""}"
+        "$executionKind:${executionAction ?: ""}:${executionTarget ?: ""}:${executionConfigJson.orEmpty()}"
 
     private fun ExecutionSpec.signature(): String =
-        "${kindName()}:${actionValue() ?: ""}:${targetValue() ?: ""}"
+        "${kindName()}:${actionValue() ?: ""}:${targetValue() ?: ""}:${configJson().orEmpty()}"
 
     private fun ExecutionSpec.kindName(): String = when (this) {
         ExecutionSpec.Normal -> "NORMAL"
@@ -1237,6 +1275,8 @@ class RoomImportService(
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
         ExecutionSpec.Mood -> "MOOD"
+        is ExecutionSpec.Notice -> "NOTICE"
+        is ExecutionSpec.Choice -> "CHOICE"
         ExecutionSpec.Steps -> "STEPS"
     }
 

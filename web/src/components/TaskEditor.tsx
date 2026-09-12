@@ -1,3 +1,5 @@
+import { ChoiceNoticeEditor, defaultLeafExecution } from "./ChoiceNoticeEditor";
+import { validateConditionalSteps, validateExecutionConfiguration } from "../../../shared/protocol/execution";
 import { ChevronDown } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { GroupRecord, TaskFields } from "../model/types";
@@ -8,6 +10,7 @@ export type EditableTask = TaskFields & { groupId: string | null; taskId?: strin
 
 export function taskIssues(task: EditableTask): string[] {
   const issues: string[] = [];
+  try { validateExecutionConfiguration(task.execution); validateConditionalSteps(task.steps); } catch (error) { issues.push(error instanceof Error ? error.message : "执行配置无效"); }
   if (!task.name.trim()) issues.push("请填写任务名称");
   if ([...task.name.trim()].length > 100) issues.push("任务名称不能超过 100 个字符");
   if ([...task.description].length > 2000) issues.push("描述不能超过 2000 个字符");
@@ -90,7 +93,8 @@ export function TaskEditor({ value, groups, onChange, allowKindChange = false, a
     </div></section>}
 
     <section className="form-section"><h3>完成方式</h3><div className="form-grid">
-      {value.steps.length > 0 ? <p className="supporting span-2">已启用分步骤执行。任务级完成方式已隐藏；请在每个步骤中选择执行类型。</p> : <label className="field"><span>执行类型</span><select value={value.execution?.k ?? 0} onChange={(event) => { const kind = Number(event.target.value); patch({ name: kind === 4 && !value.name.trim() ? "今天的心情怎么样" : value.name, execution: kind === 1 ? { k: 1, a: 2, v: 10 } : kind === 2 ? { k: 2, v: 600 } : kind === 3 ? { k: 3 } : kind === 4 ? { k: 4 } : null }); }}><option value={0}>直接完成</option><option value={1}>完成指定次数</option><option value={2}>完成指定时长</option><option value={3}>填写信息告知</option><option value={4}>心情记录</option></select></label>}
+      {value.steps.length > 0 ? <p className="supporting span-2">已启用分步骤执行。任务级完成方式已隐藏；请在每个步骤中选择执行类型。</p> : <label className="field"><span>执行类型</span><select value={value.execution?.k ?? 0} onChange={(event) => { const kind = Number(event.target.value); patch({ name: kind === 4 && !value.name.trim() ? "今天的心情怎么样" : value.name, execution: defaultLeafExecution(kind) ?? null }); }}><option value={0}>直接完成</option><option value={1}>完成指定次数</option><option value={2}>完成指定时长</option><option value={3}>填写信息告知</option><option value={4}>心情记录</option><option value={6}>阅读通知并确认</option><option value={7}>单选积分</option></select></label>}
+      <ChoiceNoticeEditor execution={value.execution} onChange={(execution) => patch({ execution })} />
       {value.execution?.k === 4 && <p className="supporting span-2">执行者通过五档滑动条选择心情，可选填感受后主动完成。心情好坏不影响积分。需要更新到支持心情记录的 Android 版本。</p>}
       {value.execution?.k === 1 && <><label className="field"><span>计数方式</span><select value={value.execution.a} onChange={(event) => patch({ execution: { ...value.execution as Extract<NonNullable<TaskFields["execution"]>, { k: 1 }>, a: Number(event.target.value) as 1 | 2 } })}><option value={1}>拖动计数条</option><option value={2}>点击计数</option></select></label><label className="field"><span>目标次数</span><input type="number" min={1} max={999} value={value.execution.v} onChange={(event) => patch({ execution: { ...value.execution as Extract<NonNullable<TaskFields["execution"]>, { k: 1 }>, v: Number(event.target.value) } })} /></label></>}
       {value.execution?.k === 2 && <label className="field"><span>目标秒数</span><input type="number" min={1} max={3600} value={value.execution.v} onChange={(event) => patch({ execution: { k: 2, v: Number(event.target.value) } })} /></label>}
