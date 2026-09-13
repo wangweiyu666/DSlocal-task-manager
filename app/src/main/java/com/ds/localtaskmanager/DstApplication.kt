@@ -31,12 +31,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import com.ds.localtaskmanager.sharing.ShareImageService
 import com.ds.localtaskmanager.settings.AppSettingsRepository
 import com.ds.localtaskmanager.diagnostics.DiagnosticEventStore
 import com.ds.localtaskmanager.diagnostics.DiagnosticService
 
 class DstApplication : Application() {
+    private val mutableStartup = MutableStateFlow(StartupState.Loading)
+    val startup = mutableStartup.asStateFlow()
+    private var startupJob: Job? = null
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val database: AppDatabase by lazy { AppDatabase.create(this) }
     private val clock: Clock = Clock.systemDefaultZone()
@@ -100,11 +106,34 @@ class DstApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        if (System.getProperty("dstationery.unitTest") != "true") startConnectivitySync(this)
         reminderNotifier.createChannel()
-        backupManager.cleanupTemporaryFiles()
-        shareImageService.cleanupTemporaryFiles()
-        diagnosticEvents.cleanup()
-        backupManager.enqueueRecoveryIfNeeded()
+        if (System.getProperty("dstationery.unitTest") == "true") {
+            backupManager.enqueueRecoveryIfNeeded()
+            mutableStartup.value = StartupState.Ready
+        } else {
+            initialize()
+        }
+    }
+
+    fun initialize() {
+        if (startupJob?.isActive == true || mutableStartup.value == StartupState.Ready) return
+        mutableStartup.value = StartupState.Loading
+        startupJob = applicationScope.launch(Dispatchers.IO) {
+            try {
+                // Prepare encrypted storage and register recovery before exposing the
+                // repositories, without blocking the Activity's first frame.
+                backupManager.enqueueRecoveryIfNeeded()
+                startConnectivitySync(this@DstApplication)
+                mutableStartup.value = StartupState.Ready
+            } catch (error: Exception) {
+                mutableStartup.value = StartupState.Failed
+                return@launch
+            }
+            runCatching { backupManager.cleanupTemporaryFiles() }
+            runCatching { shareImageService.cleanupTemporaryFiles() }
+            runCatching { diagnosticEvents.cleanup() }
+        }
     }
 }
+
+enum class StartupState { Loading, Ready, Failed }

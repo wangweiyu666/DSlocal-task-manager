@@ -1,44 +1,49 @@
 name: Dom Web Pages
 
 on:
-  push:
+  workflow_run:
+    workflows: [Cloud Connected]
+    types: [completed]
     branches: [main]
-    paths:
-      - "web/**"
-      - "shared/**"
-      - "docs/dst1-schema.json"
-      - "protocol-test-vectors/**"
-      - ".github/workflows/dom-web-pages.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run verify:protocol
-      - run: npm run build:offline
-      - run: npm run build:connected
-      - run: npm run verify:boundaries
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Require current main source
+        run: |
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$RELEASE_SHA"
+      - id: evidence
+        run: node scripts/ci/verification-reuse.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUIRE_EXISTING: 'true'
+      - uses: actions/download-artifact@v4
+        with:
+          name: cloud-verification-${{ env.RELEASE_SHA }}
+          path: web
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.evidence.outputs.run_id }}
+      - run: node scripts/ci/check-web-artifact.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -48,7 +53,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
     steps:
       - name: Deploy

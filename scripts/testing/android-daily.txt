@@ -1,12 +1,7 @@
-# Daily smoke: task-day boundary, import/transactions, completion, edits and connected recovery.
-com.ds.localtaskmanager.domain.TaskDayTest
-com.ds.localtaskmanager.data.ImportAndExecutionServiceTest
-com.ds.localtaskmanager.data.StepsExecutionRegressionTest
+# Active regressions: recent conditional choices, Room migration and autosave fixes.
 com.ds.localtaskmanager.data.ConditionalChoiceTest
-com.ds.localtaskmanager.ui.execution.W22ExecutionViewModelTest
-com.ds.localtaskmanager.ui.execution.MoodSaveRaceRegressionTest
+com.ds.localtaskmanager.data.AppDatabaseMigrationTest
 com.ds.localtaskmanager.ui.execution.InformationAutoSaveTest
 com.ds.localtaskmanager.ui.execution.ChoiceAutoSaveTest
-com.ds.localtaskmanager.connected.CloudApiRateLimitTest
-com.ds.localtaskmanager.connected.ConnectedSyncCoordinatorTest
-com.ds.localtaskmanager.connected.ConnectedSyncEngineTest
+com.ds.localtaskmanager.ui.today.TodayStartupTest
+com.ds.localtaskmanager.connected.ConnectedSyncEngineTest.startup*

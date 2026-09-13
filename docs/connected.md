@@ -1,10 +1,8 @@
 # 联网版开发、同步与运维指南
 
-> 2026-09-07：当前部署与 Android 构建以[单一云端环境](production-only.md)为准。staging 退出使用，正式管理入口目标为 `prod.rochelimit.me`，API 保持 `api.rochelimit.me`；下方旧域名、三变体和双环境部署说明为迁移前记录。
+> 当前仅 local 开发与 production 云端。发布、域名和恢复操作统一见 [生产运行手册](stage4-production-runbook.md)。
 
-本文合并联网版路线图、阶段验收、同步协议、状态矩阵和环境恢复规则。完整任务业务语义以[需求总稿](preview.md)为准，机器契约以 `cloud/openapi.yaml`、`cloud/schemas/` 与 `cloud-protocol-test-vectors/` 为准。
-
-> 当前状态：阶段 1、阶段 2 和阶段 3 已完成。阶段 4 的生产执行者变体、独立签名与发布门禁正在构建；staging/production 删除账本、恢复演练、生产部署、三账号真实试运行和连续七天观察仍必须按[阶段四生产运行手册](stage4-production-runbook.md)留存证据后才能声明完成。
+本文维护当前联网架构与同步行为，不作为历史阶段任务清单。完整任务业务语义以[需求总稿](preview.md)为准，机器契约以 `cloud/openapi.yaml`、`cloud/schemas/` 与 `cloud-protocol-test-vectors/` 为准。
 
 ## 产品与架构边界
 
@@ -12,7 +10,7 @@
 | --- | --- | --- |
 | 联网 Android | 邮箱登录、邀请领取、空间任务、离线执行、同步和应用内通知 | 独立包名、签名、SQLCipher Room 与 Keystore 会话 |
 | 管理员 Web | 成员、任务库、积分组、发布、结果、冲突和审计 | 独立构建、Cloudflare Access 管理员登录、IndexedDB 缓存与 outbox |
-| API Worker + D1 | 鉴权、授权、版本、同步、结果、通知、审计和生命周期 | local/staging/production 分 Worker、主库、删除账本库与密钥 |
+| API Worker + D1 | 鉴权、授权、版本、同步、结果、通知、审计和生命周期 | local/production 分主库、删除账本和配置，旧 staging 不参与发布 |
 
 联网和离线构建共享协议、领域规则、任务编辑器和基础 UI。Android 共享 `DstNavigation`、`ProfileScreen`、`SettingsScreen` 和执行状态机；联网状态通过参数和回调显示，离线构建隐藏对应入口。账号、成员、同步和云数据库实现保留在 connected 源集。编译期隔离规则见[离线版指南](offline.md#共享实现规则)。
 
@@ -38,8 +36,9 @@
 - access token 有效期 15 分钟；refresh token 每次使用后轮换，设备会话闲置 30 天、最长 90 天。
 - 服务端只保存带密钥摘要。超出并发宽限后的 refresh token 重放会撤销设备会话。
 - Web refresh token 使用 `HttpOnly; Secure; SameSite=Strict` cookie；Android 使用 Keystore 保护。
-- 两个管理网页在返回资源或代理 API 前验证 Cloudflare Access 身份，会话设为 24 小时并绑定浏览器。网页通过 `/v1/auth/access` 自动换取现有管理员业务会话，无需第二次邮箱登录；API 独立校验 Access 签名、环境 audience、管理员邮箱及现有 ADMIN 成员，继续执行业务角色授权。
-- 临时网络或服务器故障保留账号、缓存和 outbox，允许继续离线使用；只有确认成员资格被撤销后才清除该空间业务数据。
+- 正式管理网页在返回资源或代理 API 前验证 Cloudflare Access 身份，会话设为 24 小时并绑定浏览器。网页通过 `/v1/auth/access` 自动换取现有管理员业务会话，无需第二次邮箱登录；API 独立校验 Access 签名、环境 audience、管理员邮箱及现有 ADMIN 成员，继续执行业务角色授权。
+- 启动时，已有完整执行者身份、同步缓存且无已知账号限制的会话先展示本地任务，再后台校验和同步；首次登录仍等待远端确认。数据库初始化和过期文件清理在后台执行，进入任务页前先登记待处理的备份恢复。
+- 临时网络或服务器故障保留账号、缓存和 outbox，允许继续离线使用；确认终止会话、成员撤销或删除时按同步状态清理，不能将临时网络故障当作清理依据。
 
 ## 隐私、导出与删除
 
@@ -71,7 +70,7 @@
 `POST /v1/spaces/{spaceId}/commands`
 
 - 每批最多 100 条，按顺序处理，每条命令独立事务。
-- schema v7 将业务数据、change、通知、审计与命令回执放入同一 D1 batch；空间序列已变化时整批回滚，客户端可以安全重试。部署此版本前必须应用 `0007_atomic_sync_commands.sql`。
+- 单条命令的业务数据、change、通知、审计与回执位于同一 D1 batch；空间序列变化时回滚该命令事务，客户端可以安全重试。迁移文件按目录顺序应用，不以旧阶段号代替当前数据库状态。
 - 命令包含 `commandId`、`entityId`、`baseVersion`、`createdAt`、`type` 和严格校验的 `payload`。
 - 单条结果为 `accepted`、`duplicate`、`conflict`、`rejected` 或 `retryable`。
 - 相同 ID/相同载荷重放返回首次回执；相同 ID/不同载荷返回 `IDEMPOTENCY_KEY_REUSED`。
@@ -99,8 +98,10 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 - 每名执行者拥有独立 assignment。取消勾选会取消该成员分配，并在 Android 同步后移除对应云任务。
 - 执行事件不可变，绑定执行者实际看到的任务版本；旧修订或取消后的结果保留并标记待复核。
 - 信息告知正文使用独立不可变命令同步，并展示在管理员结果卡片。
-- 心情任务使用 `u: { k: 4 }`。已完成的 `EXECUTION_EVENT` 在 `data` 中携带 `executionKind: "MOOD"`、`status: "COMPLETED"`、`moodRating`（整数 1～5）和 `moodText`（可空字符串，最多 2000 个 Unicode 字符）。服务端按提交的任务版本和实例日期校验执行类型，包含单日覆盖；沿用事件权限、幂等和结果选择。草稿不上传，MISSED 与撤销事件不携带答案。管理员从所选事件展示心情，不从其他提交回填已撤销答案。
-- 分步骤任务使用 `u: { k: 5 }`，步骤结果仍通过一次整项 `EXECUTION_EVENT` 提交。`data` 必须为 `executionKind: "STEPS"`、`status: "COMPLETED"`、完整且按修订快照顺序排列的 `stepResults`，每项只有 `stepId`、`status: "CONFIRMED"|"SKIPPED"` 和对应类型答案（`counterValue`、`elapsedMillis`、`informationContent`、`moodRating`/`moodText`）；选做步骤才可无答案跳过，撤销和 `MISSED` 不带步骤答案。服务端按 `taskRevision` 与实例日期例外解析有效步骤，并在保存结果时补入该修订的 `name`、`required`、`execution`、`taskName`、`taskDate`；客户端 `localOccurrenceKey` 保留为本机实例键。延迟重试、旧修订和跨执行者结果继续使用现有幂等、审查与结果选择规则，不能以最新任务定义补历史标签。
+- 心情完成通过 `EXECUTION_EVENT` 的 `data` 发送 `executionKind:MOOD,status:COMPLETED,moodRating,moodText`；评分 1～5、文字最多 2000 码点。草稿、MISSED 与撤销不上传答案。
+- 通知与单选完成仍用该事件：`NOTICE` 以完成记录已知晓，`CHOICE` 携带 `selectedOptionId`；客户端不提交积分。云端按任务修订及日期例外找到选项，保存名称、积分、通知正文和总分历史快照。
+- STEPS 只在整项完成提交一次：`executionKind:STEPS,status:COMPLETED,stepResults`，按修订快照顺序列出所有步骤。状态为 `CONFIRMED / SKIPPED / NOT_APPLICABLE`；答案按类型为 counterValue、elapsedMillis、informationContent、moodRating/moodText 或 selectedOptionId。仅适用选做可跳过，跳过/不适用不带答案，直接或通知确认无输入答案。
+- 云端重算分支与基础＋适用确认选项积分，拒绝伪造选择/分值、必需跳过和错误分支状态；补入 name、required、execution、taskName、taskDate 及选项/得分快照。Web 展示所选事件，不从最新任务或其他事件回填已撤销答案。撤销/MISSED 无 stepResults，不新增逐步云事件。
 - 同一分配的首个有效终态结果暂定生效，后到结果作为 duplicate 保留；管理员改选写入新审计事件。
 
 关键竞态结果：
@@ -112,23 +113,23 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 | 两台设备提交同一终态 | 先接受者暂定正式，后者保留为 duplicate |
 | 批次中单条冲突 | 已成功命令不回滚，继续处理无依赖命令 |
 | access token 过期 | 保留缓存/outbox并尝试 refresh |
-| 设备会话撤销 | 保留本地数据，邮箱重验后恢复 |
+| 确认会话终止 | 清理相关会话/空间缓存，要求重新登录；可重试网络错误不清理 |
 | 联机确认成员被移除 | 清除空间缓存和 outbox，永久拒绝旧命令 |
 | 新执行者加入 | 获得活动 `ALL` 任务，不获得既有 `SELECTED` 任务 |
 
 ## Android 交互
 
 - “今日”不显示独立联网横条；同步复用离线导入按钮的共享悬浮位置和布局。
-- 进入可用空间后每 15 秒刷新通知；新未读通知显示应用内 Snackbar，不使用远程推送。
+- 进入可用空间且页面可见时按服务端策略刷新通知（正常 15 秒），退到后台停止页面轮询；新未读通知显示应用内 Snackbar，不使用远程推送。
 - “我的”左上角显示与设置按钮同尺寸的通知图标和未读角标，通知中心、同步状态与退出账号复用共享页面。
 - 云端单任务载荷错误时隔离该任务并提示“云任务待修复”，其他本地任务和离线操作继续可用；后续收到正确修订后自动恢复。
 - 首次快照、增量同步、网络恢复和手动同步均复用本地导入和执行逻辑。
 
 ## 稳定错误与安全
 
-API 使用 Workers Rate Limiting binding，在任何 D1/删除账本查询前限流。staging 与 production 各自按来源 IP（`CF-Connecting-IP`）设置所有请求 120 次/60 秒，登录验证码发送、验证、刷新及无 Bearer 请求再共用 20 次/60 秒的较低额度。伪造包名、User-Agent 或 Bearer 不会绕过所有请求的额度，登录接口也不会因带 Bearer 而免限流。缺少凭据的业务请求直接返回 401；CORS 预检不读取数据库。未认证客户端的 IP 可能多人共用，因此这些阈值需要结合实际 429 监测调整。
+API 使用 Workers Rate Limiting binding，在任何 D1/删除账本查询前限流。production 按来源 IP（`CF-Connecting-IP`）设置所有请求 120 次/60 秒，登录验证码发送、验证、刷新及无 Bearer 请求再共用 20 次/60 秒的较低额度。伪造包名、User-Agent 或 Bearer 不会绕过所有请求的额度，登录接口也不会因带 Bearer 而免限流。缺少凭据的业务请求直接返回 401；CORS 预检不读取数据库。未认证客户端的 IP 可能多人共用，因此这些阈值需要结合实际 429 监测调整。
 
-local 的两项阈值分别为 1200/120，便于串行 smoke 测试；三个环境使用独立的限流 namespace。超限返回 `429/RATE_LIMITED`、`Retry-After: 60` 及 JSON `retryAfterSeconds`。缺少限流绑定时返回 `503/SERVICE_UNAVAILABLE`，部署 guard 检查绑定配置和 namespace 隔离。原有邮箱/IP 验证码限额继续生效。
+local 的两项阈值分别为 1200/120，便于串行 smoke 测试；local 与 production 使用独立的限流 namespace。超限返回 `429/RATE_LIMITED`、`Retry-After: 60` 及 JSON `retryAfterSeconds`。缺少限流绑定时返回 `503/SERVICE_UNAVAILABLE`，部署 guard 检查绑定配置和 namespace 隔离。原有邮箱/IP 验证码限额继续生效。
 
 Android 在同一个 API 客户端实例内，发送验证码至少间隔 60 秒、验证至少 2 秒、刷新至少 1 秒；收到 429（或带重试时间的 503）后暂停该客户端的新网络请求，并显示剩余等待时间。支持 JSON 秒数与 `Retry-After` 的秒数/HTTP 日期，缺少重试时间的 429 默认等待 60 秒，单次最多等待 24 小时；应用重启后的最终保护仍由服务器承担。
 
@@ -149,61 +150,16 @@ Worker 结构日志只允许 `timestamp`、`level`、`event`、`environment`、`
 
 资源保护按每天的 EMAIL、AUTO_SYNC_READ、API_WRITE 计数：达到软额度 70% 进入 `WARNING`，客户端自动轮询从 15 秒降为 60 秒；达到 90% 进入 `PROTECT`，停止自动轮询并保留手动同步、关键写入和删除/恢复邮件。邮件最后 10% 仅供敏感验证与账号恢复。阈值是应用保护线，不替代供应商硬限额。
 
+## 后台恢复与并发
+
+Android 一次性 WorkManager 使用 CONNECTED 网络约束、30 秒指数退避和 3 分钟单次上限；服务端 Retry-After 截止另行持久化，前台不能绕过。Application 级 Engine/互斥锁协调前台与 Worker，事务提交后登记，启动从本地结果/撤销日志恢复漏登记命令。最后一条上传尚未返回时到达的新变更仍须获得后继执行机会；无待办且无显式请求时不额外拉取，离线变体相关桥接为空操作。
+
+会话 generation 与账号、成员、空间一起核对，旧 Worker 不能操作或清除新会话。独立 ConnectedSyncDatabase v1→2 保留会话、队列、发送标记、游标及映射；主业务库为 Room 9。取消/超时/丢失响应保留原命令 JSON 和 ID，成功 duplicate 回执后原子清队列；拒绝/冲突保留诊断，不能无限重试。
+
+后台补偿受系统调度和厂商自启动限制，不保证即时执行，force-stop 后需用户重开。仅在正式截图或手动验收出问题时按相关旧回归诊断，设备场景与实际证据分开：见 [后台对照](verification-records.md#background-2026-09-09) 和 [初期实现证据](verification-records.md#background-initial)。
+
 ## 环境与部署
 
-| 环境 | API | Web | D1 |
-| --- | --- | --- | --- |
-| local | Wrangler 本地进程 | Wrangler 本地进程 | `dstationery-local` + `dstationery-deletion-ledger-local` |
-| staging | `api-staging.rochelimit.me` | `test.rochelimit.me`（Access） | `dstationery-staging` + `dstationery-deletion-ledger-staging`（APAC） |
-| production | `api.rochelimit.me` | `staging.rochelimit.me`（Access，名称历史遗留） | `dstationery-production` + `dstationery-deletion-ledger-production`（APAC） |
+API / Web / 两个 D1、Access、签名和生产发布操作只在 [运行手册](stage4-production-runbook.md) 维护。默认 Wrangler 为 local，production 远程操作需明确环境与授权；staging 退役数据不迁入正式环境。已应用 migration 只追加，故障注入只使用隔离数据。
 
-此表是 Access 迁移后的配置，按[生产运行手册](stage4-production-runbook.md#本次域名与-access-迁移顺序)完成云端配置与验收。local、staging、production 使用不同主 D1、删除账本 D1、`AUTH_PEPPER`、管理员白名单、Resend key 和 Cloudflare token。两个网页使用独立 Access 应用 audience，`ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`MANAGEMENT_ADMIN_EMAIL` 保存在 Web Worker secrets 中；API 保存对应的前两项，并使用既有 `ADMIN_EMAIL`。Worker 验证签名、issuer、audience、有效期和精确邮箱；页面、资源和代理 API 均在验证之后返回。Access 自动登录代替网页第二次邮箱验证，业务角色、隐私确认和敏感操作验证继续保留。直接 API 不加浏览器门禁，Android 地址、应用认证和限流保持不变。
-
-`cloud/scripts/guard-environment.mjs` 验证数据库隔离、环境 cron、限流命名空间、Access 开关、整站 Worker 检查、域名和 API 服务绑定，禁止 workers.dev/preview 旁路。默认命令只能操作 local；远程 migration 必须同时指定数据库名、`--remote` 和 `--env`。旧 staging 域改作生产前，应先同步未上传的网页修改并关闭旧标签页；新测试源不能直接读取旧源的本地缓存，测试 D1 数据不会迁往生产。
-
-阶段 3 首次远程部署前必须完成：
-
-1. 分别创建 `dstationery-deletion-ledger-staging` 和 `dstationery-deletion-ledger-production` D1 数据库；
-2. 将 `cloud/wrangler.jsonc` 中 `2222…` / `3333…` 占位 ID 替换为真实 ID；
-3. 运行环境 guard；
-4. 先迁移主库，再迁移删除账本库，最后部署 Worker；
-5. 用非敏感 canary 演练“删除 → 主库 Time Travel 恢复 → 账本重放 → canary 仍不可用”。
-
-联网 Android 分为 staging 和 production，两者共用联网源码及测试。默认 CI 在 connected 执行一次共用及联网单元测试，仍分别检查两者的 Lint 和 Debug 构建，但不上传联网 Debug APK：
-
-```powershell
-.\gradlew.bat testConnectedDebugUnitTest lintConnectedDebug assembleConnectedDebug lintProductionDebug assembleProductionDebug --no-daemon
-```
-
-生产发布门禁继续按发布指南执行；需要生产变体单元测试时使用 `testProductionDebugUnitTest`。变体源码、环境或构建配置变更可在手动 Android CI 勾选 `full_android_matrix` 运行完整矩阵，见[最小测试方案](minimal-testing.md)。
-
-staging 为 `0.1.0-alpha.9-connected`（versionCode 10）、包名 `com.ds.localtaskmanager.connected`，固定连接 staging API。生产执行者为 `0.1.0-alpha.10-executor`（versionCode 11）、包名 `com.ds.localtaskmanager.connected.production`，固定连接 production API。两者因包名不同拥有独立 Android 沙箱、Room、outbox、会话和 Keystore；生产签名配置为 `local-task-manager-connected-production-signing.properties`，不得复用离线或 staging 密钥。
-
-Cloud GitHub 工作流负责 Worker 与 Web 的测试；staging 和 production 都只允许受保护的手动工作流部署，避免普通代码推送在缺少环境密钥时触发远程变更。
-
-## Migration、恢复与故障处理
-
-- migration 只追加，已经远程应用的文件不能修改；PR 必须从空本地 D1 执行全部 migrations。
-- staging 和 production migration 均通过受保护的手动工作流执行；production 必须人工批准，并在变更前记录固定 Worker 版本和 D1 Time Travel bookmark。
-- 恢复演练只使用非敏感 canary，不导出验证码、令牌或任务正文。
-- Worker 故障优先回滚固定代码版本；兼容 migration 故障先回滚 Worker，再按 bookmark 使用 D1 Time Travel。
-- 邮件故障保留限流事实并返回可重试错误；密钥疑似泄露时立即轮换对应环境密钥并撤销设备会话。
-- 每日查看 Worker 错误率/结构日志、D1 读写与存储、Resend 投递和用量；周度复核日志字段样本与额度趋势。达到 70% 时确认轮询降频，达到 90% 时确认保护模式和邮件保留通道；上线前重新核对 Cloudflare 与 Resend 官方限额。
-
-## 已完成证据与后续阶段
-
-阶段 1 已完成四构建入口、D1 schema/migration、认证邀请、环境隔离、自定义 staging 域、Resend 投递和 Time Travel 演练。阶段 2 已完成 schema v5、同步 API、管理员 Web、联网 Android、账号邀请箱、指定执行者、断网执行/恢复同步、成员撤销以及 API 26/33/35 验证。
-
-阶段 3 已完成 schema v6、按角色 DSEXPORT v1、30 天删除/立即永久删除、版本化隐私首次门禁、近期邮箱验证、授权与滥用自动化、安全日志白名单、原生用量观测和 70%/90% 客户端保护模式。仓库不声称完成第三方渗透测试；staging/production 删除账本仍需在阶段 4 部署前真实创建和演练。
-
-阶段 4 待完成：production 应用层严格白名单部署、受保护 migration、公开 GitHub 执行者 APK、三个账号真实试运行和连续七天观察。两个环境的删除账本、staging 恢复演练和 production 邮件域已完成准备。远程推送、完整 DSTB1 云迁移、端到端加密、多管理员、多空间、公开注册、应用商店分发和大陆 SLA 均后置。
-
-## 变更清单
-
-日常修改先按[最小测试方案](minimal-testing.md)运行受影响的测试；以下双变体、部署和发布要求在对应交付阶段执行，不必每次局部修改都重复完整矩阵。
-
-- 协议/API：更新 OpenAPI、Schema、TypeScript/Kotlin 共用向量和稳定错误码。
-- 云 schema：追加 migration，验证授权索引、快照、增量与 Time Travel 恢复。
-- 共享任务/UI：同时回归离线和联网 Android/Web。
-- 联网 Android：CI 验证两个联网 Debug 变体；生产 Release 在本地完成测试、Lint、独立签名、Manifest/证书审计和 SHA-256，再由确认脚本上传公开 GitHub Release。
-- 提交前运行 secrets 检查，禁止提交 `.dev.vars`、密钥、令牌、验证码、完整私人邮箱或任务正文。
+协议变更更新 OpenAPI、Schema、共享向量及两端实现，受影响验证按 [最小测试规则](minimal-testing.md) 执行；不再为普通 PR 强制空库全迁移、三变体或完整回归。版本/阶段历史不是重新创建资源的指令。远程推送、DSTB1 云迁移、端到端加密、多管理员、多空间和公开注册仍不作为已实现能力。

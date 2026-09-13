@@ -14,14 +14,14 @@ for source_set in ("test", "testConnected"):
             name = package[1] + "." + path.stem
             tests.extend((name, method.strip("`")) for method in methods)
 
-for profile in ("daily", "release", "full"):
+for profile in ("daily", "release", "regression", "full"):
     patterns = ["*"] if profile == "full" else [
         line.strip() for line in (root / f"scripts/testing/android-{profile}.txt").read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     for pattern in patterns:
-        if not any(fnmatch.fnmatchcase(name, pattern) for name, _ in tests):
+        if not any(fnmatch.fnmatchcase(name, pattern) or fnmatch.fnmatchcase(f"{name}.{method}", pattern) for name, method in tests):
             raise SystemExit(f"Unmatched {profile} pattern: {pattern}")
-    selected = [(name, method) for name, method in tests if any(fnmatch.fnmatchcase(name, p) for p in patterns)]
+    selected = [(name, method) for name, method in tests if any(fnmatch.fnmatchcase(name, p) or fnmatch.fnmatchcase(f"{name}.{method}", p) for p in patterns)]
     print(f"{profile}: {len(selected)} source methods / {len(set(name for name, _ in selected))} classes")
 print("Static inventory only; parameterized runtime counts and pass/fail require JUnit XML.")

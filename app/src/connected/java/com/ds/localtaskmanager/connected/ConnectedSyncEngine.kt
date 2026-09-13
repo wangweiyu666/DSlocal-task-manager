@@ -299,6 +299,11 @@ open class ConnectedSyncEngine(
             val session = dao.session()
             if (session == null) mutableState.value = ConnectedState.SignedOut
             else catchSyncFailure {
+                // Show usable local data while validating remotely; known account
+                // blocks must be resolved before exposing the task page.
+                if (session.blockedReason == null) {
+                    cachedReady(session)?.let { mutableState.value = it.copy(syncing = true) }
+                }
                 withSessionRecovery(session) { bootstrap(it) }
             }.onFailure { error ->
                 when {
@@ -307,7 +312,7 @@ open class ConnectedSyncEngine(
                         mutableState.value = ConnectedState.SignedOut
                     }
                     session.role == "EXECUTOR" && session.spaceId != null && error is CloudApiException && error.retryable ->
-                        mutableState.value = requireNotNull(cachedReady(session))
+                        mutableState.value = cachedReady(session) ?: ConnectedState.Failure(error.message ?: "空间载入失败", true)
                     else -> mutableState.value = ConnectedState.Failure(error.message ?: "空间载入失败", error is CloudApiException && error.retryable)
                 }
             }
@@ -700,9 +705,9 @@ open class ConnectedSyncEngine(
 
     private suspend fun cachedReady(session: CloudSessionEntity): ConnectedState.Ready? {
         val spaceId = session.spaceId ?: return null
-        if (session.role != "EXECUTOR") return null
-        val meta = dao.meta(spaceId)
-        return readyState(session, meta?.lastSyncedAt)
+        if (!hasSyncIdentity(session) || session.blockedReason != null) return null
+        val meta = dao.meta(spaceId) ?: return null
+        return readyState(session, meta.lastSyncedAt)
     }
 
     private suspend fun readyState(

@@ -1,118 +1,24 @@
-# Windows 命令行工具解析
+# Windows 与 Android 工具
 
-本仓库在 Windows 上默认通过用户 `PATH` 直接调用工具，以缩短命令、减少路径和引号错误，并降低命令产生的 token 消耗。命令应写成 `git`、`node`、`npm`、`java`、`gradle`、`adb` 或仓库内的 `.\gradlew.bat`，不要在脚本和文档中固化某台机器上的可执行文件绝对路径，也不要为简单命令额外套一层 `pwsh -Command`。
+通过用户 PATH 调用 `git`、`node`、`npm`、`java`、`adb`，Gradle 使用 `.\gradlew.bat`；不固化机器路径，不为简单命令套 `pwsh -Command`。需要环境变量、条件或对象管道时使用 PowerShell 7 `pwsh`，不用旧 `powershell`。安装和设备操作按当次授权执行；测试范围只见 [最小测试方案](minimal-testing.md)。
 
-只有命令确实需要 PowerShell 功能时才使用 PowerShell；此时选择 PowerShell 7 `pwsh`，避免旧版 Windows PowerShell 5.1。仓库根目录的 `AGENTS.md` 将这项约束应用到后续自动化调用。
+## 环境与 PATH
 
-## 命令选择
+Cloud 命令前确认 Node 22+，Android 构建前确认 JDK 17 和本地 SDK 的 adb：
 
-简单工具调用直接使用用户 `PATH`：
-
-```text
-git status --short
+```powershell
 node --version
-npm test
-.\gradlew.bat testConnectedDebugUnitTest
-adb devices
-```
-
-下列情况才使用 `pwsh`：
-
-- 读取或临时调整 `$env:PATH`、`JAVA_HOME`、`ANDROID_HOME`；
-- 使用 `Get-Command`、`Join-Path`、PowerShell 对象管道；
-- 需要 PowerShell 的条件、循环或错误处理。
-
-原则顺序为：短命令直接调用 → 必要时使用对应仓库脚本 → 确需 PowerShell 语法时使用 `pwsh`。
-
-## PowerShell 7
-
-先确认用户 `PATH` 可以解析 `pwsh`：
-
-```powershell
-where.exe pwsh
-pwsh --version
-```
-
-当前 Codex Windows 环境通常提供以下用户级候选目录：
-
-```text
-%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell
-%LOCALAPPDATA%\Microsoft\WindowsApps
-```
-
-只使用命令名启动 PowerShell 7：
-
-```text
-pwsh
-```
-
-不要用 `powershell` 代替；该名称通常解析到旧版 Windows PowerShell 5.1。
-
-## Node.js 22+
-
-当前 Windows 开发环境已安装官方 Node.js LTS `v24.19.0` 和 npm `11.17.0`，默认通过 `PATH` 中的 `%ProgramFiles%\nodejs` 解析。正常情况下直接使用短命令，不需要调整 PATH：
-
-```text
-node --version
-npm --version
-```
-
-Cloudflare Wrangler 要求 Node.js 22 或更高版本。先检查当前 `PATH` 的实际解析结果：
-
-```powershell
-where.exe node
-node --version
-```
-
-若系统级 Node 较旧，只在当前 PowerShell 进程中把 Codex 用户运行时前置到 `PATH`：
-
-```powershell
-$projectNodeBin = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin'
-$env:PATH = "$projectNodeBin;$env:PATH"
-node --version
-npm --version
-```
-
-这不会修改系统或用户的永久环境变量。版本校验通过后继续使用短命令，例如：
-
-```powershell
-Set-Location cloud
-npm run check
-npm run migrate:local
-```
-
-## Gradle、JDK 与 Android SDK
-
-优先使用仓库内 Wrapper：
-
-```powershell
+java --version
+$projectAndroidSdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+$env:ANDROID_HOME = $projectAndroidSdk
+$env:PATH = "$(Join-Path $projectAndroidSdk 'platform-tools');$env:PATH"
+adb version
 .\gradlew.bat --version
 ```
 
-如果 Wrapper 因受限网络无法下载、但用户 Gradle 缓存已经包含目标版本，可从 `$env:USERPROFILE` 动态找到它，并只在当前进程前置其 `bin` 目录：
+解析不符时用 `Get-Command <工具> -All` 或 `where.exe <工具>`，只对当前进程前置正确目录。Node 候选为 `%ProgramFiles%\nodejs` 或 `%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin`；PowerShell 7 候选为同一运行时的 `dependencies\native\powershell` 或 `%LOCALAPPDATA%\Microsoft\WindowsApps`。JDK 通过当前进程 `JAVA_HOME` 和其 `bin` 配置，避免永久修改环境。
 
-```powershell
-$projectGradleBin = Get-ChildItem (Join-Path $env:USERPROFILE '.gradle\wrapper\dists') `
-  -Filter gradle.bat -File -Recurse |
-  Sort-Object FullName -Descending |
-  Select-Object -First 1 -ExpandProperty DirectoryName
-$env:PATH = "$projectGradleBin;$env:PATH"
-gradle --version
-```
-
-JDK 和 Android SDK 也通过环境变量与用户 `PATH` 暴露，后续命令只使用短名称：
-
-```powershell
-$projectAndroidSdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
-$projectPlatformTools = Join-Path $projectAndroidSdk 'platform-tools'
-$env:ANDROID_HOME = $projectAndroidSdk
-$env:PATH = "$projectPlatformTools;$env:PATH"
-java --version
-adb version
-gradle compileConnectedDebugKotlin --no-daemon
-```
-
-如果 `java --version` 不是 JDK 17，先用 `Get-Command java -All` 查找用户 PATH 中的 JDK 17；仍找不到时再设置当前进程的 `JAVA_HOME` 并把其 `bin` 前置到 `PATH`。
+Wrapper 下载受阻时可查找 `%USERPROFILE%\.gradle\wrapper\dists` 中已缓存的 `gradle.bat`；核对其版本与 `gradle/wrapper/gradle-wrapper.properties` 完全一致，再把对应 `bin` 前置到当前 PATH。不要直接选择最高或最新版本。
 
 ### 使用已缓存的 Robolectric 运行离线单元测试
 
@@ -126,33 +32,44 @@ if (-not $projectRobolectricJar) { throw '缺少当前 Robolectric Android 15 �
 $projectPreviousJavaOptions = $env:JAVA_TOOL_OPTIONS
 try {
   $env:JAVA_TOOL_OPTIONS = "$projectPreviousJavaOptions -Drobolectric.offline=true `"-Drobolectric.dependency.dir=$($projectRobolectricJar.DirectoryName)`""
-  .\gradlew.bat testProductionDebugUnitTest --offline --no-daemon
+  .\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release --offline --no-daemon
 } finally {
   $env:JAVA_TOOL_OPTIONS = $projectPreviousJavaOptions
 }
 ```
 
-默认共用及联网业务测试只在 production 变体执行一次；日常按影响范围增加 `--tests` 筛选。需要验证变体差异时才增加 offline 测试，见[最小测试方案](minimal-testing.md)。
+Java 必须能读取该 JAR；缓存访问受限时可能退回 stub 并出现 `NoSuchFieldError: noncompatWidthPixels`，应先排除缓存与权限问题。
 
-Java 进程必须有权限读取该 JAR。受限环境拒绝访问缓存时，Robolectric 可能退回 Android stub 类并报 `NoSuchFieldError: noncompatWidthPixels`；应先检查缓存可读性，再判断是否为应用测试失败。
+## Android 模拟器
 
-## 已验证的用户级来源
+仅用于获准设备验收或故障诊断，日常提交不执行全设备套件。
 
-下列目录在当前 Windows 开发环境中可用。文档使用环境变量表达，避免绑定用户名或磁盘布局：
-
-| 工具 | 用户级来源 |
+| API / AVD | 用途 |
 | --- | --- |
-| PowerShell 7 | `%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell` |
-| Node.js 22+ | `%ProgramFiles%\nodejs`（当前默认）；Codex 缓存目录仅作为版本异常时的临时备用来源 |
-| Gradle | `%USERPROFILE%\.gradle\wrapper\dists\<distribution>\<cache-key>\<version>\bin`（动态发现） |
-| Android SDK | `%LOCALAPPDATA%\Android\Sdk` |
-| ADB | `%LOCALAPPDATA%\Android\Sdk\platform-tools` |
+| 35 / `local-task-manager-api35` | 目标版本交互 |
+| 33 / `local-task-manager-api33` | Android 13 通知权限 |
+| 26 / `local-task-manager-api26` | minSdk 兼容 |
 
-## 调用规则
+`scripts/android-emulator.cmd` 从 `ANDROID_HOME`、`ANDROID_SDK_ROOT` 或 `%LOCALAPPDATA%\Android\Sdk` 找 SDK，仅为该脚本进程绕过执行策略。初次配置需 SDK 中已有 `cmdline-tools/latest`；setup 会安装缺失工具、Google APIs x86_64 镜像并创建 AVD。
 
-- 简单命令直接通过用户 `PATH` 调用，不额外启动 `pwsh`。
-- 需要 PowerShell 时使用 `pwsh`，不默认使用 `powershell` 5.1。
-- 先依赖用户 `PATH`；只有解析失败或版本不符时，才用 `where.exe` / `Get-Command -All` 排查解析顺序。
-- 需要调整版本时只修改当前进程的 `PATH`，变量名使用任务专用名称。
-- 只有 `PATH` 中不存在所需工具且没有可前置的用户运行时时，才临时使用绝对路径并在验收记录中说明原因。
-- 不在仓库中记录密钥、令牌或带用户名的机器专属绝对路径。
+```powershell
+.\scripts\android-emulator.cmd doctor -ApiLevel 35
+.\scripts\android-emulator.cmd setup -ApiLevel 35
+.\scripts\android-emulator.cmd start -ApiLevel 35
+.\scripts\android-emulator.cmd stop -ApiLevel 35
+```
+
+把 API 改为 26/33 可操作对应 AVD。start 默认隐藏窗口并关闭动画；观察交互可加 `-Visible`，快照故障可加 `-ColdBoot`。加速故障先运行 doctor，再将 SDK 的 emulator 目录临时加入 PATH 执行 `emulator -accel-check`。
+
+`test` 子命令会执行双变体完整单元和仪器测试，**只用于故障诊断，不作日常入口**。定向仪器任务为 `connectedOfflineDebugAndroidTest` / `connectedProductionDebugAndroidTest`，用 `-Pandroid.testInstrumentationRunnerArguments.class=<完整类名>` 缩小范围。报告在 `app/build/reports/tests/` 和 `app/build/reports/androidTests/`。
+
+## production 截图
+
+基线固定为 Windows、Temurin `17.0.19+10`、Asia/Hong_Kong、简体中文和 UTF-8：
+
+```powershell
+$env:JAVA_TOOL_OPTIONS='-Duser.timezone=Asia/Hong_Kong -Duser.language=zh -Duser.country=CN -Dfile.encoding=UTF-8'
+.\gradlew.bat -I scripts/testing/android-screenshot-matrix.init.gradle validateProductionDebugScreenshotTest --no-daemon
+```
+
+长路径故障沿用 Android CI 的临时 W: 项目、G: Gradle 缓存映射，先确认盘符空闲，结束后移除本次映射。截图报告位于 `app/build/reports/screenshotTest/`。旧版本验收数量见 [历史记录](verification-records.md#initial-release)。

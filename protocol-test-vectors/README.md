@@ -1,11 +1,5 @@
-# DST1 protocol test vectors
+# 共享协议向量
 
-These fixtures are the shared contract for the Android Sub implementation and the future Dom web implementation.
+Android、Web 和 Cloud 共用本目录；manifest.json 是 DST1/DST1.1 的唯一清单，记录规范及 Android 预期。valid 为合法输入，invalid 为非法与错误优先级输入，future-valid 仅用于未实现能力差异；大输入由生成器构造。
 
-- `manifest.json` is the only test inventory and records both protocol and current Android expectations.
-- `valid/` contains vectors accepted by the current Android build.
-- `future-valid/` is reserved for valid DST1 v1 capabilities not yet implemented by Android; it is currently empty.
-- `invalid/` contains envelope, field, combination, and boundary failures with stable error codes.
-- Large limit cases are generated deterministically from manifest entries instead of being committed as giant files.
-
-Unknown fields and non-NFC ordinary text are rejected. See `docs/dst1-test-vectors.md` and `docs/dst1-schema.json` for the normative rules.
+规则见 [DST1 契约](../docs/dst1-test-vectors.md) 与 [Schema](../docs/dst1-schema.json)。dstb1/ 是 Android 备份兼容资产，旧版本文件保留用于读取兼容，当前格式见 [DSTB1](../docs/dstb1-format.md)。向量维护不自动触发完整回归，按 [最小测试规则](../docs/minimal-testing.md) 执行。

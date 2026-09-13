@@ -15,10 +15,18 @@ import com.ds.localtaskmanager.ui.theme.DstTheme
 import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import com.ds.localtaskmanager.reminder.AndroidReminderNotifier
 import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 
 class MainActivity : ComponentActivity() {
     private val notificationTask = MutableStateFlow<TaskInstanceKey?>(null)
-    private val todayViewModel: TodayViewModel by viewModels {
+    private val todayViewModelDelegate = viewModels<TodayViewModel> {
         val application = application as DstApplication
         TodayViewModelFactory(
             application.taskRepository,
@@ -29,6 +37,8 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private val todayViewModel by todayViewModelDelegate
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         captureNotificationTarget(intent)
@@ -38,7 +48,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        todayViewModel.synchronizeInstances()
+        // First creation reconciles itself; resume must not initialize storage early.
+        if (todayViewModelDelegate.isInitialized()) todayViewModel.synchronizeInstances(coalesce = true)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -50,6 +61,21 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun AppContent() {
         val application = application as DstApplication
+        val startup by application.startup.collectAsStateWithLifecycle()
+        if (startup != StartupState.Ready) {
+            DstTheme {
+                Surface(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        if (startup == StartupState.Failed) {
+                            TextButton(onClick = application::initialize) { Text("启动失败，点击重试") }
+                        } else {
+                            CircularProgressIndicator()
+                        }
+                    }
+                }
+            }
+            return
+        }
         val settings by application.settingsRepository.settings.collectAsStateWithLifecycle()
         DstTheme(
             themeMode = settings.themeMode,

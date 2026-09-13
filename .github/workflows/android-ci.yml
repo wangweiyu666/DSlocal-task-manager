@@ -3,18 +3,24 @@ name: Android CI
 on:
   push:
     branches: [main]
+    paths: ["app/**", "gradle/**", "*.gradle.kts", "gradle.properties", "gradlew*", "shared/**", "protocol-test-vectors/**", "docs/dst1-schema.json", "scripts/testing/**", "scripts/ci/check-secrets.sh", "scripts/ci/check-dco.sh", "scripts/ci/check-connectivity-boundaries.sh", "scripts/ci/select-android-profile.sh", ".github/workflows/android-ci.yml"]
   pull_request:
     branches: [main]
+    paths: ["app/**", "gradle/**", "*.gradle.kts", "gradle.properties", "gradlew*", "shared/**", "protocol-test-vectors/**", "docs/dst1-schema.json", "scripts/testing/**", "scripts/ci/check-secrets.sh", "scripts/ci/check-dco.sh", "scripts/ci/check-connectivity-boundaries.sh", "scripts/ci/select-android-profile.sh", ".github/workflows/android-ci.yml"]
   workflow_dispatch:
     inputs:
       full_android_matrix:
-        description: Run unit tests on both variants (for flavor or build configuration changes)
+        description: Diagnose a production screenshot/manual failure on both variants
         type: boolean
         default: false
       full_unit_suite:
-        description: Run every independent unit test once (including performance)
+        description: Diagnose a production screenshot/manual failure with all unit tests
         type: boolean
         default: false
+      diagnostic_reason:
+        description: Production screenshot or manual acceptance failure being investigated
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -63,61 +69,44 @@ jobs:
       - name: Verify and build Android variants
         id: gradle_verify
         continue-on-error: true
-        run: |
-          unit_tests=(testProductionDebugUnitTest)
-          profile=release
-          if [[ "${{ inputs.full_unit_suite }}" == "true" ]]; then
-            profile=full
-          fi
-          base="${{ github.event.pull_request.base.sha || github.event.before }}"
-          # Features outside the core profile must regain their coverage when changed.
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            : # Explicit manual profile inputs above apply without a push base.
-          elif [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}"; then
-            profile=full
-          else
-            while IFS= read -r path; do
-              case "$path" in
-                */ui/execution/*) ;;
-                app/src/*/java/*/ui/*|app/src/*/java/*/settings/*|app/src/*/java/*/sharing/*|app/src/*/java/*/history/*|app/src/*/java/*/statistics/*|app/src/main/res/*|app/build.gradle.kts|gradle/*|scripts/testing/*)
-                  profile=full ;;
-              esac
-            done < <(git diff --name-only "$base" HEAD)
-          fi
-          if [[ "${{ inputs.full_android_matrix }}" == "true" ]]; then
-            unit_tests=(testOfflineDebugUnitTest testProductionDebugUnitTest)
-            profile=full
-          fi
-          ./gradlew "${unit_tests[@]}" \
-            "-PandroidTestProfile=$profile" \
-            lintOfflineRelease assembleOfflineDebug assembleOfflineDebugAndroidTest \
-            lintProductionDebug assembleProductionDebug \
-            --no-daemon
+        env:
+          FULL_UNIT_SUITE: ${{ inputs.full_unit_suite }}
+          FULL_ANDROID_MATRIX: ${{ inputs.full_android_matrix }}
+          DIAGNOSTIC_REASON: ${{ inputs.diagnostic_reason }}
+        run: bash scripts/ci/select-android-profile.sh
 
       - name: Verify offline Android connectivity boundary
         run: bash scripts/ci/check-connectivity-boundaries.sh
 
-      - name: Create offline APK checksum
-        working-directory: app/build/outputs/apk/offline/debug
-        run: sha256sum app-offline-debug.apk > app-offline-debug.apk.sha256
+      - name: Create Debug APK checksums
+        run: |
+          for variant in offline production; do
+            (cd "app/build/outputs/apk/$variant/debug" && sha256sum "app-$variant-debug.apk" > "app-$variant-debug.apk.sha256")
+          done
 
-      - name: Upload offline Android artifact
+      - name: Upload both Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: DStationery-offline-debug
+          name: DStationery-debug-${{ github.sha }}
           path: |
             app/build/outputs/apk/offline/debug/app-offline-debug.apk
             app/build/outputs/apk/offline/debug/app-offline-debug.apk.sha256
+            app/build/outputs/apk/production/debug/app-production-debug.apk
+            app/build/outputs/apk/production/debug/app-production-debug.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
-      - name: Print dependency verification report
-        if: steps.gradle_verify.outcome == 'failure'
-        run: |
-          find build/reports/dependency-verification -type f -name dependency-verification-report.html -print -exec cat {} \; || true
-          ./gradlew checkDebugAarMetadata --write-verification-metadata sha256 --no-daemon || true
-          git diff -- gradle/verification-metadata.xml
-          git restore -- gradle/verification-metadata.xml
+      - name: Upload test and failure reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports-${{ github.sha }}
+          path: |
+            app/build/test-results/
+            app/build/reports/
+            build/reports/dependency-verification/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Check clean generated state
         run: git diff --check && test -z "$(git status --porcelain)"
@@ -154,5 +143,16 @@ jobs:
           subst G: "$env:GRADLE_USER_HOME"
           "GRADLE_USER_HOME=G:\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Validate Windows screenshot baselines
-        run: W:\gradlew.bat -p W:\ -I W:\scripts\testing\android-screenshot-matrix.init.gradle validateOfflineDebugScreenshotTest validateProductionDebugScreenshotTest --no-daemon
+      - name: Validate production screenshot baselines
+        run: W:\gradlew.bat -p W:\ -I W:\scripts\testing\android-screenshot-matrix.init.gradle validateProductionDebugScreenshotTest --no-daemon
+      - name: Diagnose offline screenshots
+        if: inputs.full_android_matrix && inputs.diagnostic_reason != ''
+        run: W:\gradlew.bat -p W:\ -I W:\scripts\testing\android-screenshot-matrix.init.gradle validateOfflineDebugScreenshotTest --no-daemon
+      - name: Upload screenshot reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-screenshots-${{ github.sha }}
+          path: app/build/reports/screenshotTest/
+          if-no-files-found: warn
+          retention-days: 14

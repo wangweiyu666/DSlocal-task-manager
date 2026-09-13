@@ -1,13 +1,7 @@
-# Contributing to DStationery
+# 贡献指南
 
-贡献须兼容 `GPL-3.0-only`，不得加入来源不明或许可证不兼容的代码、素材或依赖。
+贡献须兼容 GPL-3.0-only，代码、素材和依赖须有可核实来源。新提交使用 `git commit -s` 添加 DCO sign-off，表示有权提交并按项目许可发布；不重写历史提交。
 
-所有新提交必须包含 Developer Certificate of Origin sign-off：
+只运行 [最小测试指南](docs/minimal-testing.md) 中受影响的检查，复用同源结果；旧回归仅用于正式截图或用户手动验收故障诊断，不要求每个 PR 完整 JVM、截图和构建。不得隐藏失败或把未执行记为通过。提交与交付按 [AGENTS](AGENTS.md) 和 [运行手册](docs/stage4-production-runbook.md)。
 
-```text
-git commit -s
-```
-
-`Signed-off-by` 表示你有权提交该贡献，并同意按本项目许可证发布。历史提交不要求重写。
-
-PR 合并前必须通过 JVM、截图、Lint、Debug 构建、秘密扫描与 DCO 检查。不得提交签名密钥、密码、Token、真实用户备份或本机发布档案。
+产品/协议/迁移变更同步更新相应主文档、Schema/向量和必要测试。不得提交密钥、密码、令牌、真实用户备份、本机发布档案或重复生成的平台私有协议资产。

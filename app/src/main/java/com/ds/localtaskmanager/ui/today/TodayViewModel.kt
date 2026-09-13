@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 data class ImportUiState(
     val visible: Boolean = false,
@@ -86,28 +87,39 @@ class TodayViewModel(
     private val _resultState = MutableStateFlow(TodayResultUiState())
     val resultState: StateFlow<TodayResultUiState> = _resultState.asStateFlow()
 
+    private var synchronizationJob: Job? = null
+    private var synchronizeAgain = false
+
     init {
         synchronizeInstances()
     }
 
-    fun synchronizeInstances() {
-        viewModelScope.launch {
-            mutableLoading.value = true
-            mutableError.value = null
-            runCatching {
-                val current = TaskDay.from(LocalDateTime.now()).toString()
-                generationService.reconcileAll(LocalDate.parse(current))
-                reminderReconciler?.reconcileAll()
-                mutableTaskDate.value = current
-                // Reconciliation can be a no-op (for example, a newly joined empty
-                // cloud space). In that case Room does not emit again and the date
-                // StateFlow also suppresses the unchanged value, so finish loading
-                // explicitly instead of relying solely on todayTasks.onEach.
-                mutableLoading.value = false
-            }.onFailure { error ->
-                mutableError.value = error.message ?: "今日任务同步失败"
-                mutableLoading.value = false
-            }
+    fun synchronizeInstances(coalesce: Boolean = false) {
+        if (synchronizationJob?.isActive == true) {
+            // A permission/result change must be reconciled after the current pass.
+            if (!coalesce) synchronizeAgain = true
+            return
+        }
+        synchronizationJob = viewModelScope.launch {
+            do {
+                synchronizeAgain = false
+                mutableLoading.value = true
+                mutableError.value = null
+                runCatching {
+                    val current = TaskDay.from(LocalDateTime.now()).toString()
+                    generationService.reconcileAll(LocalDate.parse(current))
+                    reminderReconciler?.reconcileAll()
+                    mutableTaskDate.value = current
+                    // Reconciliation can be a no-op (for example, a newly joined empty
+                    // cloud space). In that case Room does not emit again and the date
+                    // StateFlow also suppresses the unchanged value, so finish loading
+                    // explicitly instead of relying solely on todayTasks.onEach.
+                    mutableLoading.value = false
+                }.onFailure { error ->
+                    mutableError.value = error.message ?: "今日任务同步失败"
+                    mutableLoading.value = false
+                }
+            } while (synchronizeAgain)
         }
     }
 

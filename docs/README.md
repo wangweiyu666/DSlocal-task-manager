@@ -1,49 +1,20 @@
 # 文档索引
 
-文档按“产品规则、离线交付、联网交付、机器契约、测试环境”维护。历史 Wxx 和联网阶段快照已经合并，避免同一结论散落在多个文件；旧细节仍可从 Git 历史查阅。
+每项规则只在一处维护；历史记录不能替代当前验证或触发重复测试。
 
-| 需要了解 | 权威来源 |
+| 内容 | 主文档 |
 | --- | --- |
-| 产品目标、业务规则和状态语义 | [需求总稿](preview.md) |
-| 离线 Android/Web、Room、备份、构建和发布 | [离线版指南](offline.md) |
-| 联网架构、同步协议、状态矩阵、环境和恢复 | [联网版指南](connected.md) |
-| 推送部署、阶段四上线门禁、恢复演练与执行者 Release | [生产运行手册](stage4-production-runbook.md) |
-| DST1/DST1.1 字段和严格校验 | [JSON Schema](dst1-schema.json)、[测试向量](dst1-test-vectors.md) |
-| DSTB1 文件格式和测试向量 | [DSTB1 格式](dstb1-format.md) |
-| Android API 26/33/35 与截图测试 | [模拟器测试环境](android-emulator-testing.md) |
-| 日常最小回归、测试去重与扩大验证条件 | [最小测试方案](minimal-testing.md) |
-| Windows PowerShell、Node 与用户 PATH 解析 | [Windows 命令行工具](windows-tooling.md) |
+| 产品语义、日期、任务与积分 | [产品规则](preview.md) |
+| 离线实现与数据边界 | [离线指南](offline.md) |
+| 联网协议、同步与权限 | [联网指南](connected.md) |
+| 提交、推送、部署、发布与环境 | [生产运行手册](stage4-production-runbook.md) |
+| 最小测试、Android 清单、复用及故障诊断 | [测试指南](minimal-testing.md) |
+| PATH、缓存、模拟器与截图 | [工具指南](windows-tooling.md) |
+| 历史验证与交付证据 | [验证记录](verification-records.md)；[用例审查](android-test-audit-2026-09-09.md) |
+| DST1 / DSTB1 契约 | [Schema](dst1-schema.json)、[DST1 向量](dst1-test-vectors.md)、[备份格式](dstb1-format.md) |
+| 可导入合成任务、当前协议样例 | [样例与生成命令](../samples/README.md) |
+| 图标来源与许可 | [心情图标](mood-artwork.md) |
 
-## 构建职责
+机器契约还包括 `cloud/openapi.yaml`、`cloud/schemas/`、`app/schemas/` 和两个 protocol-test-vectors 目录。协议与数据结构变更同步更新对应契约、实现及必要测试；产品规则更新需求稿，流程变更更新测试或运行手册，不在索引复制细节。
 
-- 联网 Android：GitHub CI 验证 staging/production Debug 变体；生产执行者 Release 在本地用仓库外独立密钥签名审计，再上传公开 GitHub Release。
-- 离线 Android：推送 `main` 后由 GitHub `Android CI` 构建并上传 APK 与 SHA-256 artifact。
-- 离线 Web：由 `Dom Web Pages` 验证并部署 `web/dist-offline`。
-- 联网 Web 与 API：由 `Cloud Connected` 验证；`main` 推送自动部署 staging，恢复演练和 production 通过受保护的手动工作流执行。
-
-## 配套机器资产
-
-- `protocol-test-vectors/`：Android/Web 共用 DST1 与 DSTB1 向量；
-- `cloud-protocol-test-vectors/`：TypeScript/Kotlin 共用联网协议向量；
-- `app/schemas/`：离线和联网 Room 导出 Schema；
-- `cloud/openapi.yaml` 与 `cloud/schemas/`：云 API 契约；
-- `app/src/test/`、`app/src/androidTest/`、`web/tests/`：自动化验证。
-
-## 冲突处理顺序
-
-1. 产品语义以 `preview.md` 为准；
-2. 线格式以 Schema、OpenAPI 和测试向量为准；
-3. 持久化结构以 migration 与导出的 Schema 为准；
-4. 文档与代码不一致时先核实自动化测试和当前实现，再更新主指南。
-
-## 变更规则
-
-| 变更类型 | 必须同步更新 |
-| --- | --- |
-| 业务语义 | `preview.md`、对应主指南和测试 |
-| DST1/DSTB1 | Schema/格式、测试向量、双端解析器测试 |
-| Room/D1 | migration、导出 Schema、数据保留或恢复测试 |
-| 共享 UI/领域逻辑 | 按[最小测试方案](minimal-testing.md)选择日常回归；提交时保留离线和联网双变体验证 |
-| 构建与部署 | 对应主指南和 GitHub 工作流 |
-
-文档中不记录密钥、验证码、令牌、完整私人邮箱、任务正文或可复用的恢复凭据。
+`android-test-profiles.md` 与 `production-only.md` 仅保留旧技能路径兼容。旧日期/条件步骤实施计划已合并到产品与协议，后台专项已合并到联网指南；实际结果以验证记录为准。文档不记录密钥、验证码、会话、私人邮箱、任务正文或可复用恢复凭据。

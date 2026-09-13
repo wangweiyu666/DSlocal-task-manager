@@ -32,6 +32,8 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -410,6 +412,75 @@ class ConnectedSyncEngineTest {
         assertEquals("{\"commandId\":\"cancel-1\"}", syncDatabase.dao().outbox(SPACE_ID).single().commandJson)
         assertEquals("PENDING", syncDatabase.dao().outbox(SPACE_ID).single().state)
         assertEquals(true, syncDatabase.dao().session()?.needsSync)
+    }
+
+    @Test
+    fun startupCachedBeforeNetwork() = runBlocking {
+        checkCachedStartup(503, null)
+    }
+
+    @Test
+    fun startupExpiredSessionPurgesCache() = runBlocking {
+        checkCachedStartup(401, null)
+    }
+
+    @Test
+    fun startupBlockedAccountHidesCache() = runBlocking {
+        checkCachedStartup(503, "PRIVACY_ACK_REQUIRED")
+    }
+
+    private suspend fun checkCachedStartup(status: Int, blockedReason: String?) {
+        seedCompletedTask()
+        if (status == 401) {
+            androidx.work.WorkManager.initialize(application, androidx.work.Configuration.Builder().build())
+        }
+        syncDatabase.dao().saveSession(session().copy(blockedReason = blockedReason))
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val engine = ConnectedSyncEngine(application, CloudApi("https://example.invalid") { url ->
+            object : HttpURLConnection(url) {
+                override fun connect() = Unit
+                override fun usingProxy() = false
+                override fun disconnect() = Unit
+                override fun getOutputStream() = ByteArrayOutputStream()
+                override fun getResponseCode(): Int {
+                    entered.countDown()
+                    check(release.await(10, TimeUnit.SECONDS)) { "startup request was never released" }
+                    return status
+                }
+                override fun getErrorStream() = ByteArrayInputStream(
+                    """{"error":{"code":"SESSION_EXPIRED","message":"test failure","retryable":${status == 503}}}""".toByteArray(),
+                )
+            }
+        }, syncDatabase, enqueueWork = {}, nowMillis = { NOW })
+        try {
+            engine.restore()
+            assertTrue("account request entered", entered.await(10, TimeUnit.SECONDS))
+            if (blockedReason == null) {
+                assertTrue(engine.state.value is ConnectedState.Ready)
+                assertTrue((engine.state.value as ConnectedState.Ready).syncing)
+                assertEquals("private draft answer", application.database.executionDao().getSubmission(INFO_TASK_ID, "once")?.content)
+            } else {
+                assertEquals(ConnectedState.Restoring, engine.state.value)
+            }
+        } finally {
+            release.countDown()
+        }
+        withTimeout(10_000) {
+            engine.state.first { state ->
+                when {
+                    status == 401 -> state == ConnectedState.SignedOut
+                    blockedReason != null -> state is ConnectedState.Failure
+                    else -> state is ConnectedState.Ready && !state.syncing
+                }
+            }
+        }
+        if (status == 401) {
+            assertEquals(null, syncDatabase.dao().session())
+            assertEquals(null, application.database.executionDao().getSubmission(INFO_TASK_ID, "once"))
+        } else {
+            assertEquals("private draft answer", application.database.executionDao().getSubmission(INFO_TASK_ID, "once")?.content)
+        }
     }
 
     private fun engine(enqueue: ((CloudSessionEntity) -> Unit)?): ConnectedSyncEngine = ConnectedSyncEngine(

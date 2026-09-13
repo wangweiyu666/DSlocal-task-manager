@@ -1,32 +1,22 @@
-# Repository command environment
+# Repository workflow
 
-- Invoke installed tools directly through the user `PATH`, using short command names such as `git`, `node`, `npm`, `java`, `gradle`, and `adb`. Invoke the repository wrapper as `.\gradlew.bat`. This is the default because it shortens commands and reduces path, quoting, and token errors.
-- Use PowerShell only when a command actually needs PowerShell features such as `$env:PATH`, `Get-Command`, `Join-Path`, object pipelines, or PowerShell control flow. In that case use PowerShell 7 (`pwsh`), not Windows PowerShell 5.1 (`powershell`), unless a task specifically requires 5.1.
-- Do not wrap a simple executable invocation in `pwsh -Command`; run the short command directly.
-- Do not embed machine-specific executable paths in commands, scripts, or documentation.
-- If the required version is not first on `PATH`, locate a user-level installation with `Get-Command -All` or under `$env:USERPROFILE` / `$env:LOCALAPPDATA`, prepend its directory only to the current process `$env:PATH`, and continue using the short command name.
-- Wrangler requires Node.js 22 or newer. Verify `node --version` before cloud commands.
-- Android builds require JDK 17 and the local Android SDK. Verify `java --version` and `adb version` before running Gradle tasks.
-- See `docs/windows-tooling.md` for command-selection rules and the verified discovery/current-process PATH setup commands.
+## Tools
 
-# Work ownership and subagents
+- Invoke tools by short names on the user PATH (git, node, npm, java, adb); use `.\gradlew.bat` for Gradle. Do not embed machine-specific executable paths or wrap simple commands in `pwsh -Command`.
+- Use PowerShell 7 (`pwsh`) only for PowerShell features. If resolution/version is wrong, use `Get-Command -All` or user-level installations and prepend PATH for the current process only. See [Windows tooling](docs/windows-tooling.md) for discovery and cache setup.
+- Before cloud commands verify Node 22+; before Android builds verify JDK 17 and `adb version` with the local SDK.
 
-- Delegate simple existing test execution and APK builds from already verified source versions to Luna (`gpt-5.6-luna`) by default. Complex testing, including real-device background synchronization, concurrency and lifecycle recovery, is designed and executed by the primary agent. The current real-device verification task is entirely primary-agent owned, including any builds. Other work stays with the primary agent unless separately authorized. If Luna is unavailable, report that limitation and let the primary agent continue.
-- Follow `docs/stage4-production-runbook.md` (current workflow section). Keep the verified commit fixed, inspect existing runs before dispatching, and report completion only after the relevant workflow jobs finish successfully.
-- Carry existing authorization through the current release without repeatedly asking. A model preference does not authorize unrelated or future production releases; a push-only request requires clarifying production scope before production changes.
+## Ownership and release
 
-# Debug APK handoff after full Android tests
+- The primary agent owns implementation, test design/execution, failure fixes, APK builds and delivery review. Do not delegate testing; other subagent work requires a separate explicit user request.
+- Follow the current [production runbook](docs/stage4-production-runbook.md). Keep the verified SHA fixed, inspect existing runs before dispatching, and report success only after applicable workflows finish.
+- Carry authorization through the current release without repeated confirmation. Push-only or model preferences do not authorize production changes or future releases. Local APK building does not authorize GitHub publication, deployment or device installation.
 
-- After each successful full Android test run, delegate Debug APK building to Luna (`gpt-5.6-luna`); the primary agent reviews delivery evidence. Build the tested variants; after the full two-variant matrix, deliver offline and production Debug APKs.
-- Use the same tested Android source and build configuration. Do not repeat passing full tests solely to package APKs; targeted test runs do not trigger this handoff. Reuse verified outputs from the same source when available.
-- Follow `docs/minimal-testing.md` for commands and handoff checks. Report actual APK paths, environments and SHA-256 values; do not report stale artifacts as new builds.
-- Local Debug APK building does not itself authorize publishing a GitHub Release, production deployment, or installation on a device.
+## Verification and APK handoff
 
-# Test delegation
-
-- Android CI and release preparation use the `release` test profile once on production; use the `daily` profile or focused tests during development. See `docs/android-test-profiles.md` for the exact scope and affected-feature additions. Preserve both variants' builds, lint, screenshots, and the offline connectivity boundary check. CI expands coverage for changes outside the core profile. Unfiltered Gradle unit tasks and `full_unit_suite` retain the full independent suite; `full_android_matrix` adds offline coverage for flavor-specific changes. Do not repeat shared tests solely to package an APK.
-- Delegate running simple existing tests to Luna (`gpt-5.6-luna`). The primary agent runs complex tests and owns test design, writing or changing tests, and fixing failures unless separately authorized.
-- The primary agent defines the scope and acceptance criteria, designs concurrency and recovery scenarios, and reviews assertions.
-- Follow `docs/minimal-testing.md`: reuse existing coverage, run the smallest relevant suite, and avoid repeating passing checks without a new reason. Report actual commands, tested source state, passed/failed/skipped counts, failures and coverage limits.
-- Never hide failures by skipping tests or weakening assertions. Escalate unresolved failures to the primary agent.
-- After successful full Android tests, continue with the Debug APK handoff rule.
+- Default to the active smoke set once on the affected platform; see [minimal testing](docs/minimal-testing.md). Do not rerun locally and in CI just to commit, push, deploy or package. Reuse evidence and Web artifacts from the exact source SHA.
+- Stable legacy regression tests are retained on demand. Run them only to investigate a production screenshot or user manual acceptance failure, starting with the relevant class; record the failure reason before requesting a full suite. New features and newly fixed regressions remain in the active set. Do not auto-expand solely for changed paths, release preparation, dependencies or version bumps.
+- Android changes retain both variants' builds/Lint and the offline boundary check, with production screenshots by default. Offline screenshots and both-flavor full suites are diagnostic options. Web-only or documentation changes do not require Android CI.
+- Never weaken assertions, hide failures or describe omitted tests as passed. A failed smoke/screenshot blocks delivery until fixed; old tests can diagnose the failure, not override it. Production-build screenshots with mocked services are not evidence of live production acceptance.
+- Report actual commands, source state, passed/failed/skipped counts and coverage limits. Static method counts are not runtime evidence.
+- After successful full Android tests, build/reuse Debug APKs for the tested variants; after a full two-variant matrix deliver offline and production. Targeted tests do not trigger handoff. Use the same tested source/configuration, do not repeat tests just to package, and report actual APK paths, environments and SHA-256 rather than stale artifacts.

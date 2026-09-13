@@ -1,137 +1,81 @@
 # 阶段四生产运行手册
 
-> 2026-09-07 流程变更：按[单一云端环境](production-only.md)执行。staging 部署和恢复演练退出当前工作流；生产发布基于固定 SHA 的 CI 验证和既有人工环境保护。正式管理域名目标改为 `prod.rochelimit.me`，API 保持 `api.rochelimit.me`。下方旧域名、staging 门禁及历史发布记录不代表当前切换状态。
+当前仅使用 production，管理网页 `prod.rochelimit.me`、API `api.rochelimit.me`。staging 部署、三变体构建及旧域名迁移不再是发布前置条件；历史步骤见 Git。
 
-阶段四采用两道门。第一道门只完成仓库、staging 部署及恢复演练；第二道门必须在证据汇报后由管理者明确确认，才允许修改 production、发布执行者 APK或开始真实试运行。没有连续七天观察证据时，不得声明阶段四完成。
+## 环境与兼容
+
+- 云端仅 production：管理网页 `https://prod.rochelimit.me`，API `https://api.rochelimit.me`；local 留作开发与隔离故障诊断。
+- Android 仅 offline / production，保留生产包名、签名和本机存储身份；联网共用源码、测试仍在 `src/connected` / `src/testConnected`。
+- staging 已退役：旧包不改指向 production，旧空间、会话和待上传数据不迁入正式环境。旧 D1、Worker 与 Access 回退配置保留，不合并或删除。配置移除不等于远端退役；实际 [切换记录](verification-records.md#production-2026-09-07) 与当前规则分开保存。
+- 在 `cloud` / `cloud-web` 运行 `npm exec --no -- wrangler --version` 或 `npm exec --no -- wrangler whoami` 检查 CLI；仅报告认证结果，CLI 可用不代表远程操作获准。Node/PATH 见 [工具指南](windows-tooling.md)。
+
+### 管理域名迁移（仅变更域名时）
+
+先为 `prod.rochelimit.me` 准备 production Access 应用、精确管理员策略和 DNS；保留原有保护直到新入口通过验证。API 地址保持 `api.rochelimit.me`，将其 `ALLOWED_ORIGIN` secret 更新为 `https://prod.rochelimit.me`。API/Web 的 Access audience 必须对应新的正式管理应用；敏感配置仍保存在 secrets 中。
+
+发布同一验证版本的 API/Web，核对网页路由、`MANAGEMENT_HOST`、API service binding 以及 Access 同源身份交换。新入口匿名 HTML、静态资源和代理 API 必须经过 Access；管理员登录后可进入任务库并刷新。旧域名停止服务或在受保护条件下引导到新入口，不能变成旁路。迁移前提醒使用者同步旧网页未上传的变更：IndexedDB 和会话属于旧源，不会随域名自动迁移。
 
 ## 推送与部署流程
 
-执行分工遵循 `AGENTS.md`。
+1. 按 [AGENTS.md](../AGENTS.md) 执行。检查工作区、分支、远程和已有发布，只提交相关文件并添加 DCO sign-off；正常推送，不强制覆盖。固定完整 SHA，已有提交和运行不重复创建。
+2. 仅执行 [最小测试方案](minimal-testing.md) 的活动集合；最终验证由同 SHA 的适用 CI 执行一次，不再本地全套后 CI 重跑。Web/CSS 改动不等待 Android CI。Cloud Connected 统一验证并生成 Web 产物，Dom Web Pages 复用；旧回归仅在正式截图或手动验收出问题后诊断。
+3. 沿用当次明确的 production 发布授权，不重复询问；push-only 或模型偏好不授权生产变更/未来发布。部署前私下记录两个生产 D1 的 Time Travel bookmark、两个 Worker 当前版本和必要路由配置。
+4. 确认 main 仍指向已验证 SHA，再执行：
 
-1. 读取当前工作区、远程和分支，确定本次授权范围及固定完整 commit SHA。已有提交不重复提交；只提交本次相关文件并添加 DCO sign-off，正常推送，不强制覆盖远程。
-2. 按[最小测试方案](minimal-testing.md)做本地针对性验证。对同一提交等待 `Cloud Connected`、`Android CI` 和 `Dom Web Pages` 的适用运行全部成功；只有推送成功不能报告部署完成。先查已有运行，避免重复触发。每次 Android 完整测试通过后，按该方案构建并交付已验证代码的 Debug APK。
-3. 用户已明确授权本次 production 发布时，沿用该授权完成后续步骤，不重复询问。仅要求提交或推送时，说明 production 尚未更新，取得本次生产发布授权后继续。模型偏好本身不等于对所有未来生产发布的预先授权。
-4. 按本手册记录生产迁移前的恢复信息，在 `main` 仍指向已验证 SHA 时，用 `gh workflow run cloud-ci.yml --ref main -f target=production -f production_confirmation=DEPLOY_PRODUCTION -f release_commit=<完整SHA>` 触发。分支已经变化时先核对新版本，不替换为未经 staging 验证的提交。
-5. 等待 `verify` 通过；如 `cloud-production` 等待批准，查询该运行的 `pending_deployments`，在用户已授权且当前账号具有审批权限时，用 `gh api` 提交批准。保留环境保护规则；凭据不进入命令正文、日志或 Git。浏览器仅在登录授权或用户要求展示页面时使用。
-6. 等待 `deploy-production` 与发布后门禁检查最终成功，并完成下文的“管理员页面加载验收”，再汇报固定 SHA、各运行链接与实际部署环境。工作流成功或 Access 302 跳转均不能单独代表管理网页可用。失败时查看对应日志，区分代码、权限和环境问题；未经授权不执行数据库恢复或破坏性操作。
+   ```text
+   gh workflow run cloud-ci.yml --ref main -f target=production -f production_confirmation=DEPLOY_PRODUCTION -f release_commit=<完整SHA>
+   ```
 
-以下阶段四范围和首次上线门禁仍适用。日常更新沿用已配置环境，不重复创建数据库、密钥或执行恢复演练。
+5. gate 优先复用同 SHA 成功的 verify 和未过期 Web 构建；复用时 verify 显示 skipped，这是已验证产物复用，不是未验证部署。无可用证据时只运行一次最小 verify。若 cloud-production 待审批，读取该 run 的 pending_deployments；当前账号有权限时沿用用户当次授权批准，保留保护规则。凭据不进入命令正文、日志或 Git。
+6. 等待 deploy-production、迁移及 Access 检查成功，再完成管理员验收。失败时区分代码、权限和环境原因；未经授权不恢复/删除数据库。汇报 SHA、运行链接、实际环境和未完成项。
 
 ## 管理员页面加载验收
 
-每次管理 Web 发布均执行以下检查，并将结果关联到实际部署的完整 SHA。浏览器验收属于必要发布验证，可使用已有管理员会话；不导出 Cookie、Access JWT 或业务令牌，不向 CI 添加真实管理员凭据。
+每次管理 Web 发布均关联实际部署 SHA：
 
-1. CI 使用联网生产构建，在与管理站点一致的 CSP 下加载页面，模拟成功的身份交换与业务初始化，确认任务库可见，且没有未捕获异常或 CSP 执行错误。该检查验证页面启动兼容性，不能冒充真实 Access 登录验收。
-2. staging 部署后，以授权管理员身份进入 `test.rochelimit.me`。等待安全会话恢复完成，确认“任务库”和“已联网”出现；已有任务正常显示，无任务时显示可操作的空列表。刷新后仍能进入页面，控制台没有新增未捕获异常、动态执行代码被 CSP 拦截或关键 JS 加载失败。
-3. production 部署后，对 `staging.rochelimit.me` 重复同样的只读检查。只查看列表和刷新，不为验收创建、修改或删除真实任务。旧标签页有未保存输入时，新建标签验证，避免刷新丢失输入。
-4. 记录环境、完整 SHA、部署运行链接、验收时间、页面加载/刷新/控制台结果及是否使用已有会话。没有可用管理员登录时明确标记“部署已完成，管理员页面验收未完成”，不得以匿名跳转检查代替成功登录。
+- CI 在生产构建和严格 CSP 下模拟身份交换与初始化，验证任务库、刷新及无脚本异常；不能代替真实登录。
+- 使用已有授权会话打开 `prod.rochelimit.me`，等待“已联网”和任务库可见，空列表须可操作。刷新后仍可进入，控制台无新增未捕获异常、CSP 或关键 JS 加载错误。
+- 仅查看/刷新，不创建、修改或删除真实任务。原页有未保存输入时使用新标签。
+- 记录时间、SHA、部署链接、会话来源及加载/刷新/控制台结果。无可用登录时标明“部署完成，管理员验收未完成”，不可用匿名 Access 302 替代。
 
-2026-09-06 的白屏回归由浏览器运行时 Ajv 编译触发：`new Function` 被 `script-src 'self'` 拦截，导致应用初始化失败。热修复 `b002ab48d6496420a78f09175771ceabeb4efd55` 改用共享预编译校验器；真实 production 管理员会话已验证任务库、刷新及控制台正常。后续须保留动态代码禁用回归和页面启动检查，不通过添加 `unsafe-eval` 或降低 Access 保护修复启动错误。
-
-## 阶段四范围
-
-- 生产环境共三个账号：管理者、管理者控制的执行者测试账号、真实执行者账号。
-- 先用非敏感测试数据完成登录、邀请、权限隔离、断网同步、导出、计划删除、立即删除和恢复演练；通过后才录入真实任务。
-- 执行者 APK 公开发布到 GitHub Releases。按管理者授权，生产管理入口改为 `staging.rochelimit.me`，测试入口改为 `test.rochelimit.me`；旧生产私密主机名仍不得写入公开记录。
-- 两个管理入口均由 Cloudflare Access 保护整站，Web Worker 在返回 HTML、JS、CSS 或代理 API 前再次校验 Access JWT。网页通过 Access 后自动取得现有管理员账号的业务会话，不再重复邮箱登录；保留 `ADMIN_EMAIL` 白名单、空间角色授权及敏感操作的近期邮箱验证。
-- 不包含公开注册、应用商店、远程推送、端到端加密、多管理员或大陆 SLA。
+2026-09-06 白屏源于 Ajv 的 `new Function` 被 CSP 拦截；`b002ab48d6496420a78f09175771ceabeb4efd55` 改用共享预编译校验器。保留动态代码禁用与启动回归，不添加 `unsafe-eval`。
 
 ## 受保护配置
 
-GitHub Environment `cloud-staging` 保存 staging Cloudflare 凭据。`cloud-production` 必须启用 required reviewer，并保存：
+GitHub Environment `cloud-production` 保留 required reviewer、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`。日常 token 使用发布所需 Workers/D1/DNS 权限；仅在管理 Access 时使用相应权限，不永久扩大 CI token。
 
-- `CLOUDFLARE_API_TOKEN`：日常发布只需要 Workers、D1 和 DNS 权限；首次配置或修改 Access 应用与身份策略，需要另外的 Access 管理权限，不必永久扩大 CI token 权限；
-- `CLOUDFLARE_ACCOUNT_ID`。
+| 组件 | Secrets |
+| --- | --- |
+| API Worker | AUTH_PEPPER、ADMIN_EMAIL、RESEND_API_KEY、ALLOWED_ORIGIN、ACCESS_TEAM_DOMAIN、ACCESS_AUD |
+| Web Worker | ACCESS_TEAM_DOMAIN、ACCESS_AUD、MANAGEMENT_ADMIN_EMAIL |
 
-Production API Worker 另外保存 `AUTH_PEPPER`、`ADMIN_EMAIL`、`RESEND_API_KEY` 和 `ALLOWED_ORIGIN` secrets。本次迁移将 `ALLOWED_ORIGIN` 设为 `https://staging.rochelimit.me`；staging API 配置为 `https://test.rochelimit.me`。其余秘密值不得写入命令正文、文档或证据。两个 API 的域名、应用认证与限流保持不变，不添加 Access 浏览器门禁。
+ALLOWED_ORIGIN 对应正式管理源，API/Web audience 对应同一正式 Access 应用，精确管理员邮箱一致。密钥值、私人邮箱及可复用恢复凭据不进入公开记录。
 
-两个 Web Worker 均配置 `ACCESS_TEAM_DOMAIN`（仅 `团队名.cloudflareaccess.com`）、`ACCESS_AUD`（各自应用的 64 位十六进制 audience）和 `MANAGEMENT_ADMIN_EMAIL` secrets。邮箱须与各自 API 的管理员白名单一致；两个应用 audience 必须不同，不能复用。各 API Worker 同时配置与自己 Web 相同的 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD` secrets，以独立验证身份交换。旧 `MANAGEMENT_GATE_SECRET` 与 GitHub `PRODUCTION_ADMIN_HOST` 不再被代码或 CI 使用，可在迁移验收后按凭据清理流程移除。
+Access self-hosted 应用保护完整管理主机名，仅允许精确邮箱和 One-time PIN，使用 24 小时会话、HttpOnly、Binding Cookie。禁止 Everyone/Bypass/域名通配和 Android 共享 service token。关闭 workers.dev/preview；Worker 在返回 HTML、JS、CSS 或代理 API 前验证 RS256、固定 issuer/JWKS、audience、有效期、签发时间及邮箱。缺配置 503，验证失败/公钥不可用 403，不触达业务资源；响应 no-store。
 
-Access 使用两个独立的 self-hosted 应用，分别覆盖两个完整主机名（不限定路径）。仅允许现有管理员的精确邮箱，使用 One-time PIN；不要加入 Everyone、Bypass、通配邮箱域或面向 APK 的共享 service token。建议会话有效期 24 小时。首次开通 Zero Trust 的套餐与付款信息由账号所有者确认；免费方案不代表无需开通流程。
+仅同源 `POST /v1/auth/access` 转发已验证 JWT；API 独立验证，只映射已有活动 ADMIN 成员，不创建账号或提权。保留 Bearer、HttpOnly refresh cookie、CSRF、认证限流、删除/隐私状态和敏感操作近期邮箱验证。Android/直接 API 使用应用认证，不加浏览器门禁。正式交换失败显示重试/退出，仅 local 回退邮箱登录；退出清理业务会话/缓存后进入 Access logout。
 
-2026-09-05 当前账号的开通页显示 Free 为 $0、最多 50 席位，但要求付款资料、账单地址、服务条款以及对超出免费额度的用量按月扣费的授权。选择 Free 不代表已完成开通；由账号所有者自行审阅并完成 `Activate Zero Trust Free` 后，再创建 Access 应用和切换域名。
+早期 `/sw.js` 停用脚本仍受 Access 保护：立即激活接管，只删 `dstationery-connected-` 静态缓存后注销；不接管 fetch、不清 IndexedDB/outbox、不强刷编辑页。须验证已有浏览器，不能以部署成功推断旧缓存已退出。
 
-2026-09-05 账号所有者已完成 Zero Trust Free 开通，One-time PIN 已添加，两个管理主机名的独立 Access 应用均已创建，限制为各自现有管理员精确邮箱、24 小时会话，并启用 HTTP Only 和 Binding Cookie。管理者已明确批准先保护仍指向 staging 服务的 `staging.rochelimit.me`，再将其切换到 production。网页域名与 Worker 的实际部署状态以发布运行及验收记录为准，不能将创建 Access 应用视为 Worker 已部署。
+## Migration、恢复与故障处理
 
-边缘先拦截未登录请求；Worker 使用固定 issuer 的 JWKS 验证 RS256 签名、audience、有效期、签发时间和管理员邮箱，拒绝伪造邮箱头、旧门禁 cookie 及其他主机名。配置缺失时 503，JWT 验证失败或公钥不可用时 403，均不触达静态资源或业务 API。两个环境关闭 workers.dev 与 preview URLs，所有资源经 Worker 执行且 `no-store`。网页退出在应用会话与本地缓存清理后导航到 Access logout。
-
-网页初始化调用 `POST /v1/auth/access`，仅此同源请求转发已验证的 Access JWT。API 再次验证固定 issuer、audience、时间和 `ADMIN_EMAIL`，只映射已有账号的活动 ADMIN 成员，不创建账号或提升角色；删除恢复期账号只能进入既有恢复流程，业务冻结规则继续执行。交换保留业务 Bearer、HttpOnly refresh cookie、CSRF 与认证限流，不把 Access 登录视为敏感操作验证。Android 仍使用原有邮箱登录；仅 local 环境回退到网页邮箱登录，正式环境交换失败显示重试/退出入口。
-
-部署此单次登录变更前，先为 staging API 配置对应 Access secrets，完成测试环境真实管理员自动进入验证；再为 production API 配置其独立 audience 并发布同一 SHA。CI 在 migration 前检查这些 secret 名称。回退 API 与 Web 到兼容版本时保留 Access 配置和边缘策略，不降低门禁。
-
-早期联网版曾注册 `/sw.js`。仅停止生成 Service Worker 不会注销既有浏览器注册，旧缓存可能持续显示已移除的登录页。Web Worker 在 Access 校验后为 `/sw.js` 返回停用脚本：立即激活并接管旧注册，只删除 `dstationery-connected-` 前缀的静态缓存，然后注销；不接管 fetch、不清理 IndexedDB 或 outbox、不强制刷新正在编辑的页面。浏览器检查更新后，下次刷新取得最新工作台。验收需同时核对已登录旧浏览器与无会话请求，不能仅凭服务器发布成功判断旧页面已退出。
-
-## 本次域名与 Access 迁移顺序
-
-以下是实施步骤，不代表云端已经完成迁移。完成后另行记录固定 SHA、运行结果和登录验收。
-
-1. 盘点 Zero Trust 组织、套餐、Access 应用、精确管理员邮箱及当前 Worker 自定义域映射。权限不足时由账号所有者登录控制台；不为读取配置输出令牌或完整邮箱。
-2. 保留旧生产入口和当前 Worker 版本作为回退信息。先为 `test.rochelimit.me` 与 `staging.rochelimit.me` 建立 Access 整站策略，确认没有更具体路径的放行策略；配置两个 Web Worker 的独立 Access secrets。先保护旧 staging 主机名，再转移它的用途。
-3. 提醒管理者先同步旧 staging 页面尚未上传的修改并关闭旧标签页。新域名不会自动搬迁旧源的 IndexedDB/未同步命令；数据库内容仍在 staging D1，不复制进 production。
-4. 主代理提交并推送固定 SHA，等待自动 staging 部署，将 staging Web 移到 `test.rochelimit.me` 并更新对应 API origin。检查测试入口 Access 跳转、管理员登录和 staging 服务绑定，确认旧 staging 域已从 staging Worker 解除。
-5. 记录生产两个 D1 的恢复 bookmark 与两个 Worker 版本；更新生产 API 的 `ALLOWED_ORIGIN`，然后按本次已获授权的流程发布相同 SHA。生产 Web 绑定 `staging.rochelimit.me`；核对旧生产域不再路由至该 Worker，不为旧域新增公开绕过入口。
-6. 验证两个站点根页面、静态资源和 `/v1/bootstrap` 均被 Access 拦截；验证管理员登录后可正常使用各自数据、非管理员不能进入，以及两个直接 API 仍返回应用认证响应、Android 地址不变。CI 的 `verify-access.mjs` 只验证匿名拦截，不能代替管理员登录成功验证。
-7. 回退时同时恢复 Worker 版本、域名映射和 API origin，维持 Access 保护。不能只回滚代码而留下错配的域名；新生产主机名不允许回指 staging 并继续用于生产操作。
-
-## 第一门：staging
-
-1. 通过用户 `PATH` 直接确认 `node --version` 为 22+，再进入 `cloud`。
-2. 使用 `npm exec wrangler -- d1 create dstationery-deletion-ledger-staging --location=apac` 创建独立账本；只把返回的数据库 ID写入 `cloud/wrangler.jsonc`。
-3. 运行 `npm run guard:staging`、本地全量 migration、Cloud/Web/Android 测试，提交并推送固定 commit。`main` push 的 `Cloud Connected` 验证全部通过后会自动部署 staging；PR 只验证、不部署。必要时仍可手动运行工作流并选择 `staging` 重新部署。
-4. 确认自动 `deploy-staging` job 中主库和账本 migration、API 与 Web 部署成功。
-5. 再手动运行同一工作流，target 选择 `staging-recovery`，输入 `RESTORE_STAGING`。该 job 会创建不含真实数据的 canary、记录主库 Time Travel bookmark、把删除事实写入独立账本、恢复主库，并等待 staging cron 重放账本。
-6. 下载 `stage4-staging-recovery-<commit>` artifact。只有 `after-restore` 中 canary 为 1、`replay-status` 中为 0 且 cleanup 成功，恢复演练才通过。artifact 只包含 bookmark 的 SHA-256，不包含可复用 bookmark。
-
-恢复会原地覆盖 staging 主库并取消在途查询。运行前必须停止 staging 人工操作；失败时由受保护工作流日志中的已遮罩值完成回退，不把 previous bookmark 放入公开 artifact。Cloudflare D1 Time Travel 的 bookmark 与恢复语义见[官方文档](https://developers.cloudflare.com/d1/reference/time-travel/)。
-
-## 第二门：production
-
-第一门通过后，汇报固定 commit、测试结果、staging deployment、恢复 artifact 和剩余风险。只有管理者再次明确确认后才执行：
-
-1. 创建 `dstationery-deletion-ledger-production`，写入 production 账本 ID并重新运行两个环境 guard。
-2. 配置受 Access 保护的管理员主机名、生产邮件域、API Worker 业务 secrets 与 Access issuer/audience，以及 Web Worker 的 Access issuer、独立 audience 和单一管理者邮箱。
-3. 在 GitHub `cloud-production` 环境启用人工批准并配置受保护值。
-4. 手动运行 `Cloud Connected`，target 选择 `production`，`production_confirmation` 输入 `DEPLOY_PRODUCTION`，`release_commit` 输入已通过 staging 的完整 commit SHA。
-5. 验证管理端未登录不能读取任何静态资源或代理 API、非白名单身份不能进入、管理者完成 Access 后自动进入工作台且退出会离开 Access 会话，并确认管理者 Web 和执行者 Android 均只连接 production。
-
-Production migration 前记录 D1 bookmark 和当前 Worker version。故障先回滚 Worker 固定版本；若兼容 migration 仍有问题，再按 bookmark 执行 Time Travel。恢复主库后必须等待删除账本重放完毕再开放写入。
+- migration 只追加；先迁移主 D1，再迁移独立删除账本，最后部署 API/Web。日常发布不重复创建库、密钥或初始环境。
+- 优先回滚已记录 Worker；Time Travel 另获恢复授权。恢复主库后等待删除账本重放，确认删除内容未复活再开放写入。
+- 故障演练使用 local/隔离数据与非敏感 canary，不对正式业务数据注入删除、恢复或并发故障。
+- 域名变更及回滚须同时保持路由、API origin、Access audience、service binding 一致且受保护。先提示同步旧源 outbox；IndexedDB/会话不跨源迁移，新正式入口不得指向旧测试数据。
 
 ## 执行者 Android 发布
 
-生产包名固定为 `com.ds.localtaskmanager.connected.production`，使用仓库外 `local-task-manager-connected-production-signing.properties`。首次创建密钥时运行 PowerShell 脚本；这里使用 `pwsh` 是因为脚本需要安全随机数、对象化 JSON 和 Windows 文件 API：
+离线包名 `com.ds.localtaskmanager`，生产执行者 `com.ds.localtaskmanager.connected.production`。Release 分别使用仓库外 `local-task-manager-signing.properties`、`local-task-manager-connected-production-signing.properties`；密钥与密码分开备份。仅首次需要 `scripts/release/setup-release-signing.ps1` / `setup-executor-production-signing.ps1`，不重建已有签名身份。
 
-```powershell
-pwsh -NoProfile -File .\scripts\release\setup-executor-production-signing.ps1
-```
+默认只复用同 SHA 的成功 Android CI，不重复单元和截图。固定的干净 main 上通过 `scripts/release/prepare-release.ps1` / `prepare-executor-release.ps1` 准备候选，复用同源 CI/产物时不为调用脚本重复测试。核对版本/code、包名、环境、权限、签名和 SHA-256。默认 API 26/33/35 及真实设备验收含安装、登录、离线执行、恢复同步、升级；用户当次明确豁免时逐项写 waived 和原因，不能写 passed。
 
-把 keystore 和 properties 分开离线备份。随后在干净的 `main` 上准备候选：
+evidence 匹配本次 SHA/APK 且检查完成后才设 approved，使用 `publish-release.ps1` / `publish-executor-release.ps1 -EvidencePath <文件>`。标签为 `v<version>` / `executor-v<version>`，已有当次授权可传 ConfirmTag。发布公开 prerelease，附 APK、SHA-256、第三方声明、非敏感 evidence；不上传 mapping、密钥、密码、会话或恢复凭据。核对远端非 draft、附件摘要一致后报告完成。
 
-```powershell
-pwsh -NoProfile -File .\scripts\release\prepare-executor-release.ps1
-```
+## 新环境启用与事故恢复时的试运行（非常规发布门禁）
 
-在 API 26/33/35 与真实执行者设备完成安装、登录、离线执行、恢复同步和升级测试，把 `release-evidence.json` 对应检查改为 `passed`。确认 commit、APK SHA-256 和签名证书后，将 evidence 状态改为 `approved`，再运行：
+仅新环境启用或正式截图/用户手动验收暴露相关事故时执行以下专项，不随普通提交或每次发布重复。范围为管理员、其控制的测试执行者、真实执行者。先用非敏感数据验证登录/邀请、分配隔离、断网恢复、导出、删除计划撤销和立即删除；成员移除后旧会话/outbox 必须被拒绝。生产部署和 APK 发布不代表七天观察完成。
 
-```powershell
-pwsh -NoProfile -File .\scripts\release\publish-executor-release.ps1 -EvidencePath <release-evidence.json>
-```
+连续七天每日记录计数、request ID 和稳定错误码：无越权、丢失、重复生效、隐私泄漏或未解释 5xx；删除账本恢复有效，APK 摘要和签名固定。抽样日志无正文、邮箱、header、token、stack；监测 Worker/D1/邮件用量，70% 降频、90% 保护及邮件保留通道符合设计。
 
-脚本要求输入 `executor-v<version>`，创建公开 prerelease，并上传 APK、SHA-256、第三方声明和不含敏感内容的 evidence。不得把 mapping 文件、keystore、密码或管理员网址上传 GitHub。
-
-## 三账号真实试运行与七天观察
-
-演练通过后，管理者创建空间，先邀请管理者控制的执行者测试账号，再邀请真实执行者账号。两个执行者必须验证只能读取自己的分配、导出自己的数据；移除后旧会话和离线 outbox 必须被拒绝。
-
-连续七天每天记录以下结果，只记录计数、request ID 和稳定错误码，不记录邮箱、任务正文、验证码、令牌或管理员网址：
-
-| 检查 | 通过标准 |
-| --- | --- |
-| 权限与隐私 | 零跨账号/跨空间读取，零隐私门禁绕过 |
-| 数据可靠性 | 零任务或执行结果丢失，outbox 重试无重复生效 |
-| 服务错误 | 零未解释 5xx；所有失败均有安全 request ID 与稳定错误码 |
-| 日志 | 抽样仅含结构化白名单字段，零正文、邮箱、header、token 或 stack |
-| 删除与恢复 | 计划删除可撤销、立即删除不可恢复、恢复后账本重放有效 |
-| 配额 | 正常低于 70%；若触发 70%/90%，降频与保护模式符合设计 |
-| 分发 | GitHub APK SHA-256 与安装文件一致，签名证书摘要保持固定 |
-
-任一天出现数据丢失、越权、隐私泄漏、敏感日志或无法解释的 5xx，立即停止真实数据写入、保留非敏感证据并回到 staging；修复后七天计时重新开始。
+发现上述事故即停止真实数据写入，保留非敏感证据，在隔离环境修复；恢复后七天重新计时。范围不含公开注册、应用商店、远程推送、端到端加密、多管理员或大陆 SLA。

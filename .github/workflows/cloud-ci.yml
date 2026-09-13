@@ -3,10 +3,10 @@ name: Cloud Connected
 on:
   push:
     branches: [main]
-    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", ".github/workflows/cloud-ci.yml"]
+    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", "scripts/ci/verification-reuse*", "scripts/ci/*web-artifact.mjs", ".github/workflows/cloud-ci.yml", ".github/workflows/dom-web-pages.yml"]
   pull_request:
     branches: [main]
-    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", ".github/workflows/cloud-ci.yml"]
+    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", "scripts/ci/verification-reuse*", "scripts/ci/*web-artifact.mjs", ".github/workflows/cloud-ci.yml", ".github/workflows/dom-web-pages.yml"]
   workflow_dispatch:
     inputs:
       target:
@@ -23,16 +23,46 @@ on:
         description: Full commit SHA approved by verification evidence for production
         type: string
         required: false
+      full_regression:
+        description: Run old regressions to diagnose a production screenshot/manual failure
+        type: boolean
+        default: false
+      diagnostic_reason:
+        description: Production screenshot or manual acceptance failure being investigated
+        type: string
+        required: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: cloud-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    outputs:
+      reuse: ${{ steps.evidence.outputs.reuse }}
+      run_id: ${{ steps.evidence.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - id: evidence
+        run: node scripts/ci/verification-reuse.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_commit || github.sha }}
+          DEPLOY_TARGET: ${{ inputs.target }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.production_confirmation }}
+          FULL_REGRESSION: ${{ inputs.full_regression }}
+          DIAGNOSTIC_REASON: ${{ inputs.diagnostic_reason }}
+
   verify:
+    needs: gate
+    if: needs.gate.outputs.reuse != 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -49,11 +79,21 @@ jobs:
       - name: Verify production environment configuration
         run: node scripts/guard-environment.mjs production
         working-directory: cloud
-      - run: npm run check
+      - run: npm run typecheck
         working-directory: cloud
-      - run: npm run migrate:local
+      - name: Verify active Cloud regressions
+        if: inputs.full_regression != true
+        run: npm run test:minimum
+        working-directory: cloud
+      - name: Diagnose all Cloud regressions
+        if: inputs.full_regression == true
+        run: npm test
+        working-directory: cloud
+      - if: inputs.full_regression == true
+        run: npm run migrate:local
         working-directory: cloud
       - name: Exercise the local HTTP sync contract
+        if: inputs.full_regression == true
         working-directory: cloud
         shell: bash
         run: |
@@ -75,11 +115,18 @@ jobs:
           npm run smoke:local
       - run: npm ci
         working-directory: cloud-web
-      - run: npm run check
+      - run: npm run typecheck
+        working-directory: cloud-web
+      - if: inputs.full_regression == true
+        run: npm test
         working-directory: cloud-web
       - run: npm ci
         working-directory: web
-      - run: npm test
+      - if: inputs.full_regression != true
+        run: npm run test:minimum
+        working-directory: web
+      - if: inputs.full_regression == true
+        run: npm test
         working-directory: web
       - run: npm run build:all
         working-directory: web
@@ -89,10 +136,33 @@ jobs:
       - name: Verify connected page startup under production CSP
         run: npm run test:connected-smoke
         working-directory: web
+      - name: Stamp verified Web builds
+        run: node scripts/ci/stamp-web-artifact.mjs
+        env:
+          FULL_REGRESSION: ${{ inputs.full_regression }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-verification-${{ github.sha }}
+          path: |
+            web/dist-offline/
+            web/dist-connected/
+            web/verification.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-browser-reports-${{ github.sha }}
+          path: |
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
 
   deploy-production:
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'production'
-    needs: verify
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.target == 'production' && needs.gate.result == 'success' && (needs.verify.result == 'success' || (needs.verify.result == 'skipped' && needs.gate.outputs.reuse == 'true'))
+    needs: [gate, verify]
     runs-on: ubuntu-24.04
     environment: cloud-production
     steps:
@@ -129,6 +199,19 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: cloud-verification-${{ github.sha }}
+          path: web
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.gate.outputs.run_id || github.run_id }}
+      - run: node scripts/ci/check-web-artifact.mjs
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+      - name: Require current main before production mutation
+        run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$RELEASE_SHA"
+        env:
+          RELEASE_SHA: ${{ github.sha }}
       - name: Apply production migrations by database name
         run: npx wrangler d1 migrations apply dstationery-production --remote --env production
         working-directory: cloud
@@ -146,10 +229,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - run: npm ci
-        working-directory: web
-      - run: npm run build:connected
-        working-directory: web
       - run: npx wrangler deploy --env production
         working-directory: cloud-web
         env:

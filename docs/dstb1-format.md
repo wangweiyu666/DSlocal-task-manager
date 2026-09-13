@@ -1,8 +1,11 @@
-# DSTB1 v1 文件格式
+# DSTB1 备份格式
 
-DSTB1 是 Sub 端的本地备份容器。多字节整数统一采用无符号小端序；字符串统一为 UTF-8。Room 8 的步骤定义保存稳定 `stepId`、叶子执行配置、每实例草稿/进度和提交快照；恢复时按完整来源修订选择，不逐条拼接不同版本步骤。日期与 STEPS 的自动化验证记录见[验证记录](date-steps-validation.md)。
+当前外层格式 **1**、业务 payload **5**，读取 payload 1～5；主 Room 库 **9**。三个版本不能混用。实现见 [DTO](../app/src/main/java/com/ds/localtaskmanager/backup/BackupModels.kt)、[编码器](../app/src/main/java/com/ds/localtaskmanager/backup/DstbCodec.kt)、[校验器](../app/src/main/java/com/ds/localtaskmanager/backup/BackupValidator.kt)。Web DSDOM 配置备份和云 DSEXPORT 导出不是 DSTB1。
 
 ## 二进制布局
+
+多字节整数为无符号小端，JSON 为 UTF-8，压缩使用标准 zlib/DEFLATE。
+
 
 | 顺序 | 长度 | 内容 |
 |---|---:|---|
@@ -17,21 +20,14 @@ DSTB1 是 Sub 端的本地备份容器。多字节整数统一采用无符号小
 
 CRC32 覆盖从魔数开始到 zlib 数据末尾的全部字节，不包含末尾 CRC32 字段本身。
 
-## 元数据
 
-元数据 JSON 固定包含：
+文件上限 100 MiB、元数据 1 MiB、解压业务 500 MiB；声明长度和实际输出同时有界检查。CRC32 不提供加密或身份认证。未来外层版本提示升级，损坏整文件拒绝。
 
-- `createdAtEpochMillis`：快照创建时间；
-- `appVersion`：来源应用版本；
-- `sourceTimeZone`：来源 IANA 时区；
-- `payloadSchemaVersion`：业务 JSON 版本，当前为 `4`；读取端继续接受 `1`、`2`、`3`；
-- `counts`：积分组、任务定义、实例、积分流水、操作记录和结果版本数量。
+## 元数据与 payload 5
 
-元数据不得包含设备名称、型号、账号、文件名或外部路径。数量摘要必须与解压后的实际集合一致。
+元数据字段为 `createdAtEpochMillis,appVersion,sourceTimeZone,payloadSchemaVersion,counts`；counts 核对组、定义、实例、流水、日志和结果数量，不包含设备名称、型号、账号或路径。payloadSchemaVersion 必须与业务 schemaVersion 一致。
 
-## 业务 JSON v4
-
-顶层字段顺序为：
+业务顶层顺序如下，集合按主键排序，显式输出默认值和 null；DTO 与 Room 实体分离：
 
 ```text
 schemaVersion, settings, profiles, importBatches, groups,
@@ -39,45 +35,34 @@ definitions, definitionSteps, recurrenceExceptions, instances, instanceSteps,
 progress, information, moods, notes, ledger, actionLogs, resultRevisions
 ```
 
-集合按各自主键排序。JSON 使用显式默认值和 `null`，不写入无意义空白。格式 DTO 与 Room 实体分离；新增 Room 字段不能在未提升业务 JSON 版本时自动进入文件。
-
-`settings` 只允许 `themeMode`、`reduceMotion` 和 `lastStatisticsPeriod`。`recurrenceExceptions` 保存重复任务单日例外；`instances.singleDayAdjusted` 保存已生成实例的来源快照。系统提醒记录不属于业务 JSON。业务 JSON v1 迁移时这两个字段按空列表和 `false` 处理。
-
-`moods` 按任务 ID、实例键保存 `rating`（草稿可为 null，否则 1～5）、`text`（最多 2000 个 Unicode 字符）、创建／更新时间和可空提交时间。旧 v1/v2 读取时补空集合，旧版本不得声明 MOOD 或包含心情记录。已完成 MOOD 实例必须有已提交答案；其他状态不得标记已提交。合并恢复时，已完成答案跟随所选实例快照，其他心情内容使用更新时间较新的记录；替换恢复完整还原。
-
-v4 的步骤记录携带稳定 16 字符 `stepId`、叶子执行配置、实例状态（`PENDING`/`CONFIRMED`/`SKIPPED`）及计数、计时、信息、心情答案。步骤状态按父实例整体选择和恢复，不按位置拼接不同版本。Room 8 的数据库迁移只增加稳定步骤定义、例外和结果快照所需字段，迁移过程不把旧任务按位置重写为 STEPS；只有管理员明确编辑并保存旧定义时才执行确定性 ID 转换。
-
-备份格式 v4 与旧版本保持读取兼容：缺失的步骤 ID、叶子执行配置和例外字段按旧格式语义解释，写出时使用完整的当前结构。导入合并先按任务/实例及来源修订选择完整记录，再恢复同一来源的整组步骤定义、例外和实例进度；不能把不同修订的步骤逐条拼接，也不能让旧完成状态覆盖较新的撤销或定义。
-
-## 压缩与限制
-
-- 使用标准 zlib 包装的 Deflate 数据；
-- 外部文件上限 100 MB；
-- 元数据上限 1 MB；
-- 解压后业务 JSON 上限 500 MB；
-- 解压过程中必须同时检查实际输出和文件头声明长度，禁止先无界解压后校验。
-
-## 兼容与错误
-
-- 魔数错误：不是 DSTB1 文件；
-- CRC、长度或 zlib 错误：文件损坏；
-- 格式版本高于当前支持版本：提示升级应用；
-- 已知旧版本：先迁移到当前业务 DTO，再执行统一校验；
-- 未知字段、重复主键、无效引用或非法值：拒绝整个文件，不做部分恢复。
-
-CRC32 不提供身份认证。任何能够改写文件的人都能重新计算 CRC32，因此恢复流程仍必须执行完整业务校验。
-
-## 测试向量
-
-二进制资产位于 `protocol-test-vectors/dstb1/`。合法样例由稳定编码器生成，记录顺序和压缩结果必须保持稳定。
-
-| 文件 | 预期 |
+| v5 内容 | 位置 |
 | --- | --- |
-| `minimal-valid.dstb` | 空业务数据，校验和解析成功 |
-| `all-records-valid.dstb` | 覆盖全部备份记录，校验、解析和完全替换成功 |
-| `crc-corrupt.dstb` | CRC32 不匹配，拒绝且不修改数据库 |
-| `truncated.dstb` | 文件截断，拒绝且不修改数据库 |
-| `future-version.dstb` | 格式版本过高，提示升级应用 |
-| `duplicate-key.dstb` | 业务 JSON 含重复主键，拒绝且不修改数据库 |
+| `executionConfigJson` 通知/选项配置 | 定义、定义步骤、实例、实例步骤 |
+| `conditionStepId,conditionOptionId` | 定义步骤、实例步骤 |
+| `selectedOptionId` | 实例步骤、执行进度 |
+| `awardedPoints` | 完成实例的实际得分 |
+| 稳定 stepId、顺序、类型、状态及答案 | 同源实例步骤，PENDING / CONFIRMED / SKIPPED / NOT_APPLICABLE |
 
-测试还需动态构造 100 MB 文件边界、500 MB 解压边界和压缩炸弹场景，避免在仓库中提交超大资产。
+选项必须存在于快照，条件、答案与分支状态须一致；完成实际分值等于基础分＋适用确认选项积分。不适用草稿不能冒充提交，通知以确认状态记录已知晓。心情草稿 rating 可空，提交为 1～5，text 最多 2000 码点；完成须有有效提交，其余状态不得假报提交。
+
+settings 仅含 themeMode、reduceMotion、lastStatisticsPeriod；隐私确认、系统权限、提醒安排、图片和缓存不备份。日期例外保存在 recurrenceExceptions，单日标记在 instances.singleDayAdjusted。
+
+## 兼容、恢复与合并
+
+| 业务版本 | 引入内容 |
+| --- | --- |
+| 1 | 原始业务；读取补空例外和 false 单日标记 |
+| 2 | 重复日期例外 |
+| 3 | 心情提交；v1/v2 不得带 MOOD |
+| 4 | STEPS 稳定身份、叶子配置和整组进度 |
+| 5 | 通知、单选、条件、选择和实际得分；旧完成缺失得分快照按原基础分读取 |
+
+旧版本不能假报新版字段或能力；旧步骤缺失 ID 按旧语义确定性恢复，Room 8→9 不自动转换旧任务。未知字段、重复主键、非法值/引用、分支或积分不一致使整文件失败，不跳过坏记录。
+
+完全替换先保留内部回滚快照，事务恢复业务与可迁移设置，失败回滚；进程中断后启动恢复，提醒失败单独重试。合并保留本机设置，按更新时间/冲突选择确定定义与实例来源；等时不同内容默认本机并允许选择备份。
+
+步骤定义、例外、实例步骤与依赖答案按选定来源整体恢复，不逐条混合不同版本分支。完成答案与实际得分保持快照，新撤销不被旧完成覆盖；独立可变记录按仓库合并规则选取。不可变流水、日志和结果修订按 ID 去重，同 ID 内容不同拒绝。恢复后重算派生状态与结果、重建通知，计时暂停、过期提醒不补发。
+
+## 兼容样例
+
+`protocol-test-vectors/dstb1/` 中 minimal-valid、all-records-valid 用于旧格式合法读取；crc-corrupt、truncated、future-version、duplicate-key 用于损坏、截断、未来外层和重复键。不要把旧文件称为 v5 全字段样例。v5 由当前 DTO 和备份测试构造，超大边界动态生成；执行范围见 [测试指南](minimal-testing.md)，实际结果见 [验证档案](verification-records.md)。

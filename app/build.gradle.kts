@@ -19,8 +19,8 @@ android {
         applicationId = "com.ds.localtaskmanager"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.1.0-alpha.11"
+        versionCode = 13
+        versionName = "0.1.0-alpha.12"
         buildConfigField("boolean", "SYNC_DIAGNOSTICS", providers.gradleProperty("syncDiagnostics").orElse("false").get().toBoolean().toString())
         manifestPlaceholders["appLabel"] = "@string/app_name"
 
@@ -75,8 +75,8 @@ android {
         create("production") {
             dimension = "connectivity"
             applicationIdSuffix = ".connected.production"
-            versionCode = 16
-            versionName = "0.1.0-alpha.15"
+            versionCode = 17
+            versionName = "0.1.0-alpha.16"
             versionNameSuffix = "-executor"
             manifestPlaceholders["appLabel"] = "@string/app_name"
             buildConfigField("boolean", "CONNECTED_BUILD", "true")
@@ -150,7 +150,7 @@ android {
 
 // Explicit profiles reduce routine runs; an unfiltered test task still runs the full suite.
 val androidTestProfile = providers.gradleProperty("androidTestProfile").orElse("full").get()
-require(androidTestProfile in setOf("daily", "release", "full")) { "Unknown androidTestProfile: $androidTestProfile" }
+require(androidTestProfile in setOf("daily", "release", "regression", "full")) { "Unknown androidTestProfile: $androidTestProfile" }
 if (androidTestProfile != "full") {
     val profileFile = rootProject.file("scripts/testing/android-$androidTestProfile.txt")
     val selectedTests = profileFile.readLines().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("#") }

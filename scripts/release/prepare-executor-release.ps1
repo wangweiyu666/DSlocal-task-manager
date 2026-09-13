@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('release', 'full')][string]$TestProfile = 'release',
-    [string]$Version = '0.1.0-alpha.15',
+    [ValidateSet('reuse', 'release', 'full')][string]$TestProfile = 'reuse',
+    [string]$DiagnosticReason,
+    [string]$Version = '0.1.0-alpha.16',
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$ArchiveRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'DStationery-Executor-Releases')
@@ -15,13 +16,26 @@ try {
     $commit = (git rev-parse HEAD).Trim()
     $env:JAVA_HOME = $JavaHome
     $env:ANDROID_HOME = $AndroidHome
-    & .\gradlew.bat testProductionDebugUnitTest "-PandroidTestProfile=$TestProfile" lintProductionRelease assembleProductionRelease --no-daemon
-    if ($LASTEXITCODE -ne 0) { throw 'Production executor verification build failed.' }
+    $verification = $null
+    if ($TestProfile -eq 'reuse') {
+        $verification = & (Join-Path $PSScriptRoot 'get-android-evidence.ps1') -Commit $commit
+    } else {
+        if ([string]::IsNullOrWhiteSpace($DiagnosticReason)) {
+            throw 'Re-running tests requires a production screenshot or manual acceptance failure reason. Default reuse performs no tests.'
+        }
+        & .\gradlew.bat testProductionDebugUnitTest "-PandroidTestProfile=$TestProfile" --no-daemon
+        if ($LASTEXITCODE -ne 0) { throw 'Diagnostic unit tests failed.' }
+        & .\gradlew.bat -I scripts/testing/android-screenshot-matrix.init.gradle validateProductionDebugScreenshotTest --no-daemon
+        if ($LASTEXITCODE -ne 0) { throw 'Production screenshot verification failed.' }
+        $verification = [ordered]@{ source = 'local'; commit = $commit; profile = $TestProfile; reason = $DiagnosticReason }
+    }
+    & .\gradlew.bat lintProductionRelease assembleProductionRelease --no-daemon
+    if ($LASTEXITCODE -ne 0) { throw 'Release packaging failed.' }
 
     $sourceApk = Join-Path $repo 'app\build\outputs\apk\production\release\app-production-release.apk'
     & (Join-Path $PSScriptRoot 'audit-apk.ps1') -Apk $sourceApk -AndroidHome $AndroidHome `
         -ExpectedPackage 'com.ds.localtaskmanager.connected.production' `
-        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 16 -Networked
+        -ExpectedVersionName "$Version-executor" -ExpectedVersionCode 17 -Networked
     if ($LASTEXITCODE -ne 0) { throw 'Production executor APK audit failed.' }
 
     $archive = Join-Path $ArchiveRoot $Version
@@ -40,12 +54,14 @@ try {
         status = 'candidate'
         version = $Version
         commit = $commit
+        verification = $verification
         testProfile = $TestProfile
         testVariant = 'productionDebug'
         packageName = 'com.ds.localtaskmanager.connected.production'
         cloudEnvironment = 'production'
         apkSha256 = $hash
-        localChecks = [ordered]@{ jvm = 'passed'; lintRelease = 'passed'; releaseAudit = 'passed' }
+        localChecks = [ordered]@{ lintRelease = 'passed'; releaseAudit = 'passed' }
+        verifiedChecks = [ordered]@{ jvm = 'passed'; productionScreenshots = 'passed' }
         deviceChecks = [ordered]@{ api26 = 'pending'; api33 = 'pending'; api35 = 'pending'; realExecutorDevice = 'pending' }
     }
     $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $archive 'release-evidence.json') -Encoding utf8NoBOM

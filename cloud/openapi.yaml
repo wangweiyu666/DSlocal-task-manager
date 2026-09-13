@@ -6,7 +6,7 @@ info:
     Identity, privacy acknowledgement, role-bound export, recoverable deletion,
     offline command and incremental sync contract. All endpoints may return
     429 RATE_LIMITED with Retry-After and error.retryAfterSeconds. Requests are
-    limited before database access: staging/production allow 120 requests per IP
+    limited before database access: production allows 120 requests per IP
     per 60 seconds, with a shared 20-request limit for auth challenge/verify/refresh
     and requests without a Bearer credential. These are approximate per-Cloudflare-location
     limits, not client authenticity proof. Missing limiter bindings fail with 503.
@@ -251,6 +251,14 @@ paths:
         a string of at most 2000 Unicode code points (empty allowed). The task revision
         and any occurrence-date execution override must match. Mood drafts remain local;
         missed results and COMPLETION_UNDONE events must not include mood answer fields.
+        NOTICE (u.k=6) records acknowledgement by completion; CHOICE (u.k=7) sends
+        selectedOptionId. STEPS (u.k=5) submits one ordered stepResults snapshot,
+        with CONFIRMED, SKIPPED or NOT_APPLICABLE states. Skipped and inapplicable
+        steps carry no answers; required applicable steps cannot be skipped.
+        The server evaluates conditions using the submitted revision and date overrides,
+        calculates base plus applicable confirmed option points, and stores historical
+        option names, configuration and awardedPoints. Client-supplied points are rejected.
+        Drafts stay local; undo/missed events do not submit step answers.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/SpaceId" }]
       requestBody:
