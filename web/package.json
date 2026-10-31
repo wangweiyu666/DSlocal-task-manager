@@ -24,7 +24,7 @@
     "verify:protocol": "node scripts/generate-protocol-validator.mjs --check"
   },
   "dependencies": {
-    "@hookform/resolvers": "^3.9.1",
+    "@hookform/resolvers": "^5.7.1",
     "ajv": "^8.17.1",
     "dexie": "^4.0.10",
     "dexie-react-hooks": "^1.1.7",
