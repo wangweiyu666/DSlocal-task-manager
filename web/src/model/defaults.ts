@@ -16,6 +16,7 @@ export const emptyTaskFields = (): TaskFields => ({
   recurrence: null,
   completionMessage: "",
   reminders: [],
+  customReminder: null,
   execution: null
 });
 

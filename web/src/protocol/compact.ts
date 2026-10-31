@@ -21,7 +21,7 @@ function compactRecurrence(value: Dst1Recurrence): Dst1Recurrence {
 function compactExecution(value: Dst1Execution): Dst1Execution {
   if (value.k === 1) return { k: 1, a: value.a, v: value.v };
   if (value.k === 2) return { k: 2, v: value.v };
-  if (value.k === 4) return { k: 4 };
+  if (value.k === 4 || value.k === 8) return { k: value.k };
   if (value.k === 5) return { k: 5 };
   if (value.k === 6) return { k: 6, t: value.t.normalize("NFC") };
   if (value.k === 7) return { k: 7, o: value.o.map((option) => ({ ...option, n: option.n.normalize("NFC") })) };
@@ -39,6 +39,7 @@ export function compactTask(task: Dst1Task): Dst1Task {
   if (task.x) result.x = compactRecurrence(task.x);
   if (task.m !== undefined) result.m = task.m.normalize("NFC");
   if (task.h?.length) result.h = [...task.h].sort((a, b) => b - a);
+  if (task.a !== undefined) result.a = task.a;
   if (task.u) result.u = compactExecution(task.u);
   return result;
 }
@@ -64,6 +65,7 @@ export function compactException(value: Dst11Exception): Dst11Exception {
   if (value.s !== undefined) result.s = value.s.map(compactStep);
   if (value.m !== undefined) result.m = value.m?.normalize("NFC") ?? null;
   if (value.h !== undefined) result.h = [...value.h].sort((a, b) => b - a);
+  if (value.a !== undefined) result.a = value.a;
   if (value.u !== undefined) result.u = value.u ? compactExecution(value.u) : null;
   return result;
 }

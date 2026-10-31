@@ -24,6 +24,7 @@ export interface TaskFields {
   recurrence: Dst1Recurrence | null;
   completionMessage: string;
   reminders: number[];
+  customReminder?: string | null;
   execution: Dst1Execution | null;
 }
 
@@ -121,7 +122,7 @@ export interface AppSettings {
 export interface DomBackup {
   format: "DSDOM";
   version: 1;
-  minorVersion?: 2;
+  minorVersion?: 2 | 3 | 4;
   createdAt: string;
   groups: GroupRecord[];
   tasks: TaskRecord[];

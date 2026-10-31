@@ -1,3 +1,4 @@
+import { validateTaskReminder, validateExceptionReminder } from "./reminders";
 import { Dst1ProtocolError, type Dst11Exception, type Dst1Batch, type Dst1ErrorCode, type Dst1Group, type Dst1Step, type Dst1Task } from "./types";
 import { validateConditionalSteps, validateExecutionConfiguration } from "./execution";
 
@@ -35,9 +36,10 @@ function validDate(value: string): boolean {
 }
 
 function validateTaskRules(task: Dst1Task, path: string): void {
+  validateTaskReminder(task, `${path}.a`);
   validateExecutionConfiguration(task.u, `${path}.u`);
   validateConditionalSteps(task.s ?? [], `${path}.s`);
-  if (task.u?.k !== 5 && task.s?.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7)) fail("CONFLICTING_FIELDS", `${path}.s`, "通知、选项和条件步骤需要 STEPS 执行模式");
+  if (task.u?.k !== 5 && task.s?.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7 || step.u?.k === 8)) fail("CONFLICTING_FIELDS", `${path}.s`, "通知、选项、体温和条件步骤需要 STEPS 执行模式");
   const executionKind = task.u && typeof task.u === "object" ? task.u.k : undefined;
   if (executionKind === 5) {
     if (!task.s || task.s.length < 1 || task.s.length > 50) fail("REQUIRED_FIELD_MISSING", `${path}.s`, "STEPS 需要 1 至 50 个步骤");
@@ -78,6 +80,7 @@ function validateStepsForStepsExecution(steps: Dst1Step[] | undefined, path: str
 }
 
 function validateExceptionRules(value: Dst11Exception, path: string): void {
+  validateExceptionReminder(value, undefined, `${path}.a`);
   validateExecutionConfiguration(value.u, `${path}.u`);
   if (value.s) validateConditionalSteps(value.s, `${path}.s`);
   if (!validDate(value.y)) fail("INVALID_DATE", `${path}.y`, "例外日期无效");
@@ -165,14 +168,15 @@ export function validateDst1Batch(value: unknown, validateSchema: SchemaValidato
   batch.e?.forEach((exception, index) => {
     if (exception.c === 1) return;
     const base = baseTasks.get(exception.i);
+    validateExceptionReminder(exception, base, `e[${index}].a`);
     const hasExplicitExecution = Object.prototype.hasOwnProperty.call(exception, "u");
     const effectiveExecution = hasExplicitExecution ? exception.u : base?.u;
     if (base?.u?.k === 5 && hasExplicitExecution && effectiveExecution?.k !== 5) {
       if (!Array.isArray(exception.s) || exception.s.length !== 0) fail("CONFLICTING_FIELDS", `e[${index}].s`, "切出 STEPS 必须明确清空步骤");
     } else if (effectiveExecution?.k === 5 && !(base === undefined && exception.s === undefined)) {
       validateStepsForStepsExecution(exception.s ?? base?.s, `e[${index}]`);
-    } else if (base && effectiveExecution?.k !== 5 && (exception.s ?? base.s)?.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7)) {
-      fail("CONFLICTING_FIELDS", `e[${index}].s`, "通知、选项和条件步骤需要 STEPS 执行模式");
+    } else if (base && effectiveExecution?.k !== 5 && (exception.s ?? base.s)?.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7 || step.u?.k === 8)) {
+      fail("CONFLICTING_FIELDS", `e[${index}].s`, "通知、选项、体温和条件步骤需要 STEPS 执行模式");
     }
   });
 }

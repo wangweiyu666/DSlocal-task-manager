@@ -10,7 +10,7 @@
     "dev": "wrangler dev --local",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:minimum": "vitest run tests/sync-recovery.test.ts -t \"derives conditional choice scores|snapshots standalone choices\"",
+    "test:minimum": "vitest run tests/sync-recovery.test.ts tests/custom-reminder.test.ts tests/temperature.test.ts -t \"derives conditional choice scores|snapshots standalone choices|accepts coexisting custom reminders|temperature\"",
     "check": "npm run typecheck && npm test",
     "smoke:local": "node scripts/smoke-local.mjs",
     "migrate:local": "wrangler d1 migrations apply dstationery-local --local && wrangler d1 migrations apply dstationery-deletion-ledger-local --local --config wrangler.jsonc",

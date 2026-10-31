@@ -27,6 +27,7 @@ export function fieldsFromDst1(task: Dst1Task): TaskFields {
     recurrence: task.x ?? null,
     completionMessage: task.m ?? "",
     reminders: task.h ?? [],
+    customReminder: task.a ?? null,
     execution
   };
 }

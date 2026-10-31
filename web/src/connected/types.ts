@@ -52,6 +52,7 @@ export interface CloudEntity {
   payloadVersion: number;
   payload: Record<string, unknown>;
   updatedAt: string;
+  changeSequence?: number;
   pendingCommandId?: string;
 }
 

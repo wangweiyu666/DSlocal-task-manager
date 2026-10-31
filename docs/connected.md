@@ -98,9 +98,10 @@ taskId:taskRevision:timeZoneVersion:scheduledLocalTime
 - 每名执行者拥有独立 assignment。取消勾选会取消该成员分配，并在 Android 同步后移除对应云任务。
 - 执行事件不可变，绑定执行者实际看到的任务版本；旧修订或取消后的结果保留并标记待复核。
 - 信息告知正文使用独立不可变命令同步，并展示在管理员结果卡片。
+- 体温询问使用执行定义 `{k:8}`，独立完成结果为 `executionKind:TEMPERATURE,status:COMPLETED,temperatureTenthsC`；体温用整数十分之一摄氏度（350～420）传输。仅整项完成上传答案，草稿、MISSED 与撤销不带体温。步骤答案使用同名字段，必须为已确认且执行类型为体温的步骤。云端依据提交修订和日期例外校验。
 - 心情完成通过 `EXECUTION_EVENT` 的 `data` 发送 `executionKind:MOOD,status:COMPLETED,moodRating,moodText`；评分 1～5、文字最多 2000 码点。草稿、MISSED 与撤销不上传答案。
 - 通知与单选完成仍用该事件：`NOTICE` 以完成记录已知晓，`CHOICE` 携带 `selectedOptionId`；客户端不提交积分。云端按任务修订及日期例外找到选项，保存名称、积分、通知正文和总分历史快照。
-- STEPS 只在整项完成提交一次：`executionKind:STEPS,status:COMPLETED,stepResults`，按修订快照顺序列出所有步骤。状态为 `CONFIRMED / SKIPPED / NOT_APPLICABLE`；答案按类型为 counterValue、elapsedMillis、informationContent、moodRating/moodText 或 selectedOptionId。仅适用选做可跳过，跳过/不适用不带答案，直接或通知确认无输入答案。
+- STEPS 只在整项完成提交一次：`executionKind:STEPS,status:COMPLETED,stepResults`，按修订快照顺序列出所有步骤。状态为 `CONFIRMED / SKIPPED / NOT_APPLICABLE`；答案按类型为 counterValue、elapsedMillis、informationContent、moodRating/moodText、temperatureTenthsC 或 selectedOptionId。仅适用选做可跳过，跳过/不适用不带答案，直接或通知确认无输入答案。
 - 云端重算分支与基础＋适用确认选项积分，拒绝伪造选择/分值、必需跳过和错误分支状态；补入 name、required、execution、taskName、taskDate 及选项/得分快照。Web 展示所选事件，不从最新任务或其他事件回填已撤销答案。撤销/MISSED 无 stepResults，不新增逐步云事件。
 - 同一分配的首个有效终态结果暂定生效，后到结果作为 duplicate 保留；管理员改选写入新审计事件。
 
@@ -163,3 +164,17 @@ Android 一次性 WorkManager 使用 CONNECTED 网络约束、30 秒指数退避
 API / Web / 两个 D1、Access、签名和生产发布操作只在 [运行手册](stage4-production-runbook.md) 维护。默认 Wrangler 为 local，production 远程操作需明确环境与授权；staging 退役数据不迁入正式环境。已应用 migration 只追加，故障注入只使用隔离数据。
 
 协议变更更新 OpenAPI、Schema、共享向量及两端实现，受影响验证按 [最小测试规则](minimal-testing.md) 执行；不再为普通 PR 强制空库全迁移、三变体或完整回归。版本/阶段历史不是重新创建资源的指令。远程推送、DSTB1 云迁移、端到端加密、多管理员、多空间和公开注册仍不作为已实现能力。
+
+### 每小时后台同步
+
+联网 Android 为有效执行者会话登记唯一的 WorkManager 周期任务，周期一小时，首次延迟一小时；打开应用仍即时同步。无待上传数据时也主动拉取云端变化。要求有网络，复用三分钟执行上限、会话锁、限流冷却和指数退避。
+
+登录进入空间及进程启动时恢复登记；UPDATE 保留原调度时间，避免每次打开应用重新倒计时。退出或清除失效会话时取消；账号切换更新身份与会话代次，旧任务不能访问新会话。已知账号限制不发起后台网络请求。离线变体不引入该调度或网络权限。
+
+这是尽力而为的周期同步，Doze、省电、厂商后台限制和断网可能延迟运行；自启动权限不保证准点。没有新增精确闹钟或常驻前台服务。
+
+### DOM 体温统计
+
+联网管理端提供独立体温统计页，按执行者、任务和空间时区的自然日筛选（默认近 7 日，可选近 30 日或自定义）。仅提取每个实例当前正式完成结果中的体温，包括已确认步骤；更换正式结果或采用撤销结果后重新计算。图表按客户端提交时间 occurredAt 展示每次记录，步骤采用整项提交时间，不代表独立的测量时刻。任务与步骤按稳定 ID 分系列，并显示记录数、最新、最低、最高、平均值及明细。离线时显示已同步缓存与同步时间。
+
+统计与结果复核以服务端同步序号判定正式选择的先后；snapshot 实体新增可选 `changeSequence`，增量同步保留原 `sequence`。这样同毫秒的多次改选也按实际服务端顺序展示，旧缓存缺失该字段时沿用更新时间排序。

@@ -1,3 +1,5 @@
+import { validateTaskReminder, validateExceptionReminder } from "../../../shared/protocol/reminders";
+import type { TaskFields } from "../model/types";
 import { validateConditionalSteps, validateExecutionConfiguration } from "../../../shared/protocol/execution";
 import { z } from "zod";
 import type { BackupConflict, BackupTable, DomBackup } from "../model/types";
@@ -11,11 +13,12 @@ function validateBackupExecution(execution: Dst1Execution | null | undefined, st
   validateConditionalSteps(steps);
   if (execution?.k === 5) {
     if (!steps.length || steps.some((step) => !step.i) || new Set(steps.map((step) => step.i)).size !== steps.length) throw new Error("分步骤定义的步骤 ID 缺失或重复");
-  } else if (steps.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7)) throw new Error("条件和通知、选项步骤需要分步骤执行模式");
+  } else if (steps.some((step) => step.c || step.u?.k === 6 || step.u?.k === 7 || step.u?.k === 8)) throw new Error("条件和通知、选项、体温步骤需要分步骤执行模式");
 }
 
-function validateBackupException(base: { execution: Dst1Execution | null; steps: Dst1Step[] } | undefined, exception: Dst11Exception) {
+function validateBackupException(base: TaskFields | undefined, exception: Dst11Exception) {
   if (!base || exception.c === 1) return;
+  validateExceptionReminder(exception, { i: exception.i, n: base.name, r: base.required ? 1 : 0, x: base.recurrence ?? undefined, a: base.customReminder || undefined });
   validateBackupExecution(Object.prototype.hasOwnProperty.call(exception, "u") ? exception.u : base.execution, exception.s ?? base.steps);
 }
 
@@ -26,7 +29,7 @@ const choiceExecution = z.object({ k: z.literal(7), o: z.array(z.object({ i: z.s
 const leafExecution = z.discriminatedUnion("k", [
   z.object({ k: z.literal(1), a: z.union([z.literal(1), z.literal(2)]), v: z.number().int().min(1).max(999) }).strict(),
   z.object({ k: z.literal(2), v: z.number().int().min(1).max(3600) }).strict(),
-  z.object({ k: z.literal(3) }).strict(), z.object({ k: z.literal(4) }).strict(), noticeExecution, choiceExecution,
+  z.object({ k: z.literal(3) }).strict(), z.object({ k: z.literal(4) }).strict(), z.object({ k: z.literal(8) }).strict(), noticeExecution, choiceExecution,
 ]);
 const step = z.object({ i: z.string().length(16).optional(), n: z.string().min(1).max(100), r: z.union([z.literal(0), z.literal(1)]), u: leafExecution.optional(), c: z.object({ s: z.string().length(16), o: z.string().length(16) }).strict().optional() }).strict();
 const recurrence = z.object({
@@ -37,13 +40,14 @@ const execution = z.discriminatedUnion("k", [
   z.object({ k: z.literal(1), a: z.union([z.literal(1), z.literal(2)]), v: z.number().int().min(1).max(999) }).strict(),
   z.object({ k: z.literal(2), v: z.number().int().min(1).max(3600) }).strict(),
   z.object({ k: z.literal(3) }).strict(),
-  z.object({ k: z.literal(4) }).strict(),
+  z.object({ k: z.literal(4) }).strict(), z.object({ k: z.literal(8) }).strict(),
   z.object({ k: z.literal(5) }).strict(), noticeExecution, choiceExecution
 ]);
 const taskFieldsShape = {
   name: z.string().max(100), required: z.boolean(), description: z.string().max(2000), taskDate: z.string(), taskDateIntent: z.enum(["preserve", "set", "clear"]).optional(),
   deadlineMode: z.enum(["default", "date", "datetime", "none"]), deadline: z.string(), points: z.number().int().min(0).max(9999),
   order: z.number().int().nullable(), steps: z.array(step).max(50), recurrence: recurrence.nullable(), completionMessage: z.string().max(500),
+  customReminder: z.string().nullable().optional(),
   reminders: z.array(z.number().int().min(0).max(10080)).max(5), execution: execution.nullable()
 } as const;
 const groupRecord = z.object({ id, name: z.string().min(1).max(50), completeMessage: z.string().max(500), incompleteMessage: z.string().max(500), order: z.number().int(), createdAt: timestamp, updatedAt: timestamp }).strict();
@@ -61,7 +65,7 @@ const exceptionRevision = z.object({ id, exceptionId: id, taskId: id, date: z.st
 const backupSchema = z.object({
   format: z.literal("DSDOM"),
   version: z.literal(1),
-  minorVersion: z.literal(2).optional(),
+  minorVersion: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   createdAt: z.string().datetime(),
   groups: z.array(groupRecord), tasks: z.array(taskRecord), templates: z.array(templateRecord), drafts: z.array(draftRecord),
   batchHistory: z.array(batchHistoryRecord), taskRevisions: z.array(taskRevision),
@@ -73,7 +77,7 @@ export async function createBackup(): Promise<DomBackup> {
     db.groups.toArray(), db.tasks.toArray(), db.templates.toArray(), db.drafts.toArray(),
     db.batchHistory.toArray(), db.taskRevisions.toArray(), db.taskExceptions.toArray(), db.exceptionRevisions.toArray(), getSettings()
   ]);
-  return { format: "DSDOM", version: 1, minorVersion: 2, createdAt: new Date().toISOString(), groups, tasks, templates, drafts, batchHistory, taskRevisions, taskExceptions, exceptionRevisions, settings };
+  return { format: "DSDOM", version: 1, minorVersion: 4, createdAt: new Date().toISOString(), groups, tasks, templates, drafts, batchHistory, taskRevisions, taskExceptions, exceptionRevisions, settings };
 }
 
 export function parseBackup(json: string): DomBackup {
@@ -83,7 +87,12 @@ export function parseBackup(json: string): DomBackup {
   const parsed = backupSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`配置文件结构无效：${parsed.error.issues[0]?.path.join(".") || "$"} ${parsed.error.issues[0]?.message ?? "未知错误"}`);
   const backup = parsed.data as DomBackup;
-  for (const task of [...backup.tasks, ...backup.templates, ...backup.drafts.flatMap((draft) => draft.tasks)]) validateBackupExecution(task.execution, task.steps);
+  for (const task of [...backup.tasks, ...backup.templates, ...backup.drafts.flatMap((draft) => draft.tasks)]) {
+    validateBackupExecution(task.execution, task.steps);
+    if (task.customReminder != null) validateTaskReminder({ i: "", n: task.name, r: task.required ? 1 : 0,
+      a: task.customReminder, x: task.recurrence ?? undefined, y: task.taskDate || undefined,
+      l: task.deadlineMode === "none" ? null : ["date", "datetime"].includes(task.deadlineMode) ? task.deadline : undefined });
+  }
   for (const key of ["groups", "tasks", "templates", "drafts", "batchHistory", "taskRevisions", "taskExceptions", "exceptionRevisions"] as const) {
     const ids = backup[key].map((record) => record.id);
     if (new Set(ids).size !== ids.length) throw new Error(`配置文件结构无效：${key} 中存在重复 ID`);

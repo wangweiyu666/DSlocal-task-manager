@@ -13,7 +13,7 @@ const taskEntity = {
   payload: { status: "ACTIVE", assignmentMode: "ALL", content: { v: 1, b: "B000000000000001", t: [{ i: "T000000000000001", n: "CSP 启动验收任务", r: 1, y: "2026-09-06" }] } },
 };
 
-test("connected production build renders under strict CSP with a mock session", async ({ page }) => {
+test("connected production build renders under strict CSP with a mock session", async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   const securityViolations: string[] = [];
@@ -38,9 +38,13 @@ test("connected production build renders under strict CSP with a mock session", 
     if (path.endsWith("/auth/access") || path.endsWith("/auth/refresh")) body = session;
     else if (path.endsWith("/account")) body = { account: { id: "AccountSmoke0001", status: "ACTIVE", privacyNoticeVersion: 1, requiredPrivacyNoticeVersion: 1, deletionDueAt: null } };
     else if (path.endsWith("/bootstrap")) body = { account: { id: "AccountSmoke0001" }, service: { mode: "NORMAL", autoSyncIntervalSeconds: null }, memberships: [{ id: "MembershipSmoke01", role: "ADMIN", status: "ACTIVE", space: { id: "SpaceSmoke00001", name: "CSP Smoke Space", timeZone: "Asia/Hong_Kong", timeZoneVersion: 1, currentSequence: 1 } }] };
-    else if (path.includes("/snapshot")) body = { entities: [taskEntity], changesCursor: "smoke-cursor", hasMore: false, nextCursor: null };
+    else if (path.includes("/snapshot")) body = { entities: [taskEntity,
+      { entityType: "assignment", entityId: "assignment-temperature", entityVersion: 1, payloadVersion: 1, payload: { taskId: taskEntity.entityId, executorMembershipId: "executor-temperature" }, updatedAt: new Date().toISOString() },
+      { entityType: "execution_event", entityId: "temperature-result", entityVersion: 1, payloadVersion: 1, payload: { assignmentId: "assignment-temperature", occurrenceKey: "once", eventType: "RESULT_SUBMITTED", occurredAt: new Date().toISOString(), data: { taskName: "每日体温", executionKind: "TEMPERATURE", status: "COMPLETED", temperatureTenthsC: 365 } }, updatedAt: new Date().toISOString() },
+      { entityType: "result_selection", entityId: "temperature-selected", entityVersion: 1, payloadVersion: 1, payload: { assignmentId: "assignment-temperature", occurrenceKey: "once", executionEventId: "temperature-result" }, updatedAt: new Date().toISOString() }
+    ], changesCursor: "smoke-cursor", hasMore: false, nextCursor: null };
     else if (path.includes("/changes")) body = { changes: [], nextCursor: "smoke-cursor", hasMore: false };
-    else if (path.endsWith("/members")) body = { members: [] };
+    else if (path.endsWith("/members")) body = { members: [{ id: "executor-temperature", role: "EXECUTOR", status: "ACTIVE", joinedAt: "2026-10-01T00:00:00Z", email: "executor@example.com" }] };
     else if (path.endsWith("/notifications")) body = { notifications: [], unreadCount: 0 };
     else if (path.endsWith("/audit")) body = { events: [] };
     else { unknownApiRequests.push(path); body = { error: { code: "UNEXPECTED_SMOKE_REQUEST" } }; }
@@ -51,6 +55,16 @@ test("connected production build renders under strict CSP with a mock session", 
   expect(firstResponse?.headers()["content-security-policy"]).toBe(csp);
   await expect(page.getByRole("heading", { name: "任务库", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "CSP 启动验收任务", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "体温统计", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "体温统计", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /每日体温.*36.5℃/ })).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("temperature-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.getByRole("button", { name: "体温统计", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("temperature-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 720 });
   securityViolations.push(...await page.evaluate(() => (window as Window & { __cspViolations?: string[] }).__cspViolations ?? []));
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "任务库", exact: true })).toBeVisible();

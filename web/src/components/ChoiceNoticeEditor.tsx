@@ -4,7 +4,7 @@ import { createTransportId } from "../protocol/id";
 export function defaultLeafExecution(kind: number): Dst1LeafExecution | undefined {
   if (kind === 1) return { k: 1, a: 2, v: 10 };
   if (kind === 2) return { k: 2, v: 600 };
-  if (kind === 3 || kind === 4) return { k: kind };
+  if (kind === 3 || kind === 4 || kind === 8) return { k: kind };
   if (kind === 6) return { k: 6, t: "" };
   if (kind === 7) return { k: 7, o: [1, 2].map((index) => ({ i: createTransportId(), n: `选项 ${index}`, p: 0 })) };
   return undefined;

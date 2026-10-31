@@ -1,3 +1,6 @@
+import { createTransportId } from "../protocol/id";
+import { ExecutionOptions } from "./ExecutionOptions";
+import { validateTaskReminder } from "../../../shared/protocol/reminders";
 import { ChoiceNoticeEditor, defaultLeafExecution } from "./ChoiceNoticeEditor";
 import { validateConditionalSteps, validateExecutionConfiguration } from "../../../shared/protocol/execution";
 import { ChevronDown } from "lucide-react";
@@ -10,6 +13,13 @@ export type EditableTask = TaskFields & { groupId: string | null; taskId?: strin
 
 export function taskIssues(task: EditableTask): string[] {
   const issues: string[] = [];
+  if (task.customReminder !== undefined && task.customReminder !== null) {
+    try {
+      validateTaskReminder({ i: "", n: task.name, r: task.required ? 1 : 0, a: task.customReminder,
+        x: task.recurrence ?? undefined, y: task.taskDate || undefined,
+        l: task.deadlineMode === "none" ? null : ["date", "datetime"].includes(task.deadlineMode) ? task.deadline : undefined });
+    } catch (error) { issues.push(error instanceof Error ? error.message : "自定义提醒无效"); }
+  }
   try { validateExecutionConfiguration(task.execution); validateConditionalSteps(task.steps); } catch (error) { issues.push(error instanceof Error ? error.message : "执行配置无效"); }
   if (!task.name.trim()) issues.push("请填写任务名称");
   if ([...task.name.trim()].length > 100) issues.push("任务名称不能超过 100 个字符");
@@ -42,10 +52,11 @@ interface TaskEditorProps {
 export function TaskEditor({ value, groups, onChange, allowKindChange = false, advancedContent, timeZone }: TaskEditorProps) {
   const [customReminder, setCustomReminder] = useState("10");
   const [advancedOpen, setAdvancedOpen] = useState(
-    value.steps.length > 0 || value.order !== null || value.reminders.length > 0 || value.completionMessage !== "",
+    value.steps.length > 0 || value.order !== null || value.reminders.length > 0 || value.customReminder != null || value.completionMessage !== "",
   );
   const patch = (next: Partial<EditableTask>) => {
     const merged = { ...value, ...next };
+    if ("recurrence" in next && Boolean(next.recurrence) !== Boolean(value.recurrence)) merged.customReminder = null;
     const normalized = normalizeEditableSteps(merged.taskId, merged.name, merged.steps, merged.execution);
     merged.steps = normalized.steps;
     merged.execution = normalized.execution;
@@ -93,8 +104,9 @@ export function TaskEditor({ value, groups, onChange, allowKindChange = false, a
     </div></section>}
 
     <section className="form-section"><h3>完成方式</h3><div className="form-grid">
-      {value.steps.length > 0 ? <p className="supporting span-2">已启用分步骤执行。任务级完成方式已隐藏；请在每个步骤中选择执行类型。</p> : <label className="field"><span>执行类型</span><select value={value.execution?.k ?? 0} onChange={(event) => { const kind = Number(event.target.value); patch({ name: kind === 4 && !value.name.trim() ? "今天的心情怎么样" : value.name, execution: defaultLeafExecution(kind) ?? null }); }}><option value={0}>直接完成</option><option value={1}>完成指定次数</option><option value={2}>完成指定时长</option><option value={3}>填写信息告知</option><option value={4}>心情记录</option><option value={6}>阅读通知并确认</option><option value={7}>单选积分</option></select></label>}
+      {value.steps.length > 0 ? <p className="supporting span-2">已启用分步骤执行。任务级完成方式已隐藏；请在每个步骤中选择执行类型。</p> : <label className="field"><span>执行类型</span><select value={value.execution?.k ?? 0} onChange={(event) => { const kind = Number(event.target.value); if (kind === 5) setAdvancedOpen(true); patch({ name: !value.name.trim() ? (kind === 4 ? "今天的心情怎么样" : kind === 8 ? "体温询问" : value.name) : value.name, execution: kind === 5 ? { k: 5 } : defaultLeafExecution(kind) ?? null, steps: kind === 5 ? [{ i: createTransportId(), n: "", r: 1 }] : value.steps }); }}><ExecutionOptions includeSteps /></select></label>}
       <ChoiceNoticeEditor execution={value.execution} onChange={(execution) => patch({ execution })} />
+      {value.execution?.k === 8 && <p className="supporting span-2">执行者主动滑动选择 35.0–42.0℃ 的体温，精度 0.1℃，再确认完成。请使用支持体温询问的 Android 版本。</p>}
       {value.execution?.k === 4 && <p className="supporting span-2">执行者通过五档滑动条选择心情，可选填感受后主动完成。心情好坏不影响积分。需要更新到支持心情记录的 Android 版本。</p>}
       {value.execution?.k === 1 && <><label className="field"><span>计数方式</span><select value={value.execution.a} onChange={(event) => patch({ execution: { ...value.execution as Extract<NonNullable<TaskFields["execution"]>, { k: 1 }>, a: Number(event.target.value) as 1 | 2 } })}><option value={1}>拖动计数条</option><option value={2}>点击计数</option></select></label><label className="field"><span>目标次数</span><input type="number" min={1} max={999} value={value.execution.v} onChange={(event) => patch({ execution: { ...value.execution as Extract<NonNullable<TaskFields["execution"]>, { k: 1 }>, v: Number(event.target.value) } })} /></label></>}
       {value.execution?.k === 2 && <label className="field"><span>目标秒数</span><input type="number" min={1} max={3600} value={value.execution.v} onChange={(event) => patch({ execution: { k: 2, v: Number(event.target.value) } })} /></label>}
@@ -111,6 +123,11 @@ export function TaskEditor({ value, groups, onChange, allowKindChange = false, a
         <div className="form-grid advanced-fields">
           <label className="field"><span>人工排序（可留空）</span><input type="number" value={value.order ?? ""} onChange={(event) => patch({ order: event.target.value === "" ? null : Number(event.target.value) })} /></label>
           <label className="field span-2"><span>完成提示</span><textarea value={value.completionMessage} maxLength={500} rows={2} onChange={(event) => patch({ completionMessage: event.target.value })} placeholder="留空使用系统默认提示" /></label>
+          <div className="field span-2">
+            <label className="small-check"><input type="checkbox" checked={value.customReminder != null} onChange={(event) => patch({ customReminder: event.target.checked ? "" : null })} />自定义提醒时间</label>
+            {value.customReminder != null && <label className="field"><span>{recurring ? "任务日内提醒时刻" : "提醒日期时间"}</span><input type={recurring ? "time" : "datetime-local"} value={value.customReminder} onChange={(event) => patch({ customReminder: event.target.value })} /></label>}
+            <small>{recurring ? "00:00～03:59 对应任务日的次日凌晨。" : "可与截止前提醒同时使用，无截止时间也可设置。"} 有截止时间时不能晚于截止；设备按本地时区尽力通知，错过不补发。</small>
+          </div>
           {!recurring && <div className="field span-2"><span>提前提醒（分钟，最多 5 个）</span><div className="chip-row">{value.reminders.map((minutes) => <button className="chip selected" key={minutes} onClick={() => patch({ reminders: value.reminders.filter((item) => item !== minutes) })}>{minutes === 0 ? "截止时" : `${minutes} 分钟前`} ×</button>)}</div>
             <div className="inline-controls"><input type="number" min={0} max={10080} value={customReminder} onChange={(event) => setCustomReminder(event.target.value)} /><button className="button tonal" type="button" disabled={value.reminders.length >= 5 || !["date", "datetime"].includes(value.deadlineMode)} onClick={() => { const minutes = Number(customReminder); if (Number.isInteger(minutes) && minutes >= 0 && minutes <= 10080 && !value.reminders.includes(minutes)) patch({ reminders: [...value.reminders, minutes].sort((a, b) => b - a) }); }}>添加提醒</button></div>
             {!["date", "datetime"].includes(value.deadlineMode) && <small>设置明确截止时间后才能添加提醒。</small>}

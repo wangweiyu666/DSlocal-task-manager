@@ -1,3 +1,5 @@
+import { ExecutionOptions } from "./ExecutionOptions";
+import { validateExceptionReminder } from "../../../shared/protocol/reminders";
 import { ChoiceNoticeEditor, defaultLeafExecution } from "./ChoiceNoticeEditor";
 import { validateConditionalSteps, validateExecutionConfiguration } from "../../../shared/protocol/execution";
 import { useMemo, useState } from "react";
@@ -6,7 +8,7 @@ import type { Dst11Exception, Dst1Execution, Dst1Step } from "../protocol/types"
 import { StepListEditor } from "./StepListEditor";
 import { normalizeEditableSteps } from "../model/steps";
 
-type OverrideKey = "n" | "r" | "d" | "l" | "p" | "o" | "s" | "m" | "h" | "u";
+type OverrideKey = "n" | "r" | "d" | "l" | "p" | "o" | "s" | "m" | "h" | "u" | "a";
 
 interface ExceptionEditorProps {
   task: TaskRecord;
@@ -17,12 +19,13 @@ interface ExceptionEditorProps {
 
 const labels: Record<OverrideKey, string> = {
   n: "名称", r: "必做/选做", d: "描述", l: "截止时间", p: "积分", o: "人工排序",
-  s: "步骤", m: "完成提示", h: "提醒", u: "执行方式"
+  s: "步骤", m: "完成提示", h: "提前提醒", a: "自定义提醒", u: "执行方式"
 };
 
 export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEditorProps) {
   const initialKeys = useMemo(() => new Set<OverrideKey>(Object.keys(initial ?? {}).filter((key): key is OverrideKey => key in labels)), [initial]);
   const [date, setDate] = useState(initial?.y ?? "");
+  const [customReminder, setCustomReminder] = useState(initial?.a ?? "");
   const [cancelled, setCancelled] = useState(initial?.c === 1);
   const [selected, setSelected] = useState(initialKeys);
   const [name, setName] = useState(initial?.n ?? task.name);
@@ -83,7 +86,7 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       if (executionKind === 1) execution = { k: 1, a: executionAction, v: executionTarget };
       else if (executionKind === 2) execution = { k: 2, v: executionTarget };
       else if (executionKind === 3) execution = { k: 3 };
-      else if (executionKind === 4) execution = { k: 4 };
+      else if (executionKind === 4 || executionKind === 8) execution = { k: executionKind };
       else if (executionKind === 5) execution = { k: 5 };
       else if (executionKind === 6 || executionKind === 7) execution = specialExecution;
       if (selected.has("s") && steps.length > 0) {
@@ -99,6 +102,9 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       if (executionKind !== 5 && task.steps.length > 0 && !selected.has("s")) value.s = [];
     }
     try { validateExecutionConfiguration(value.u === undefined ? task.execution : value.u); validateConditionalSteps(value.s ?? task.steps); } catch (error) { setError(error instanceof Error ? error.message : "执行配置无效"); return; }
+    if (selected.has("a") && !cancelled) value.a = customReminder || null;
+    try { validateExceptionReminder(value, { i: task.id, n: task.name, r: task.required ? 1 : 0, x: task.recurrence ?? undefined, a: task.customReminder || undefined }); }
+    catch (error) { setError(error instanceof Error ? error.message : "提醒无效"); return; }
     onSave(value);
   };
 
@@ -118,8 +124,9 @@ export function ExceptionEditor({ task, initial, onSave, onCancel }: ExceptionEd
       {selected.has("o") && <div className="form-grid"><label className="field"><span>排序方式</span><select value={orderMode} onChange={(event) => setOrderMode(event.target.value as "value" | "default")}><option value="value">指定排序</option><option value="default">默认排序</option></select></label>{orderMode === "value" && <label className="field"><span>排序值</span><input type="number" value={order} onChange={(event) => setOrder(Number(event.target.value))} /></label>}</div>}
       {selected.has("s") && <div className="field"><span>当天步骤</span><StepListEditor steps={steps} taskId={task.id} onChange={setSteps} /></div>}
       {selected.has("m") && <div className="form-grid"><label className="field"><span>完成提示方式</span><select value={messageMode} onChange={(event) => setMessageMode(event.target.value as "value" | "default")}><option value="value">指定提示</option><option value="default">系统默认</option></select></label>{messageMode === "value" && <label className="field"><span>完成提示</span><input maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} /></label>}</div>}
+      {selected.has("a") && <label className="field"><span>当天自定义提醒（留空清除）</span><input type="datetime-local" value={customReminder} onChange={(event) => setCustomReminder(event.target.value)} /></label>}
       {selected.has("h") && <label className="field"><span>提醒分钟数（逗号分隔，留空清除）</span><input value={remindersText} onChange={(event) => setRemindersText(event.target.value)} /></label>}
-      {selected.has("u") && !(selected.has("s") && steps.length > 0) && <div className="form-grid"><label className="field"><span>执行方式</span><select value={executionKind} onChange={(event) => { const kind = Number(event.target.value); setExecutionKind(kind); setSpecialExecution(defaultLeafExecution(kind) ?? null); }}><option value={0}>普通完成</option><option value={1}>计数</option><option value={2}>计时</option><option value={3}>信息告知</option><option value={4}>心情记录</option><option value={5}>分步骤</option><option value={6}>通知确认</option><option value={7}>单选积分</option></select></label>{executionKind === 1 && <label className="field"><span>计数方式</span><select value={executionAction} onChange={(event) => setExecutionAction(Number(event.target.value) as 1 | 2)}><option value={1}>拖动</option><option value={2}>点击</option></select></label>}{(executionKind === 1 || executionKind === 2) && <label className="field"><span>目标值</span><input type="number" value={executionTarget} onChange={(event) => setExecutionTarget(Number(event.target.value))} /></label>}</div>}
+      {selected.has("u") && !(selected.has("s") && steps.length > 0) && <div className="form-grid"><label className="field"><span>执行方式</span><select value={executionKind} onChange={(event) => { const kind = Number(event.target.value); setExecutionKind(kind); setSpecialExecution(defaultLeafExecution(kind) ?? null); }}><ExecutionOptions includeSteps /></select></label>{executionKind === 1 && <label className="field"><span>计数方式</span><select value={executionAction} onChange={(event) => setExecutionAction(Number(event.target.value) as 1 | 2)}><option value={1}>拖动</option><option value={2}>点击</option></select></label>}{(executionKind === 1 || executionKind === 2) && <label className="field"><span>目标值</span><input type="number" value={executionTarget} onChange={(event) => setExecutionTarget(Number(event.target.value))} /></label>}</div>}
     </>}
     {selected.has("u") && (executionKind === 6 || executionKind === 7) && !(selected.has("s") && steps.length > 0) && <ChoiceNoticeEditor execution={specialExecution} onChange={setSpecialExecution} />}
     {selected.has("u") && executionKind === 4 && !cancelled && <p className="supporting">需要更新到支持心情记录的 Android 版本。</p>}

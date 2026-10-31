@@ -182,7 +182,7 @@
           "additionalProperties": false,
           "required": ["k"],
           "properties": {
-            "k": { "enum": [3, 4] }
+            "k": { "enum": [3, 4, 8] }
           }
         },
         {
@@ -244,7 +244,8 @@
         "x": { "$ref": "#/$defs/recurrence" },
         "m": { "$ref": "#/$defs/text500Empty" },
         "h": { "$ref": "#/$defs/reminders" },
-        "u": { "$ref": "#/$defs/execution" }
+        "u": { "$ref": "#/$defs/execution" },
+        "a": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "$ref": "#/$defs/time" }] }
       },
       "allOf": [
         {
@@ -299,7 +300,8 @@
             { "$ref": "#/$defs/execution" },
             { "type": "null" }
           ]
-        }
+        },
+        "a": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] }
       },
       "allOf": [
         {
@@ -310,7 +312,7 @@
                 { "required": ["n"] }, { "required": ["r"] }, { "required": ["d"] },
                 { "required": ["l"] }, { "required": ["p"] }, { "required": ["o"] },
                 { "required": ["s"] }, { "required": ["m"] }, { "required": ["h"] },
-                { "required": ["u"] }
+                { "required": ["u"] }, { "required": ["a"] }
               ]
             }
           }

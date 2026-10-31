@@ -136,6 +136,31 @@ input:focus, textarea:focus, select:focus, button:focus-visible, a:focus-visible
 .connected-modal-actions { position: sticky; bottom: 0; margin: 0; padding: 14px 22px; border-top: 1px solid var(--outline-soft); background: color-mix(in srgb, var(--surface-1) 94%, transparent); backdrop-filter: blur(15px); }
 .spin { animation: connected-spin .9s linear infinite; } @keyframes connected-spin { to { transform: rotate(360deg); } }
 @media (max-width: 820px) {
-  .connected-shell { display: block; padding-bottom: 70px; }.connected-rail { position: fixed; z-index: 40; top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: 70px; display: block; padding: 5px; border: 0; border-top: 1px solid var(--outline-soft); }.connected-rail > div, .connected-rail > .button { display: none; }.connected-rail nav { display: grid; grid-template-columns: repeat(4, 1fr); }.connected-rail nav button { justify-content: center; flex-direction: column; gap: 2px; min-width: 0; padding: 5px 2px; border-radius: 14px; font-size: .6rem; }.connected-rail nav button svg { width: 19px; }
+  .connected-shell { display: block; padding-bottom: 70px; }.connected-rail { position: fixed; z-index: 40; top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: 70px; display: block; padding: 5px; border: 0; border-top: 1px solid var(--outline-soft); }.connected-rail > div, .connected-rail > .button { display: none; }.connected-rail nav { display: grid; grid-template-columns: repeat(5, 1fr); }.connected-rail nav button { justify-content: center; flex-direction: column; gap: 2px; min-width: 0; padding: 5px 2px; border-radius: 14px; font-size: .6rem; }.connected-rail nav button svg { width: 19px; }
   .connected-topbar { padding: 8px 14px; }.connected-page { padding: 25px 15px 45px; }.connected-banner, .connected-conflicts, .connected-conflict-list { margin-inline: 15px; }.connected-conflict-list .connected-conflicts { margin-inline: 0; }.connected-grid { grid-template-columns: 1fr; }
+}
+
+.temperature-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 24px 0; }
+.temperature-summary > div { padding: 16px; border: 1px solid var(--outline-variant, #8886); border-radius: 16px; }
+.temperature-summary dt { font-size: .85rem; opacity: .75; }
+.temperature-summary dd { margin: 8px 0 0; font-size: 1.5rem; font-weight: 650; }
+.temperature-chart { padding: 16px; border: 1px solid var(--outline-variant, #8886); border-radius: 20px; }
+.temperature-chart svg { display: block; width: 100%; height: auto; min-height: 210px; }
+.temperature-chart circle { cursor: pointer; stroke: var(--surface, white); stroke-width: 2; }
+.temperature-chart circle:focus { outline: none; stroke: currentColor; stroke-width: 4; }
+.temperature-tooltip { min-height: 1.5em; overflow-wrap: anywhere; }
+.temperature-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: .9rem; }
+.temperature-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.temperature-legend i { width: 10px; height: 10px; border-radius: 50%; }
+.temperature-table { margin-top: 24px; overflow-x: auto; }
+.temperature-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.temperature-table caption { text-align: left; padding: 12px 0; font-weight: 600; }
+.temperature-table th, .temperature-table td { padding: 12px; border-bottom: 1px solid #8884; }
+.temperature-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); align-items: end; }
+.temperature-filters select { width: 100%; }
+@media (max-width: 600px) {
+  .temperature-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .temperature-filters > .field { min-width: 0; }
+  .temperature-chart { padding: 8px; }
+  .temperature-summary dd { font-size: 1.3rem; }
 }

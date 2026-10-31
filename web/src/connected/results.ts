@@ -1,3 +1,4 @@
+import { formatTemperature, isTemperatureTenthsC } from "../../../shared/protocol/temperature";
 import { unpackCloudTask } from "./library";
 import type { CloudEntity } from "./types";
 
@@ -9,6 +10,7 @@ export interface ExecutionResultPresentation {
   occurredAt: string;
   taskRevision: number | null;
   informationContent: string | null;
+  temperatureTenthsC: number | null;
   moodRating: number | null;
   moodText: string | null;
   moodLabel: string | null;
@@ -44,6 +46,7 @@ function stepAnswer(row: Record<string, unknown>, execution: Record<string, unkn
   if (kind === 1 && Number.isFinite(row.counterValue)) return `完成 ${Number(row.counterValue)} / ${Number(execution.v)} 次`;
   if (kind === 2 && Number.isFinite(row.elapsedMillis)) return `用时 ${(Number(row.elapsedMillis) / 1000).toFixed(1)} / ${Number(execution.v)} 秒`;
   if (kind === 3) return nonEmptyString(row.informationContent) ?? "已填写";
+  if (kind === 8 && isTemperatureTenthsC(row.temperatureTenthsC)) return formatTemperature(row.temperatureTenthsC);
   if (kind === 4 && Number.isInteger(row.moodRating) && Number(row.moodRating) >= 1 && Number(row.moodRating) <= 5) return `${["很差", "较差", "一般", "不错", "很好"][Number(row.moodRating) - 1]}${nonEmptyString(row.moodText) ? ` · ${row.moodText}` : ""}`;
   if (kind === 6) return `已知晓 · ${String(execution.t ?? "")}`;
   if (kind === 7) return `${String(row.selectedOptionName ?? "已选择")} · +${Number(row.optionPoints ?? 0)} 分`;
@@ -121,7 +124,7 @@ export function presentExecutionResult(
     ? entities.filter((item) => item.entityType === "information_submission" && item.payload.occurrenceKey === occurrenceKey && item.payload.assignmentId === assignmentId)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
     : undefined;
-  const informationContent = eventType === "COMPLETION_UNDONE" || ["MOOD", "NOTICE", "CHOICE"].includes(String(data.executionKind))
+  const informationContent = eventType === "COMPLETION_UNDONE" || ["MOOD", "NOTICE", "CHOICE", "TEMPERATURE"].includes(String(data.executionKind))
     ? null
     : data.executionKind === "STEPS" ? null : nonEmptyString(data.informationContent) ?? nonEmptyString(separateSubmission?.payload.content);
   const stepResults: StepResultPresentation[] = eventType !== "COMPLETION_UNDONE" && data.executionKind === "STEPS" && status === "COMPLETED" && Array.isArray(data.stepResults)
@@ -145,6 +148,7 @@ export function presentExecutionResult(
     occurredAt: dateTimeLabel(result.payload.occurredAt, timeZone),
     taskRevision: Number.isInteger(result.payload.taskRevision) ? Number(result.payload.taskRevision) : null,
     informationContent,
+    temperatureTenthsC: eventType !== "COMPLETION_UNDONE" && status === "COMPLETED" && data.executionKind === "TEMPERATURE" && isTemperatureTenthsC(data.temperatureTenthsC) ? data.temperatureTenthsC : null,
     moodRating,
     moodText: moodRating !== null && typeof data.moodText === "string" ? data.moodText : null,
     moodLabel: moodRating === null ? null : ["很差", "较差", "一般", "不错", "很好"][moodRating - 1],

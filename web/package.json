@@ -15,7 +15,7 @@
     "verify:boundaries": "node scripts/verify-build-boundaries.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:minimum": "vitest run tests/choice-editor.test.tsx tests/conditional-choice.test.ts",
+    "test:minimum": "vitest run tests/choice-editor.test.tsx tests/conditional-choice.test.ts tests/custom-reminder.test.tsx tests/temperature.test.tsx",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:connected-smoke": "playwright test --config=playwright.connected.config.ts",

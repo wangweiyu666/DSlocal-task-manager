@@ -15,6 +15,7 @@ export function draftTaskToDst1(task: DraftTask): Dst1Task {
     if (task.deadlineMode === "date" || task.deadlineMode === "datetime") result.l = task.deadline;
     else if (task.deadlineMode === "none") result.l = null;
   }
+  if (task.customReminder) result.a = task.customReminder;
   if (task.points !== 0) result.p = task.points;
   if (task.order !== null) result.o = task.order;
   if (task.steps.length) result.s = task.steps.map((step) => ({ i: step.i, n: step.n.trim().normalize("NFC"), r: step.r, ...(step.u ? { u: step.u } : {}), ...(step.c ? { c: { ...step.c } } : {}) }));

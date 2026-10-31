@@ -14,6 +14,7 @@ function cloudEntity(spaceId: string, value: Record<string, unknown>): CloudEnti
     entityType,
     entityId,
     entityVersion: Number(value.entityVersion ?? 0),
+    changeSequence: typeof value.changeSequence === "number" ? value.changeSequence : typeof value.sequence === "number" ? value.sequence : undefined,
     payloadVersion: Number(value.payloadVersion ?? 1),
     payload: value.payload as Record<string, unknown>,
     updatedAt: String(value.updatedAt ?? new Date().toISOString()),

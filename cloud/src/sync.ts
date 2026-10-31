@@ -1,3 +1,4 @@
+import { isTemperatureTenthsC } from "../../shared/protocol/temperature";
 import { evaluateBranches, validateConditionalSteps } from "../../shared/protocol/execution";
 import type { Dst1Step } from "../../shared/protocol/types";
 import { authenticate, requireAccountReady } from "./auth";
@@ -100,11 +101,11 @@ function normalizedStepsData(data: Record<string, unknown>, definition: Effectiv
   const answers = new Map<string, { status: string; selectedOptionId?: string }>();
   const normalized = definition.steps.map((step, index) => {
     const raw = object(submitted[index], `stepResults[${index}]`);
-    const allowed = ["stepId", "status", "counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText", "selectedOptionId"];
+    const allowed = ["stepId", "status", "counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText", "selectedOptionId", "temperatureTenthsC"];
     if (Object.keys(raw).some((key) => !allowed.includes(key))) throw new ApiError(400, "INVALID_REQUEST", "步骤结果包含未知字段");
     if (raw.stepId !== step.i || (raw.status !== "CONFIRMED" && raw.status !== "SKIPPED" && raw.status !== "NOT_APPLICABLE")) throw new ApiError(400, "INVALID_REQUEST", "步骤结果 ID、状态或顺序无效");
     const result: Record<string, unknown> = { stepId: step.i, status: raw.status, name: step.n, required: step.r === 1, execution: step.u ?? null };
-    const answerKeys = ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText", "selectedOptionId"];
+    const answerKeys = ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText", "selectedOptionId", "temperatureTenthsC"];
     const suppliedAnswers = answerKeys.filter((key) => raw[key] !== undefined);
     const branch = evaluateBranches(definition.steps as Dst1Step[], answers)[index];
     if (branch === "WAITING") throw new ApiError(400, "INVALID_REQUEST", "条件步骤的前置选择尚未确认");
@@ -131,6 +132,9 @@ function normalizedStepsData(data: Record<string, unknown>, definition: Effectiv
     } else if (leaf.k === 3) {
       if (suppliedAnswers.length !== 1 || typeof raw.informationContent !== "string" || raw.informationContent.trim().length === 0 || Array.from(raw.informationContent).length > 2000) throw new ApiError(400, "INVALID_REQUEST", "信息步骤答案无效");
       result.informationContent = raw.informationContent;
+    } else if (leaf.k === 8) {
+      if (suppliedAnswers.length !== 1 || !isTemperatureTenthsC(raw.temperatureTenthsC)) throw new ApiError(400, "INVALID_REQUEST", "体温步骤须填写 35.0–42.0℃");
+      result.temperatureTenthsC = raw.temperatureTenthsC;
     } else if (leaf.k === 4) {
       if (suppliedAnswers.length !== 2 || !Number.isInteger(raw.moodRating) || Number(raw.moodRating) < 1 || Number(raw.moodRating) > 5 || typeof raw.moodText !== "string" || Array.from(raw.moodText).length > 2000) throw new ApiError(400, "INVALID_REQUEST", "心情步骤答案无效");
       result.moodRating = raw.moodRating; result.moodText = raw.moodText;
@@ -411,8 +415,9 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
   const undo = eventType === "COMPLETION_UNDONE";
   const eventData = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data as Record<string, unknown> : {};
   let storedData: Record<string, unknown> | null = payload.data === undefined ? null : eventData;
+  const hasTemperature = "temperatureTenthsC" in eventData;
   const hasMood = "moodRating" in eventData || "moodText" in eventData;
-  if (!undo && (terminal || hasMood || eventData.executionKind === "NOTICE" || eventData.executionKind === "CHOICE" || "selectedOptionId" in eventData || eventData.executionKind === "MOOD" || eventData.executionKind === "STEPS" || "stepResults" in eventData)) {
+  if (!undo && (terminal || hasTemperature || eventData.executionKind === "TEMPERATURE" || hasMood || eventData.executionKind === "NOTICE" || eventData.executionKind === "CHOICE" || "selectedOptionId" in eventData || eventData.executionKind === "MOOD" || eventData.executionKind === "STEPS" || "stepResults" in eventData)) {
     const revision = await env.DB.prepare("SELECT r.content_json,o.local_date FROM task_revisions r JOIN task_occurrences o ON o.task_id=r.task_id AND o.space_id=r.space_id WHERE o.space_id=? AND o.assignment_id=? AND o.occurrence_key=? AND r.revision=?")
       .bind(spaceId, assignmentId, storedOccurrenceKey, taskRevision).first<{ content_json: string; local_date: string }>();
     if (!revision) throw new ApiError(400, "INVALID_REQUEST", "任务版本不存在");
@@ -422,7 +427,7 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
     if (execution && Number(execution.k) === 5) {
       if (!terminal) throw new ApiError(400, "INVALID_REQUEST", "STEPS 只能随整项完成提交");
       if (eventData.status === "MISSED") {
-        if (eventData.stepResults !== undefined || ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText"].some((key) => key in eventData) || eventData.executionKind !== "STEPS") {
+        if (eventData.stepResults !== undefined || ["counterValue", "elapsedMillis", "informationContent", "moodRating", "moodText", "temperatureTenthsC"].some((key) => key in eventData) || eventData.executionKind !== "STEPS") {
           throw new ApiError(400, "INVALID_REQUEST", "MISSED 结果不能携带步骤答案");
         }
         if (typeof eventData.localOccurrenceKey !== "string" || eventData.localOccurrenceKey.length > 160) throw new ApiError(400, "INVALID_REQUEST", "localOccurrenceKey 无效");
@@ -456,6 +461,19 @@ async function executeEvent(env: CommandEnv, request: Request, principal: Sessio
     } else if (eventData.executionKind === "NOTICE" || eventData.executionKind === "CHOICE" || eventData.selectedOptionId !== undefined) {
       throw new ApiError(400, "INVALID_REQUEST", "选项或通知类型与任务版本不一致");
     }
+    const isTemperature = execution?.k === 8;
+    if (isTemperature) {
+      strictObject(eventData, ["status", "localOccurrenceKey", "taskName", "taskDate", "executionKind", "temperatureTenthsC", "completedAt"], "data");
+      if (!terminal || eventData.executionKind !== "TEMPERATURE" || !["COMPLETED", "MISSED"].includes(String(eventData.status))) throw new ApiError(400, "INVALID_REQUEST", "体温结果类型或状态无效");
+      if (typeof eventData.localOccurrenceKey !== "string" || eventData.localOccurrenceKey.length > 160) throw new ApiError(400, "INVALID_REQUEST", "localOccurrenceKey 无效");
+      if (eventData.status === "COMPLETED" ? !isTemperatureTenthsC(eventData.temperatureTenthsC) : hasTemperature) throw new ApiError(400, "INVALID_REQUEST", "体温必须为 350～420 的整数，未完成不能携带答案");
+      storedData = { status: eventData.status, executionKind: "TEMPERATURE", localOccurrenceKey: eventData.localOccurrenceKey, taskName: definition.name, taskDate: revision.local_date };
+      if (eventData.status === "COMPLETED") {
+        storedData.temperatureTenthsC = eventData.temperatureTenthsC;
+        storedData.basePoints = definition.points;
+        storedData.awardedPoints = definition.points;
+      }
+    } else if (hasTemperature || eventData.executionKind === "TEMPERATURE") throw new ApiError(400, "INVALID_REQUEST", "体温答案与任务版本不一致");
     const isMood = execution !== null && typeof execution === "object" && (execution as Record<string, unknown>).k === 4;
     if (isMood && terminal && !["COMPLETED", "MISSED"].includes(String(eventData.status))) throw new ApiError(400, "INVALID_REQUEST", "心情结果状态无效");
     if (hasMood && (!isMood || !terminal || eventData.status !== "COMPLETED")) throw new ApiError(400, "INVALID_REQUEST", "只有已完成的心情任务可以提交心情答案");
@@ -646,12 +664,12 @@ export async function snapshot(env: Env, request: Request, spaceId: string): Pro
   const member = await membership(env, principal, spaceId);
   const url = new URL(request.url); const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 100), 1), 500); const raw = url.searchParams.get("cursor");
   const base = raw ? await decodeCursor(env, raw, "snapshot", spaceId) : { kind: "snapshot" as const, v: 1 as const, spaceId, baseSequence: await currentSequence(env, spaceId), entityType: "", entityId: "" };
-  const rows = await env.DB.prepare("SELECT entity_type,entity_id,entity_version,payload_version,payload_json,updated_at FROM space_entities WHERE space_id=? AND change_sequence<=? AND (entity_type NOT IN ('notification','notification_read') OR (entity_type='notification' AND json_extract(payload_json,'$.recipientMembershipId')=?) OR (entity_type='notification_read' AND json_extract(payload_json,'$.membershipId')=?)) AND (?='ADMIN' OR entity_type NOT IN ('task','assignment','occurrence','execution_event','information_submission','result_selection') OR (entity_type='task' AND entity_id IN (SELECT task_id FROM assignments WHERE space_id=? AND executor_membership_id=?)) OR json_extract(payload_json,'$.executorMembershipId')=? OR json_extract(payload_json,'$.assignmentId') IN (SELECT id FROM assignments WHERE space_id=? AND executor_membership_id=?)) AND (entity_type>? OR (entity_type=? AND entity_id>?)) ORDER BY entity_type,entity_id LIMIT ?")
+  const rows = await env.DB.prepare("SELECT entity_type,entity_id,entity_version,payload_version,payload_json,updated_at,change_sequence FROM space_entities WHERE space_id=? AND change_sequence<=? AND (entity_type NOT IN ('notification','notification_read') OR (entity_type='notification' AND json_extract(payload_json,'$.recipientMembershipId')=?) OR (entity_type='notification_read' AND json_extract(payload_json,'$.membershipId')=?)) AND (?='ADMIN' OR entity_type NOT IN ('task','assignment','occurrence','execution_event','information_submission','result_selection') OR (entity_type='task' AND entity_id IN (SELECT task_id FROM assignments WHERE space_id=? AND executor_membership_id=?)) OR json_extract(payload_json,'$.executorMembershipId')=? OR json_extract(payload_json,'$.assignmentId') IN (SELECT id FROM assignments WHERE space_id=? AND executor_membership_id=?)) AND (entity_type>? OR (entity_type=? AND entity_id>?)) ORDER BY entity_type,entity_id LIMIT ?")
     .bind(spaceId, base.baseSequence, member.id, member.id, member.role, spaceId, member.id, member.id, spaceId, member.id, base.entityType, base.entityType, base.entityId, limit + 1).all<Record<string, unknown>>();
   const page = rows.results.slice(0, limit); const last = page.at(-1);
   const next = await encodeCursor(env, { kind: "snapshot", v: 1, spaceId, baseSequence: base.baseSequence, entityType: last ? String(last.entity_type) : base.entityType, entityId: last ? String(last.entity_id) : base.entityId });
   const changeCursor = await encodeCursor(env, { kind: "changes", v: 1, spaceId, sequence: base.baseSequence });
-  return json(env, request, { entities: page.map((row) => ({ entityType: row.entity_type, entityId: row.entity_id, entityVersion: row.entity_version, payloadVersion: row.payload_version, payload: parseJson(String(row.payload_json)), updatedAt: row.updated_at })), nextCursor: next, hasMore: rows.results.length > limit, changesCursor: changeCursor });
+  return json(env, request, { entities: page.map((row) => ({ entityType: row.entity_type, entityId: row.entity_id, entityVersion: row.entity_version, payloadVersion: row.payload_version, payload: parseJson(String(row.payload_json)), updatedAt: row.updated_at, changeSequence: row.change_sequence })), nextCursor: next, hasMore: rows.results.length > limit, changesCursor: changeCursor });
 }
 
 export async function unreadNotifications(env: Env, request: Request, spaceId: string): Promise<Response> {

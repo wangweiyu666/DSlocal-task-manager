@@ -17,6 +17,7 @@ export type Dst1LeafExecution =
   | { k: 2; v: number }
   | { k: 3 }
   | { k: 4 }
+  | { k: 8 }
   | { k: 6; t: string }
   | { k: 7; o: Dst1ChoiceOption[] };
 
@@ -44,6 +45,7 @@ export interface Dst1Task {
   x?: Dst1Recurrence;
   m?: string;
   h?: number[];
+  a?: string;
   u?: Dst1Execution;
 }
 
@@ -60,6 +62,7 @@ export interface Dst11Exception {
   s?: Dst1Step[];
   m?: string | null;
   h?: number[];
+  a?: string | null;
   u?: Dst1Execution | null;
 }
 
