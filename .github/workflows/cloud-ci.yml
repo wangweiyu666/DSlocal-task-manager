@@ -3,10 +3,10 @@ name: Cloud Connected
 on:
   push:
     branches: [main]
-    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", "scripts/ci/verification-reuse*", "scripts/ci/*web-artifact.mjs", ".github/workflows/cloud-ci.yml", ".github/workflows/dom-web-pages.yml"]
+    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", "scripts/ci/verification-reuse*", "scripts/ci/capture-production-recovery*", "scripts/ci/*web-artifact.mjs", ".github/workflows/cloud-ci.yml", ".github/workflows/dom-web-pages.yml"]
   pull_request:
     branches: [main]
-    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", "scripts/ci/verification-reuse*", "scripts/ci/*web-artifact.mjs", ".github/workflows/cloud-ci.yml", ".github/workflows/dom-web-pages.yml"]
+    paths: ["cloud/**", "cloud-web/**", "cloud-protocol-test-vectors/**", "web/**", "shared/**", "docs/dst1-schema.json", "protocol-test-vectors/**", "scripts/ci/verification-reuse*", "scripts/ci/capture-production-recovery*", "scripts/ci/*web-artifact.mjs", ".github/workflows/cloud-ci.yml", ".github/workflows/dom-web-pages.yml"]
   workflow_dispatch:
     inputs:
       target:
@@ -21,6 +21,10 @@ on:
         required: false
       release_commit:
         description: Full commit SHA approved by verification evidence for production
+        type: string
+        required: false
+      recovery_public_key:
+        description: Base64 DER RSA public key for encrypted recovery evidence (private key stays local)
         type: string
         required: false
       full_regression:
@@ -74,6 +78,8 @@ jobs:
             cloud/package-lock.json
             cloud-web/package-lock.json
             web/package-lock.json
+      - name: Verify encrypted recovery evidence handling
+        run: node --test scripts/ci/capture-production-recovery.test.mjs
       - run: npm ci
         working-directory: cloud
       - name: Verify production environment configuration
@@ -212,6 +218,18 @@ jobs:
         run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$RELEASE_SHA"
         env:
           RELEASE_SHA: ${{ github.sha }}
+      - name: Capture encrypted production recovery evidence
+        run: node scripts/ci/capture-production-recovery.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RECOVERY_PUBLIC_KEY: ${{ inputs.recovery_public_key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/production-recovery.enc.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Apply production migrations by database name
         run: npx wrangler d1 migrations apply dstationery-production --remote --env production
         working-directory: cloud

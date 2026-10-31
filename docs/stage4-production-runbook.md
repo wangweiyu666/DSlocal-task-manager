@@ -19,11 +19,11 @@
 
 1. 按 [AGENTS.md](../AGENTS.md) 执行。检查工作区、分支、远程和已有发布，只提交相关文件并添加 DCO sign-off；正常推送，不强制覆盖。固定完整 SHA，已有提交和运行不重复创建。
 2. 仅执行 [最小测试方案](minimal-testing.md) 的活动集合；最终验证由同 SHA 的适用 CI 执行一次，不再本地全套后 CI 重跑。Web/CSS 改动不等待 Android CI。Cloud Connected 统一验证并生成 Web 产物，Dom Web Pages 复用；旧回归仅在正式截图或手动验收出问题后诊断。
-3. 沿用当次明确的 production 发布授权，不重复询问；push-only 或模型偏好不授权生产变更/未来发布。部署前私下记录两个生产 D1 的 Time Travel bookmark、两个 Worker 当前版本和必要路由配置。
+3. 沿用当次明确的 production 发布授权，不重复询问；push-only 或模型偏好不授权生产变更/未来发布。部署前私下记录两个生产 D1 的 Time Travel bookmark、两个 Worker 当前版本和必要路由配置。生产 CI 会在迁移前读取这些信息并用本机持有的 RSA 公钥加密，只上传密文 artifact，保留 14 天。先在本机生成至少 3072 位 RSA 密钥对，将私钥保存在 Git 忽略的 `release-output/` 私有目录；将 DER/SPKI 公钥 Base64 作为 `recovery_public_key` 输入。私钥不进入 GitHub、命令正文或日志。下载归档后在本机验证解密并保存；归档失败会阻止生产变更。
 4. 确认 main 仍指向已验证 SHA，再执行：
 
    ```text
-   gh workflow run cloud-ci.yml --ref main -f target=production -f production_confirmation=DEPLOY_PRODUCTION -f release_commit=<完整SHA>
+   gh workflow run cloud-ci.yml --ref main -f target=production -f production_confirmation=DEPLOY_PRODUCTION -f release_commit=<完整SHA> -f recovery_public_key=<DER公钥Base64>
    ```
 
 5. gate 优先复用同 SHA 成功的 verify 和未过期 Web 构建；复用时 verify 显示 skipped，这是已验证产物复用，不是未验证部署。无可用证据时只运行一次最小 verify。若 cloud-production 待审批，读取该 run 的 pending_deployments；当前账号有权限时沿用用户当次授权批准，保留保护规则。凭据不进入命令正文、日志或 Git。
