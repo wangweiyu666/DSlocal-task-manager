@@ -31,10 +31,11 @@ class AndroidReminderScheduler(context: Context) : ReminderScheduler {
                 .authority("instance")
                 .appendPath(record.taskId)
                 .appendPath(record.occurrenceKey)
-                .appendPath(record.minutesBeforeDeadline.toString())
+                .appendPath(if (record.kind == "CUSTOM") "custom" else record.minutesBeforeDeadline.toString())
                 .build()
             putExtra(ReminderAlarmReceiver.EXTRA_TASK_ID, record.taskId)
             putExtra(ReminderAlarmReceiver.EXTRA_OCCURRENCE_KEY, record.occurrenceKey)
+            putExtra(ReminderAlarmReceiver.EXTRA_KIND, record.kind)
             putExtra(ReminderAlarmReceiver.EXTRA_MINUTES, record.minutesBeforeDeadline)
         }
         return PendingIntent.getBroadcast(

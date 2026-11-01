@@ -45,6 +45,8 @@ data class ExecutionUiState(
     val choiceSaveState: NoteSaveState = NoteSaveState.SAVED,
     val informationDraft: String = "",
     val informationSaveState: NoteSaveState = NoteSaveState.SAVED,
+    val temperatureTenthsC: Int? = null,
+    val temperatureSaveState: NoteSaveState = NoteSaveState.SAVED,
     val moodRating: Int? = null,
     val moodText: String = "",
     val moodSaveState: NoteSaveState = NoteSaveState.SAVED,
@@ -82,6 +84,9 @@ class ExecutionViewModel(
     private var informationRevision = 0L
     private var informationDebounceJob: Job? = null
     private val informationSaveMutex = Mutex()
+    private var temperatureDirty = false
+    private var temperatureRevision = 0L
+    private val temperatureSaveMutex = Mutex()
     private var moodDirty = false
     private var moodRevision = 0L
     private var moodSaveJob: Job? = null
@@ -396,6 +401,50 @@ class ExecutionViewModel(
         }
     }
 
+    fun updateTemperature(value: Int) {
+        val current = mutableState.value
+        if (value !in 350..420 || current.instance?.executionKind != "TEMPERATURE" || current.instance.status != "PENDING" || current.working || completing) return
+        temperatureDirty = true
+        temperatureRevision++
+        mutableState.value = current.copy(temperatureTenthsC = value, temperatureSaveState = NoteSaveState.SAVING, errorMessage = null)
+        updateTemperatureReadiness()
+        viewModelScope.launch { saveTemperatureNow() }
+    }
+
+    fun updateStepTemperature(stepId: String, value: Int) {
+        if (value !in 350..420 || !canEditCurrentStep(stepId)) return
+        updateStepLocal(stepId) { it.copy(temperatureTenthsC = value) }
+        enqueueStepSave(stepId) { service.saveStepTemperature(key, stepId, value) }
+    }
+
+    fun retryTemperatureSave() { viewModelScope.launch { saveTemperatureNow() } }
+
+    private fun updateTemperatureReadiness() {
+        val current = mutableState.value
+        if (current.instance?.executionKind != "TEMPERATURE") return
+        val valid = current.temperatureTenthsC in 350..420
+        mutableState.value = current.copy(executionTargetReached = valid, canComplete = current.instance.status == "PENDING" && current.requiredStepsComplete && valid)
+    }
+
+    private suspend fun saveTemperatureNow(): Boolean = temperatureSaveMutex.withLock {
+        while (temperatureDirty) {
+            val revision = temperatureRevision
+            val value = mutableState.value.temperatureTenthsC
+            try {
+                service.saveTemperatureDraft(key, value)
+                if (revision == temperatureRevision) {
+                    temperatureDirty = false
+                    mutableState.value = mutableState.value.copy(temperatureSaveState = NoteSaveState.SAVED)
+                }
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) {
+                mutableState.value = mutableState.value.copy(temperatureSaveState = NoteSaveState.ERROR, errorMessage = error.message ?: "体温保存失败，请重试")
+                return@withLock false
+            }
+        }
+        true
+    }
+
     fun updateMoodRating(rating: Int) {
         if (rating !in 1..5 || !canEditMood()) return
         mutableState.value = mutableState.value.copy(moodRating = rating)
@@ -499,6 +548,7 @@ class ExecutionViewModel(
             saveInformationNow()
             if (timer.isRunning) pauseTimer()
             stopStepTimerAndFlush()
+            saveTemperatureNow()
             if (moodDirty) saveMoodNow()
             flushStepDrafts()
         }
@@ -520,7 +570,7 @@ class ExecutionViewModel(
                         return@launch
                     }
                     timerBase = null
-                    if (!saveChoiceNow() || !saveInformationNow() || !saveMoodNow()) return@launch
+                    if (!saveChoiceNow() || !saveInformationNow() || !saveMoodNow() || !saveTemperatureNow()) return@launch
                     service.complete(key)
                     reminderReconciler?.reconcileAll()
                 }.onSuccess {
@@ -571,7 +621,7 @@ class ExecutionViewModel(
         noteSaveJob = null
         moodSaveJob?.cancel()
         viewModelScope.launch {
-            if (saveChoiceNow() && saveInformationNow() && saveMoodNow() && stopStepTimerAndFlush() && flushStepDrafts()) {
+            if (saveChoiceNow() && saveInformationNow() && saveMoodNow() && saveTemperatureNow() && stopStepTimerAndFlush() && flushStepDrafts()) {
                 if (mutableState.value.noteDraft == savedNote || saveNoteNow()) onSaved()
             }
         }
@@ -603,6 +653,8 @@ class ExecutionViewModel(
         val refreshChoiceWasDirty = choiceDirty
         val refreshInformationRevision = informationRevision
         val refreshInformationWasDirty = informationDirty
+        val refreshTemperatureRevision = temperatureRevision
+        val refreshTemperatureWasDirty = temperatureDirty
         val refreshMoodRevision = moodRevision
         val refreshMoodWasDirty = moodDirty
         runCatching {
@@ -632,6 +684,7 @@ class ExecutionViewModel(
                     (result.execution as? ExecutionState.Information)?.content
                         ?: mutableState.value.informationDraft
                 },
+                temperatureTenthsC = if (temperatureDirty || refreshTemperatureWasDirty || refreshTemperatureRevision != temperatureRevision) mutableState.value.temperatureTenthsC else (result.execution as? ExecutionState.Temperature)?.temperatureTenthsC,
                 moodRating = if (moodDirty || refreshMoodWasDirty || refreshMoodRevision != moodRevision) mutableState.value.moodRating else (result.execution as? ExecutionState.Mood)?.rating,
                 moodText = if (moodDirty || refreshMoodWasDirty || refreshMoodRevision != moodRevision) mutableState.value.moodText else (result.execution as? ExecutionState.Mood)?.text.orEmpty(),
                 noteDraft = result.note ?: mutableState.value.noteDraft,
@@ -640,6 +693,7 @@ class ExecutionViewModel(
                 errorCode = null,
                 errorMessage = null,
             )
+            updateTemperatureReadiness()
             updateMoodReadiness()
             updateInformationReadiness()
             updateChoiceAndStepReadiness()

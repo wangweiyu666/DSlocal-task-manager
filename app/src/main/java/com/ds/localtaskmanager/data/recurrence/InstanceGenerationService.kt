@@ -1,5 +1,7 @@
 package com.ds.localtaskmanager.data.recurrence
 
+import com.ds.localtaskmanager.domain.reminder.resolveCustomReminder
+import com.ds.localtaskmanager.domain.reminder.validateCustomReminder
 import androidx.room.withTransaction
 import com.ds.localtaskmanager.data.ActionLogEntity
 import com.ds.localtaskmanager.data.AppDatabase
@@ -190,6 +192,8 @@ class RoomInstanceGenerationService(
             val storedException = database.recurrenceExceptionDao().get(definition.taskId, date.toString())
             val exception = storedException?.let { exceptionParser.parseExceptionJson(it.patchJson) }
             val deadline = exception?.deadline.valueOr(deadlineFor(date, recurrence.deadline))
+            val customReminder = exception?.customReminder.valueOr(resolveCustomReminder(definition.customReminder, date))
+            if (exception?.cancelled != true) validateCustomReminder(customReminder, deadline)
             val execution = exception?.execution.valueOr(definition.toExecutionSpec()) ?: definition.toExecutionSpec()
             val reminders = exception?.reminders.valueOr(definition.reminderMinutesJson.toReminderList())
                 ?: definition.reminderMinutesJson.toReminderList()
@@ -252,6 +256,7 @@ class RoomInstanceGenerationService(
                 executionTarget = execution.targetValue(),
             executionConfigJson = execution.configJson(),
                 reminderMinutesJson = reminders.toStorageJson(),
+                customReminderAt = customReminder?.toString(),
                 publishedAtEpochMillis = now,
                 groupNameSnapshot = groupNameSnapshot,
                 singleDayAdjusted = exception != null,
@@ -335,6 +340,7 @@ class RoomInstanceGenerationService(
         )
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
+        "TEMPERATURE" -> ExecutionSpec.Temperature
         "MOOD" -> ExecutionSpec.Mood
         "NOTICE", "CHOICE" -> extendedExecution(executionKind, executionConfigJson)
         "STEPS" -> ExecutionSpec.Steps
@@ -346,6 +352,7 @@ class RoomInstanceGenerationService(
         is ExecutionSpec.Counter -> "COUNTER"
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
+        ExecutionSpec.Temperature -> "TEMPERATURE"
         ExecutionSpec.Mood -> "MOOD"
         is ExecutionSpec.Notice -> "NOTICE"
         is ExecutionSpec.Choice -> "CHOICE"

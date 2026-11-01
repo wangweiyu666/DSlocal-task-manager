@@ -4,7 +4,7 @@ import com.ds.localtaskmanager.domain.execution.*
 
 fun InstanceStepEntity.branchState() = StepState(stepId, position, name, required, completed, executionKind,
     executionAction, executionTarget, stepStatus, counterValue, elapsedMillis, informationContent, moodRating, moodText,
-    executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId)
+    executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId, temperatureTenthsC)
 
 fun List<InstanceStepEntity>.applicableSteps(): List<InstanceStepEntity> {
     val states = stepApplicability(map { it.branchState() })

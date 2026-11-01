@@ -1,5 +1,10 @@
 package com.ds.localtaskmanager.backup
 
+import com.ds.localtaskmanager.domain.reminder.resolveCustomReminder
+import com.ds.localtaskmanager.domain.reminder.validateCustomReminder
+import com.ds.localtaskmanager.domain.reminder.ReminderState
+import com.ds.localtaskmanager.domain.recurrence.deadlineFor
+import com.ds.localtaskmanager.domain.recurrence.RecurrenceDeadline
 import com.ds.localtaskmanager.data.statistics.StatisticsPeriod
 import com.ds.localtaskmanager.data.branchState
 import com.ds.localtaskmanager.domain.execution.*
@@ -17,7 +22,9 @@ object BackupValidator {
     fun validate(decoded: DecodedBackup) {
         if (decoded.metadata.createdAtEpochMillis < 0) throw DstbException("备份创建时间无效")
         val payload = decoded.payload
-        if (payload.schemaVersion !in 1..5) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion !in 1..7) throw DstbException("不支持的备份数据版本：${payload.schemaVersion}")
+        if (payload.schemaVersion < 7 && (payload.temperatures.isNotEmpty() || payload.definitions.any { it.executionKind == "TEMPERATURE" } || payload.instances.any { it.executionKind == "TEMPERATURE" } || payload.definitionSteps.any { it.executionKind == "TEMPERATURE" } || payload.instanceSteps.any { it.executionKind == "TEMPERATURE" || it.temperatureTenthsC != null })) throw DstbException("体温记录需要备份数据 v7")
+        if (payload.schemaVersion < 6 && (payload.reminders.isNotEmpty() || payload.definitions.any { it.customReminder != null } || payload.instances.any { it.customReminderAt != null } || payload.recurrenceExceptions.any { Json.parseToJsonElement(it.patchJson).jsonObject.containsKey("a") })) throw DstbException("自定义提醒需要备份数据 v6")
         if (payload.schemaVersion < 5 && (payload.definitions.any { it.executionConfigJson != null } || payload.instances.any { it.executionConfigJson != null } || payload.definitionSteps.any { it.executionConfigJson != null || it.conditionStepId != null || it.conditionOptionId != null } || payload.instanceSteps.any { it.executionConfigJson != null || it.conditionStepId != null || it.conditionOptionId != null || it.selectedOptionId != null } || payload.progress.any { it.selectedOptionId != null })) throw DstbException("通知、选项和条件需要备份数据 v5")
         if (payload.schemaVersion < 3 && (payload.moods.isNotEmpty() || payload.definitions.any { it.executionKind == "MOOD" } || payload.instances.any { it.executionKind == "MOOD" })) {
             throw DstbException("心情记录需要备份数据 v3")
@@ -43,6 +50,7 @@ object BackupValidator {
         unique(payload.instanceSteps, { "${it.taskId}|${it.occurrenceKey}|${it.position}" }, "实例步骤")
         unique(payload.progress, { "${it.taskId}|${it.occurrenceKey}" }, "任务进度")
         unique(payload.information, { "${it.taskId}|${it.occurrenceKey}" }, "告知正文")
+        unique(payload.temperatures, { "${it.taskId}|${it.occurrenceKey}" }, "体温记录")
         unique(payload.moods, { "${it.taskId}|${it.occurrenceKey}" }, "心情记录")
         unique(payload.notes, { "${it.taskId}|${it.occurrenceKey}" }, "任务备注")
         unique(payload.ledger, { it.ledgerId }, "积分流水")
@@ -148,6 +156,7 @@ object BackupValidator {
             if (it.counterValue != null && it.counterValue < 0) throw DstbException("实例步骤计数无效")
             if (it.elapsedMillis != null && it.elapsedMillis < 0) throw DstbException("实例步骤计时无效")
             if (it.informationContent != null && it.informationContent.codePointCount(0, it.informationContent.length) > 2_000) throw DstbException("实例步骤正文过长")
+            if (it.temperatureTenthsC != null && (it.executionKind != "TEMPERATURE" || it.temperatureTenthsC !in 350..420)) throw DstbException("实例步骤体温无效")
             if (it.moodRating != null && it.moodRating !in 1..5) throw DstbException("实例步骤心情无效")
             if (it.moodText != null && it.moodText.codePointCount(0, it.moodText.length) > 2_000) throw DstbException("实例步骤感受过长")
         }
@@ -185,6 +194,18 @@ object BackupValidator {
             requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "告知正文")
             requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "告知正文")
             if (it.submittedAtEpochMillis != null && it.submittedAtEpochMillis > snapshotLimit) throw DstbException("告知提交时间晚于备份时间")
+        }
+        payload.temperatures.forEach {
+            requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "体温记录")
+            requireTimes(it.createdAtEpochMillis, it.updatedAtEpochMillis, snapshotLimit, "体温记录")
+            val instance = payload.instances.first { item -> item.taskId == it.taskId && item.occurrenceKey == it.occurrenceKey }
+            if (instance.executionKind != "TEMPERATURE" || (it.temperatureTenthsC != null && it.temperatureTenthsC !in 350..420)) throw DstbException("体温记录内容无效")
+            if (it.submittedAtEpochMillis != null && (it.submittedAtEpochMillis !in it.createdAtEpochMillis..it.updatedAtEpochMillis || it.temperatureTenthsC == null)) throw DstbException("体温提交时间或答案无效")
+            if ((instance.status == "COMPLETED") != (it.submittedAtEpochMillis != null)) throw DstbException("体温记录与完成状态不一致")
+            if (instance.status == "COMPLETED" && it.submittedAtEpochMillis != instance.completedAtEpochMillis) throw DstbException("体温答案与实例完成时间不一致")
+        }
+        payload.instances.filter { it.executionKind == "TEMPERATURE" && it.status == "COMPLETED" }.forEach { instance ->
+            if (payload.temperatures.none { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }) throw DstbException("已完成的体温任务缺少答案")
         }
         payload.moods.forEach {
             requireInstance(it.taskId, it.occurrenceKey, instanceKeys, "心情记录")
@@ -237,15 +258,37 @@ object BackupValidator {
             "COUNTER" -> ExecutionSpec.Counter(if (action == 1) CounterAction.SLIDER else CounterAction.CLICK, requireNotNull(target))
             "TIMER" -> ExecutionSpec.Timer(requireNotNull(target))
             "INFORMATION" -> ExecutionSpec.Information
-            "MOOD" -> ExecutionSpec.Mood
+            "TEMPERATURE" -> ExecutionSpec.Temperature
+        "MOOD" -> ExecutionSpec.Mood
             else -> ExecutionSpec.Normal
         }
         fun condition(source: String?, option: String?): StepCondition? {
             require((source == null) == (option == null))
             return source?.let { require(STEP_ID.matches(it) && STEP_ID.matches(option!!)); StepCondition(it, option) }
         }
+        fun definitionDeadline(definition: DefinitionBackup, date: LocalDate): LocalDateTime? {
+            if (definition.recurrenceFrequency == null) return definition.deadline?.let(LocalDateTime::parse)
+            val deadline = when (val time = definition.recurrenceDeadlineTime) {
+                null -> RecurrenceDeadline.None
+                else -> RecurrenceDeadline.At(java.time.LocalTime.parse(time))
+            }
+            return deadlineFor(date, deadline)
+        }
         try {
+            require(payload.reminders.map { Triple(it.taskId to it.occurrenceKey, it.kind, it.minutesBeforeDeadline) }.distinct().size == payload.reminders.size)
+            payload.reminders.forEach { record ->
+                require(payload.instances.any { it.taskId == record.taskId && it.occurrenceKey == record.occurrenceKey })
+                require(record.kind in setOf("CUSTOM", "DEADLINE"))
+                require(if (record.kind == "CUSTOM") record.minutesBeforeDeadline == 0 else record.minutesBeforeDeadline in 0..10080)
+                require(record.state in ReminderState.entries.map { it.name })
+                require(record.state != "DELIVERED" || record.deliveredAtEpochMillis != null)
+            }
             payload.definitions.forEach { definition ->
+                val date = LocalDate.parse(definition.taskDate)
+                definition.customReminder?.let {
+                    if (definition.recurrenceFrequency == null) require(it.contains('T')) else require(!it.contains('T'))
+                    validateCustomReminder(resolveCustomReminder(it, date), definitionDeadline(definition, date))
+                }
                 val execution = spec(definition.executionKind, definition.executionAction, definition.executionTarget, definition.executionConfigJson)
                 val steps = payload.definitionSteps.filter { it.taskId == definition.taskId }.sortedBy { it.position }.map {
                     DstStep(it.name, it.required, it.stepId, spec(it.executionKind, it.executionAction, it.executionTarget, it.executionConfigJson), condition(it.conditionStepId, it.conditionOptionId))
@@ -257,6 +300,18 @@ object BackupValidator {
                     // Early backups allowed local IDs longer/shorter than transport IDs.
                     val portable = JsonObject(raw + ("i" to JsonPrimitive("BackupTask000001")))
                     val patch = Dst1Parser().parseExceptionJson(portable.toString())
+                    if (!patch.cancelled) {
+                        val date = patch.occurrenceDate
+                        val reminder = when (val field = patch.customReminder) {
+                            Field.Missing -> resolveCustomReminder(definition.customReminder, date)
+                            is Field.Value -> field.value
+                        }
+                        val deadline = when (val field = patch.deadline) {
+                            Field.Missing -> definitionDeadline(definition, date)
+                            is Field.Value -> field.value
+                        }
+                        validateCustomReminder(reminder, deadline)
+                    }
                     val effectiveExecution = (patch.execution as? Field.Value)?.value ?: execution
                     val effectiveSteps = (patch.steps as? Field.Value)?.value ?: steps
                     validateConditionalDefinition(effectiveExecution, effectiveSteps)
@@ -264,6 +319,7 @@ object BackupValidator {
                 }
             }
             payload.instances.forEach { instance ->
+                validateCustomReminder(instance.customReminderAt?.let(LocalDateTime::parse), instance.deadline?.let(LocalDateTime::parse))
                 val execution = spec(instance.executionKind, instance.executionAction, instance.executionTarget, instance.executionConfigJson)
                 val steps = payload.instanceSteps.filter { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey }.sortedBy { it.position }
                 validateConditionalDefinition(execution, steps.map { DstStep(it.name, it.required, it.stepId, spec(it.executionKind, it.executionAction, it.executionTarget, it.executionConfigJson), condition(it.conditionStepId, it.conditionOptionId)) })
@@ -304,7 +360,7 @@ object BackupValidator {
         "NORMAL" -> action == null && target == null
         "COUNTER" -> action in 1..2 && target in 1..999
         "TIMER" -> action == null && target in 1..3_600
-        "INFORMATION", "MOOD" -> action == null && target == null
+        "INFORMATION", "MOOD", "TEMPERATURE" -> action == null && target == null
         else -> false
     }
 
@@ -315,6 +371,7 @@ object BackupValidator {
         "COUNTER" -> step.counterValue == step.executionTarget
         "TIMER" -> step.elapsedMillis == (step.executionTarget ?: 0) * 1_000L
         "INFORMATION" -> step.informationContent?.let { raw -> raw.isNotBlank() && raw.trim().codePointCount(0, raw.trim().length) <= 2_000 } == true
+        "TEMPERATURE" -> step.temperatureTenthsC in 350..420
         "MOOD" -> step.moodRating in 1..5 && (step.moodText ?: "").codePointCount(0, (step.moodText ?: "").length) <= 2_000
         else -> false
     }
@@ -353,7 +410,7 @@ object BackupValidator {
     }
 
     private val TASK_STATUSES = TaskStatus.entries.mapTo(hashSetOf()) { it.name }
-    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION", "MOOD", "STEPS", "NOTICE", "CHOICE")
+    private val EXECUTION_KINDS = setOf("NORMAL", "COUNTER", "TIMER", "INFORMATION", "MOOD", "STEPS", "NOTICE", "CHOICE", "TEMPERATURE")
     private val STEP_ID = Regex("[A-Za-z0-9_-]{16}")
     private val STEP_STATUSES = setOf("PENDING", "CONFIRMED", "SKIPPED", "NOT_APPLICABLE")
     private val INSTANCE_CATEGORIES = setOf("DAILY", "WEEKLY", "TEMPORARY")

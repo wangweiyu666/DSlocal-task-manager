@@ -11,6 +11,7 @@
 - The primary agent owns implementation, test design/execution, failure fixes, APK builds and delivery review. Do not delegate testing; other subagent work requires a separate explicit user request.
 - Follow the current [production runbook](docs/stage4-production-runbook.md). Keep the verified SHA fixed, inspect existing runs before dispatching, and report success only after applicable workflows finish.
 - Carry authorization through the current release without repeated confirmation. Push-only or model preferences do not authorize production changes or future releases. Local APK building does not authorize GitHub publication, deployment or device installation.
+- The user grants standing authorization for encrypted production recovery archives. For an authorized production deployment, use existing GitHub production credentials to read the two D1 recovery bookmarks, the two Workers' current deployments and required routes, encrypt on the runner, upload only ciphertext as a GitHub artifact retained for 14 days, then download and verify decryption locally. Keep the private key local; never upload tokens or plaintext recovery information. Do not ask again for this archive operation. This does not authorize future deployments, database restoration/deletion or expanded credential permissions.
 
 ## Verification and APK handoff
 

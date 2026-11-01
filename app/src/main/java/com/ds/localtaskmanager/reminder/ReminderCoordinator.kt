@@ -11,6 +11,8 @@ import com.ds.localtaskmanager.domain.execution.TaskInstanceKey
 import com.ds.localtaskmanager.domain.reminder.ReminderPlanner
 import com.ds.localtaskmanager.domain.reminder.ReminderState
 import com.ds.localtaskmanager.domain.reminder.decodeReminderMinutes
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Clock
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -19,6 +21,7 @@ data class ReminderKey(
     val taskId: String,
     val occurrenceKey: String,
     val minutesBeforeDeadline: Int,
+    val kind: String = "DEADLINE",
 )
 
 interface ReminderScheduler {
@@ -43,7 +46,9 @@ class ReminderCoordinator(
     private val idGenerator: RecordIdGenerator,
     private val zoneId: () -> ZoneId = ZoneId::systemDefault,
 ) : ReminderReconciler {
-    override suspend fun reconcileAll(reason: String?) {
+    private val mutex = Mutex()
+
+    override suspend fun reconcileAll(reason: String?) = mutex.withLock {
         val records = database.withTransaction {
             val now = clock.millis()
             val instances = database.instanceDao().instancesNeedingReminderReconciliation()
@@ -68,84 +73,68 @@ class ReminderCoordinator(
         records.forEach(::applySchedule)
     }
 
-    suspend fun deliver(key: ReminderKey) {
-        val outcome = database.withTransaction {
+    suspend fun deliver(key: ReminderKey) = mutex.withLock {
+        database.withTransaction {
             val dao = database.reminderDao()
-            val record = dao.getRecord(key.taskId, key.occurrenceKey, key.minutesBeforeDeadline)
-                ?: return@withTransaction DeliveryOutcome.Missing
+            val record = dao.getRecord(key.taskId, key.occurrenceKey, key.minutesBeforeDeadline, key.kind)
+                ?: return@withTransaction
             val instance = database.instanceDao().getInstance(key.taskId, key.occurrenceKey)
-                ?: return@withTransaction DeliveryOutcome.Cancel(record)
-            val minutes = instance.reminderMinutesJson.decodeReminderMinutes()
-            val active = instance.status == TaskStatus.NOT_STARTED.name || instance.status == TaskStatus.PENDING.name
-            when {
-                record.state != ReminderState.SCHEDULED.name -> DeliveryOutcome.Cancel(record)
-                !active || key.minutesBeforeDeadline !in minutes -> {
-                    val cancelled = record.copy(state = ReminderState.CANCELLED.name, updatedAtEpochMillis = clock.millis())
-                    dao.upsertRecords(listOf(cancelled))
-                    DeliveryOutcome.Cancel(cancelled)
-                }
-                clock.millis() < record.scheduledForEpochMillis -> DeliveryOutcome.Reschedule(record)
-                !notifier.notificationsEnabled() -> {
-                    val skipped = record.copy(
-                        state = ReminderState.SKIPPED_PERMISSION.name,
-                        updatedAtEpochMillis = clock.millis(),
-                    )
-                    dao.upsertRecords(listOf(skipped))
-                    DeliveryOutcome.Cancel(skipped)
-                }
-                else -> DeliveryOutcome.Post(instance, record)
+            val desired = instance?.let { plans(it) }?.firstOrNull {
+                it.kind == key.kind && it.minutesBeforeDeadline == key.minutesBeforeDeadline
             }
-        }
-        when (outcome) {
-            is DeliveryOutcome.Post -> {
-                notifier.post(outcome.instance, key)
-                database.withTransaction {
-                    val deliveredAt = clock.millis()
-                    database.reminderDao().upsertRecords(
-                        listOf(
-                            outcome.record.copy(
-                                state = ReminderState.DELIVERED.name,
-                                deliveredAtEpochMillis = deliveredAt,
-                                updatedAtEpochMillis = deliveredAt,
-                            ),
-                        ),
-                    )
-                    database.auditDao().insertLogs(
-                        listOf(
-                            ActionLogEntity(
-                                eventId = idGenerator.next(),
-                                taskId = key.taskId,
-                                occurrenceKey = key.occurrenceKey,
-                                batchId = null,
-                                action = "REMINDER_DELIVERED",
-                                detail = "{\"minutesBeforeDeadline\":${key.minutesBeforeDeadline}}",
-                                createdAtEpochMillis = deliveredAt,
-                            ),
-                        ),
-                    )
-                }
+            if (record.state != ReminderState.SCHEDULED.name) {
+                scheduler.cancel(record)
+                return@withTransaction
             }
-            is DeliveryOutcome.Reschedule -> scheduler.schedule(outcome.record)
-            is DeliveryOutcome.Cancel -> scheduler.cancel(outcome.record)
-            DeliveryOutcome.Missing -> Unit
+            if (instance == null || desired == null || desired.state == ReminderState.CANCELLED ||
+                desired.scheduledForEpochMillis != record.scheduledForEpochMillis) {
+                dao.upsertRecords(listOf(record.copy(state = ReminderState.CANCELLED.name, updatedAtEpochMillis = clock.millis())))
+                scheduler.cancel(record)
+                return@withTransaction
+            }
+            if (clock.millis() < record.scheduledForEpochMillis) {
+                scheduler.schedule(record)
+                return@withTransaction
+            }
+            val peers = dao.recordsForInstance(key.taskId, key.occurrenceKey)
+                .filter { it.scheduledForEpochMillis == record.scheduledForEpochMillis }
+            val alreadyDelivered = peers.any { it.state == ReminderState.DELIVERED.name }
+            val enabled = notifier.notificationsEnabled()
+            if (enabled && !alreadyDelivered) notifier.post(instance, key)
+            val now = clock.millis()
+            val state = if (alreadyDelivered || enabled) ReminderState.DELIVERED else ReminderState.SKIPPED_PERMISSION
+            val handled = peers.filter { it.state == ReminderState.SCHEDULED.name }.map {
+                it.copy(state = state.name, deliveredAtEpochMillis = if (state == ReminderState.DELIVERED) now else null,
+                    updatedAtEpochMillis = now)
+            }
+            dao.upsertRecords(handled)
+            handled.forEach(scheduler::cancel)
+            if (enabled && !alreadyDelivered) database.auditDao().insertLogs(listOf(ActionLogEntity(
+                eventId = idGenerator.next(), taskId = key.taskId, occurrenceKey = key.occurrenceKey,
+                batchId = null, action = "REMINDER_DELIVERED",
+                detail = "{\"minutesBeforeDeadline\":${key.minutesBeforeDeadline},\"kind\":\"${key.kind}\"}",
+                createdAtEpochMillis = now,
+            )))
         }
     }
+
+    private fun plans(instance: TaskInstanceEntity) = ReminderPlanner.plan(
+        deadline = instance.deadline?.let(LocalDateTime::parse),
+        reminderMinutes = instance.reminderMinutesJson.decodeReminderMinutes(),
+        publishedAtEpochMillis = instance.publishedAtEpochMillis,
+        status = TaskStatus.valueOf(instance.status),
+        now = clock.instant(), zoneId = zoneId(),
+        customReminder = instance.customReminderAt?.let(LocalDateTime::parse),
+    )
 
     private suspend fun reconcileInstance(instance: TaskInstanceEntity, now: Long): List<ReminderRecordEntity> {
         val dao = database.reminderDao()
         val existing = dao.recordsForInstance(instance.taskId, instance.occurrenceKey)
-            .associateBy(ReminderRecordEntity::minutesBeforeDeadline)
-        val plans = ReminderPlanner.plan(
-            deadline = instance.deadline?.let(LocalDateTime::parse),
-            reminderMinutes = instance.reminderMinutesJson.decodeReminderMinutes(),
-            publishedAtEpochMillis = instance.publishedAtEpochMillis,
-            status = TaskStatus.valueOf(instance.status),
-            now = clock.instant(),
-            zoneId = zoneId(),
-        )
-        val plannedMinutes = plans.mapTo(mutableSetOf()) { it.minutesBeforeDeadline }
+            .associateBy { it.kind to it.minutesBeforeDeadline }
+        val plans = plans(instance)
+        val plannedKeys = plans.mapTo(mutableSetOf()) { it.kind to it.minutesBeforeDeadline }
         val records = plans.map { plan ->
-            val old = existing[plan.minutesBeforeDeadline]
+            val old = existing[plan.kind to plan.minutesBeforeDeadline]
             val state = if (
                 old?.state == ReminderState.DELIVERED.name &&
                 old.scheduledForEpochMillis == plan.scheduledForEpochMillis
@@ -154,14 +143,15 @@ class ReminderCoordinator(
                 taskId = instance.taskId,
                 occurrenceKey = instance.occurrenceKey,
                 minutesBeforeDeadline = plan.minutesBeforeDeadline,
+                kind = plan.kind,
                 scheduledForEpochMillis = plan.scheduledForEpochMillis,
                 state = state,
                 deliveredAtEpochMillis = if (state == ReminderState.DELIVERED.name) old?.deliveredAtEpochMillis else null,
                 createdAtEpochMillis = old?.createdAtEpochMillis ?: now,
                 updatedAtEpochMillis = now,
             )
-        } + existing.values.filter { it.minutesBeforeDeadline !in plannedMinutes }.map {
-            it.copy(state = ReminderState.CANCELLED.name, updatedAtEpochMillis = now)
+        } + existing.values.filter { (it.kind to it.minutesBeforeDeadline) !in plannedKeys }.map {
+            it.copy(state = if (it.state == ReminderState.DELIVERED.name) it.state else ReminderState.CANCELLED.name, updatedAtEpochMillis = now)
         }
         if (records.isNotEmpty()) dao.upsertRecords(records)
         return records
@@ -171,10 +161,4 @@ class ReminderCoordinator(
         if (record.state == ReminderState.SCHEDULED.name) scheduler.schedule(record) else scheduler.cancel(record)
     }
 
-    private sealed interface DeliveryOutcome {
-        data object Missing : DeliveryOutcome
-        data class Post(val instance: TaskInstanceEntity, val record: ReminderRecordEntity) : DeliveryOutcome
-        data class Reschedule(val record: ReminderRecordEntity) : DeliveryOutcome
-        data class Cancel(val record: ReminderRecordEntity) : DeliveryOutcome
-    }
 }

@@ -4,6 +4,8 @@
 
 | 日期 | 记录 |
 | --- | --- |
+| 2026-10-02 | [任务自定义提醒](#custom-reminder-2026-10-02) |
+| 2026-10-02 | [每小时后台同步](#hourly-sync-2026-10-02) |
 | 2026-09-13 | [Android 启动优化](#startup-2026-09-13) |
 | 2026-09-12 | [流程简化](#workflow-2026-09-12) |
 | 2026-09-12 | [通知、单选积分与条件步骤](#choice-2026-09-12) |
@@ -12,6 +14,63 @@
 | 2026-09-07 | [正式域名切换与变体验证](#production-2026-09-07) |
 | 2026-09-06 | [日期与分步骤](#steps-2026-09-06) |
 | 2026-09-06 | [心情记录](#mood-2026-09-06) |
+
+
+<a id="custom-reminder-2026-10-02"></a>
+
+## 2026-10-02 任务自定义提醒
+
+基线 `8583c7e8d4dbbe0d1144ce8be46bcf523864ec4c` 加未提交修改；保留每小时同步、应用更名及无关 artifacts。实现协议 `a`、网页配置/日期例外、Android 提醒共存与同刻去重、Room 9→10 和 DSTB1 payload 6（读取 1～6）。本次未提交、推送、部署、发布或安装。
+
+环境：Node 24.19.0、JDK 17.0.19、adb 37.0.0、Gradle 8.9。Android 使用 W:/G: 临时路径映射和本地 Robolectric Android 15 缓存；截图使用 Asia/Hong_Kong、zh_CN、UTF-8。命令均在仓库根目录执行；Gradle 使用 `--no-daemon`。
+
+| 实际命令 / 检查 | 结果 |
+| --- | --- |
+| `.\gradlew.bat compileProductionDebugKotlin` | 通过 |
+| `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release` | 首次测试编译失败，修正测试夹具 DAO 调用后执行 45 项：44 通过、1 失败、0 跳过；失败为旧 payload 5 断言 |
+| `.\gradlew.bat testProductionDebugUnitTest --tests '*ConditionalChoiceTest.backup v6*'`（同轮请求构建/Lint/截图） | 1 项失败，发现 metadata 版本仍为 5；后续任务未计为通过 |
+| `.\gradlew.bat testProductionDebugUnitTest --tests '*ConditionalChoiceTest.backup v6*' --tests '*CustomReminderTest.backupRoundtrip*' assembleOfflineDebug assembleProductionDebug lintOfflineDebug lintProductionDebug processOfflineReleaseMainManifest -I scripts/testing/android-screenshot-matrix.init.gradle validateProductionDebugScreenshotTest` | 修复 metadata 后 2 项通过；双构建通过、双 Lint 0 问题、production 截图 31 通过/0 失败/0 跳过 |
+| `.\gradlew.bat testProductionDebugUnitTest --tests '*CustomReminderTest.simultaneousTemplate*' --tests '*CustomReminderTest.recurringTaskDays*' assembleOfflineDebug assembleProductionDebug lintOfflineDebug lintProductionDebug` | 2 项通过；修复同批模板与例外更新按旧截止时间校验的问题，双构建/Lint 通过 |
+| `.\gradlew.bat testProductionDebugUnitTest --tests '*CustomReminderTest.simultaneousTemplate*' assembleOfflineDebug assembleProductionDebug lintOfflineDebug lintProductionDebug` | 最后 1 项通过，补证模板更新保留日期例外的截止前提醒；双构建通过，双 Lint 0 问题 |
+| `npm --prefix web run typecheck`、`npm --prefix web run test:minimum` | 通过；12 项通过、0 失败 |
+| `npm --prefix cloud run typecheck`、`npm --prefix cloud run test:minimum` | 通过；3 项通过、0 失败、11 项因筛选跳过 |
+| `npm --prefix web run build:all`、`npm --prefix web run verify:protocol` | 通过：生成协议一致、双环境构建和包边界通过 |
+| `npm --prefix web run test:connected-smoke` | 1 项通过；生产构建、模拟服务，非线上验收 |
+| `.\gradlew.bat :app:dependencies --configuration offlineReleaseRuntimeClasspath`、清单和 APK 检查 | offline 无网络依赖/权限；两包名称 DStationery，`apksigner verify` 均通过 |
+| 本地 `dist-offline` 浏览器验收 | 截止前提醒与自定义时间共存；重复任务 02:00 刷新恢复；390px 窄屏无重叠；控制台无错误 |
+
+按每个用例最后一次结果，production 活动集合 **46 个不同用例通过、0 失败、0 跳过**；这是一次活动运行加修复后的定向复测，并非重新运行完整集合。原始阶段 XML、逐用例结果、源码文件 SHA-256 和 APK 校验值在 `build/custom-reminder-verification/results.json`。对应日志为 `build/custom-reminder-{compile,tests,tests2,final,final2,import-final,coexistence-final,web-build,offline-dependencies}.log`；本地网页截图为同证据目录下 `web-coexisting.png`、`web-recurring-mobile.png`。
+
+覆盖无截止提醒、共存/同刻并发去重、凌晨分界、日期例外覆盖/清除/继承、延期、完成/撤销、删除、错过时间、权限关闭、有效截止关系、Room 迁移和新旧备份/已发送记录合并。未运行稳定旧回归全套、offline 截图或真机系统调度；31 张 production 截图为本地 Compose 验证，未访问线上。末两次仅修改导入/校验逻辑，复用此前渲染证据。通知沿用系统尽力调度，未实测 Doze、厂商策略、真实时区切换或分钟级送达。
+
+最终 Debug APK（以上最后构建产生，附邻接 `.apk.sha256`）：
+
+- offline：`D:\Projects\local-task-manager\app\build\outputs\apk\offline\debug\app-offline-debug.apk`；SHA-256 `0806dbcb4ae02f12cdf03238f3523e3bfeefba0e81d430ba8c484a8db79ec7a8`。
+- production：`D:\Projects\local-task-manager\app\build\outputs\apk\production\debug\app-production-debug.apk`；SHA-256 `3842125436ea6e378077fe4f17293b4b427a3b5ba3b07a600142fd18b0da840a`。
+
+<a id="hourly-sync-2026-10-02"></a>
+
+## 2026-10-02 每小时后台同步
+
+基线 `8583c7e8d4dbbe0d1144ce8be46bcf523864ec4c` 加本次未提交修改。联网变体新增唯一的一小时周期任务，首次延迟一小时；登录与启动时登记，退出/清除会话时取消，限制解除后恢复。空上传队列仍主动拉取；身份、冷却、同步锁及退避沿用现有逻辑。未提交、推送、发布或安装；原有不相关 artifacts 保留。
+
+验证使用 JDK 17.0.19、SDK adb 37.0.0、Windows W:/G: 临时映射及缓存 Robolectric Android 15；截图为 Asia/Hong_Kong、zh_CN、UTF-8。
+
+| 实际命令 / 检查 | 结果 |
+| --- | --- |
+| `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release --offline --no-daemon` | 38 项，37 通过、1 失败、0 跳过；失败为测试重复初始化 WorkManager |
+| `.\gradlew.bat testProductionDebugUnitTest --tests '*ConnectedSyncEngineTest.hourly*' --tests '*ConnectedSyncEngineTest.startup*' --no-daemon` | 修正夹具后 7 项，6 通过、1 失败、0 跳过；新增限制解除断言超时，该次构建已先行编译业务类，未包含随后补入的恢复登记逻辑 |
+| `.\gradlew.bat testProductionDebugUnitTest --tests '*ConnectedSyncEngineTest.hourlyRegistrationRestoresAndCancelsOnLogout' assembleOfflineDebug assembleProductionDebug lintOfflineDebug lintProductionDebug processOfflineReleaseMainManifest -I scripts/testing/android-screenshot-matrix.init.gradle validateProductionDebugScreenshotTest --no-daemon` | 固定源码后重编译：1 项通过、0 失败、0 跳过；双 Debug 构建、双 Lint 均通过（0 问题）；31 张 production 截图通过、0 失败、0 跳过 |
+| `.\gradlew.bat :app:dependencies --configuration offlineReleaseRuntimeClasspath --no-daemon` + 合并清单检查 | 无 okhttp/retrofit/ktor-client；offline Debug/Release 无 INTERNET / ACCESS_NETWORK_STATE；APK 中小时调度实现仅存在于 production |
+
+按各用例最后一次结果，活动集合 38 个不同用例全部通过；未重复其他已通过用例。新增五项覆盖周期/网络约束、唯一 UPDATE 策略、身份载荷、空队列拉取、冷却重试、启动恢复、限制解除和退出取消。另有一次离线 Gradle 插件缓存解析失败，未执行测试，联网补齐后继续。
+
+未运行全部 205 个静态测试方法、offline 截图、设备安装或真实一小时等待。周期登记使用注入调度回调验证，未实测厂商自启动、Doze 或系统持久化时序；一小时是期望周期，不保证准点。原始各阶段 XML、日志索引、最终源码文件哈希和 APK 校验值位于 `build/hourly-sync-verification/results.json` 及同目录；构建日志为 `build/hourly-sync-final.log`。
+
+| 同源本地 Debug APK | 环境 | SHA-256 |
+| --- | --- | --- |
+| `app/build/outputs/apk/offline/debug/app-offline-debug.apk` | none | `6837e8287e0b21353c8b3a909da9fb6eeefd0aa362a2eab02831fcd14888b398` |
+| `app/build/outputs/apk/production/debug/app-production-debug.apk` | https://api.rochelimit.me | `1c5de41369d92a96cef82353bcbca2bc9febde88b330e98d4f1f6d9d88bff19f` |
 
 <a id="startup-2026-09-13"></a>
 
@@ -484,3 +543,17 @@ Production Debug 是连接生产服务的调试安装包，构建它不代表已
 | offline | 离线，无云端地址 | `app/build/outputs/apk/offline/debug/app-offline-debug.apk` |
 | connected | staging：`https://api-staging.rochelimit.me` | `app/build/outputs/apk/connected/debug/app-connected-debug.apk` |
 | production | production：`https://api.rochelimit.me` | `app/build/outputs/apk/production/debug/app-production-debug.apk` |
+
+## 2026-10-02 Android 应用名称统一
+
+基线 8583c7e8d4dbbe0d1144ce8be46bcf523864ec4c 加未提交的每小时同步及本次名称修改。production 和 connected 的 app_name 统一为 DStationery；main 原已相同。
+
+执行命令：`.gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release assembleOfflineDebug assembleProductionDebug lintOfflineDebug lintProductionDebug processOfflineReleaseMainManifest -I scripts/testing/android-screenshot-matrix.init.gradle validateProductionDebugScreenshotTest --no-daemon`。沿用上节 JDK、缓存和截图环境；构建成功。活动单元测试 38 通过、0 失败、0 跳过；production 截图 31 通过、0 失败、0 跳过；双变体 Lint 0 问题。日志：build/app-name-verification.log。
+
+使用 aapt dump badging 核实双 Debug APK 的 application-label 均为 DStationery，offline APK 无 INTERNET/ACCESS_NETWORK_STATE 权限；依赖和网络实现未变，依赖边界沿用上节结果。未运行旧全套测试、真机桌面名称验收或安装，未提交、推送、发布。
+
+产物位于 app/build/outputs/apk/{offline,production}/debug/：
+- offline（环境 none）app-offline-debug.apk，SHA-256：6837e8287e0b21353c8b3a909da9fb6eeefd0aa362a2eab02831fcd14888b398。
+- production（https://api.rochelimit.me）app-production-debug.apk，SHA-256：64cf3a0fa885fdf6762cc0df1a9869cb933b7363b5b3451d8d06ab0240476264。
+
+- 2026-10-31：[体温询问与统计验证](temperature-verification-2026-10-31.md)，含分批活动测试、production 截图、边界检查和本地 Debug APK 校验值。

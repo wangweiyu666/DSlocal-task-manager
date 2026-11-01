@@ -6,8 +6,8 @@
 
 | 改动 | 默认检查 |
 | --- | --- |
-| Android | production 活动单元集合 33 个静态方法；两变体构建/Lint、offline 网络边界；production 截图 |
-| Web / Cloud | Web `test:minimum` 7 条、Cloud `test:minimum` 2 条；各端类型检查、协议生成一致性、双 Web 构建与边界检查；正式构建 CSP 启动 smoke |
+| Android | production 活动单元集合 59 个静态方法；两变体构建/Lint、offline 网络边界；production 截图 |
+| Web / Cloud | Web `test:minimum` 24 条、Cloud `test:minimum` 16 条；各端类型检查、协议生成一致性、双 Web 构建与边界检查；正式构建 CSP 启动 smoke |
 | 纯文档 | 引用和 `git diff --check`，不启动产品测试 |
 | CI / 发布脚本 | 相关脚本逻辑、语法及选择规则检查，不因此运行完整产品套件 |
 | 部署 / 打包 | 复用同 SHA 通过的检查；产物、签名、环境和 SHA-256 审计 |
@@ -20,13 +20,15 @@ Web、Cloud 的 `npm test` 仍是完整诊断入口；默认使用 `npm --prefix
 
 | 场景 | 命令 | 静态方法数 |
 | --- | --- | --- |
-| 默认活动回归 | `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release --no-daemon` | 33 |
-| 日常兼容入口 | 同上，属性改为 `daily`；集合相同，不重复执行 | 33 |
-| 旧发布回归，按故障诊断需要 | 属性改为 `regression` | 173 |
-| 全部独立单元测试，按故障诊断需要 | 属性改为 `full`，或不传 profile | 200 |
+| 默认活动回归 | `.\gradlew.bat testProductionDebugUnitTest -PandroidTestProfile=release --no-daemon` | 59 |
+| 日常兼容入口 | 同上，属性改为 `daily`；集合相同，不重复执行 | 59 |
+| 旧发布回归，按故障诊断需要 | 属性改为 `regression` | 185 |
+| 全部独立单元测试，按故障诊断需要 | 属性改为 `full`，或不传 profile | 226 |
 | 已验证源码打包 | `.\gradlew.bat assembleOfflineDebug assembleProductionDebug --no-daemon` | 不运行单元测试 |
 
-原有四类：`ConditionalChoiceTest`、`AppDatabaseMigrationTest`、`InformationAutoSaveTest`、`ChoiceAutoSaveTest`，保留近期条件分支、积分、迁移和自动保存的回归。新增 `TodayStartupTest` 和 `ConnectedSyncEngineTest.startup*` 五项启动与恢复回归（含原有启动恢复用例），支持按方法通配符选择。旧清单完整保存于 `scripts/testing/android-regression.txt`，没有删除用例或削弱断言。
+原有四类：`ConditionalChoiceTest`、`AppDatabaseMigrationTest`、`InformationAutoSaveTest`、`ChoiceAutoSaveTest`，保留近期条件分支、积分、迁移和自动保存的回归。新增 `TodayStartupTest` 和 `ConnectedSyncEngineTest.startup*` 五项启动与恢复回归（含原有启动恢复用例），支持按方法通配符选择。每小时同步新增 `HourlySyncSchedulerTest` 和 `ConnectedSyncEngineTest.hourly*` 五项回归。自定义提醒新增 `CustomReminderTest` 七项及 Room 9→10 迁移一项，覆盖共存去重、无截止、日期例外与备份。旧清单完整保存于 `scripts/testing/android-regression.txt`，没有删除用例或削弱断言。
+
+体温询问新增 `TemperatureTaskTest` 七项、`TemperatureAutoSaveTest` 两项、联网 `TemperatureResultTest` 三项，以及 Room 10→11 迁移一项；覆盖草稿、范围、提交锁定、撤销、实例隔离、条件步骤、备份和提交快照。Web 与 Cloud 活动集合包含 `temperature` 新增用例。
 
 `python scripts/testing/inspect-android-profiles.py` 校验清单并报告静态方法数；这些不是运行通过数。实际运行数量和结果以 JUnit XML 为准。
 

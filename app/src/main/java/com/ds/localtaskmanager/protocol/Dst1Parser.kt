@@ -1,5 +1,8 @@
 package com.ds.localtaskmanager.protocol
 
+import com.ds.localtaskmanager.domain.reminder.resolveCustomReminder
+import com.ds.localtaskmanager.domain.reminder.validateCustomReminder
+import com.ds.localtaskmanager.domain.recurrence.deadlineFor
 import com.ds.localtaskmanager.domain.TaskDay
 import com.ds.localtaskmanager.domain.execution.CounterAction
 import com.ds.localtaskmanager.domain.execution.ExecutionSpec
@@ -185,10 +188,16 @@ class Dst1Parser {
             JsonNull -> Field.Value(ExecutionSpec.Normal)
             else -> Field.Value(parseExecution(raw, "$context.u"))
         }
+        val customReminder: Field<LocalDateTime?> = when (val raw = value["a"]) {
+            null -> Field.Missing
+            JsonNull -> Field.Value(null)
+            else -> Field.Value(parseDateTime(raw.asString("$context.a"), "$context.a"))
+        }
+        validateCustomReminder((customReminder as? Field.Value)?.value, (deadline as? Field.Value)?.value, "$context.a")
         val canonical = JsonObject(EXCEPTION_KEYS.mapNotNull { key -> value[key]?.let { key to it } }.toMap()).toString()
         return DstOccurrenceException(
             taskId, date, cancelled, name, required, description, deadline, points, sortOrder,
-            steps, completionMessage, reminders, execution, canonical,
+            steps, completionMessage, reminders, execution, canonical, customReminder,
         )
     }
 
@@ -276,6 +285,18 @@ class Dst1Parser {
         validateConditionalDefinition(execution, steps)
         val recurrence = parseRecurrence(task["x"], "$context.x")
         val reminderMinutes = parseReminders(task["h"], task["l"], "$context.h")
+        val customReminder = task["a"]?.asString("$context.a")?.also {
+            if (recurrence == RecurrenceSpec.None) parseDateTime(it, "$context.a") else parseTime(it, "$context.a")
+        }
+        val reminderDate = if (recurrence == RecurrenceSpec.None) taskDate else LocalDate.of(2000, 1, 1)
+        val reminderDeadline = when (recurrence) {
+            RecurrenceSpec.None -> deadline
+            is RecurrenceSpec.Daily -> deadlineFor(reminderDate, recurrence.deadline)
+            is RecurrenceSpec.Weekly -> deadlineFor(reminderDate, recurrence.deadline)
+        }
+        if (recurrence != RecurrenceSpec.None || task.containsKey("y") || task.containsKey("l")) {
+            validateCustomReminder(resolveCustomReminder(customReminder, reminderDate), reminderDeadline, "$context.a")
+        }
         return DstTask(
             taskId = taskId,
             name = name,
@@ -293,6 +314,7 @@ class Dst1Parser {
             execution = execution,
             recurrence = recurrence,
             reminderMinutes = reminderMinutes,
+            customReminder = customReminder,
         )
     }
 
@@ -480,7 +502,7 @@ class Dst1Parser {
                 }
                 ExecutionSpec.Timer(target)
             }
-            3, 4 -> {
+            3, 4, 8 -> {
                 val forbidden = listOf("a", "v").firstOrNull(execution::containsKey)
                 if (forbidden != null) {
                     invalid(
@@ -489,7 +511,7 @@ class Dst1Parser {
                         "该执行类型不能包含 $context.$forbidden",
                     )
                 }
-                if (kind == 4) ExecutionSpec.Mood else ExecutionSpec.Information
+                when (kind) { 8 -> ExecutionSpec.Temperature; 4 -> ExecutionSpec.Mood; else -> ExecutionSpec.Information }
             }
             5 -> {
                 val forbidden = listOf("a", "v").firstOrNull(execution::containsKey)
@@ -637,10 +659,10 @@ class Dst1Parser {
     private companion object {
         val TOP_KEYS = setOf("v", "sv", "b", "d", "m", "g", "t", "z", "e")
         val GROUP_KEYS = setOf("i", "n", "cm", "im", "t")
-        val TASK_KEYS = setOf("i", "n", "r", "d", "y", "l", "p", "o", "s", "x", "m", "h", "u")
+        val TASK_KEYS = setOf("i", "n", "r", "d", "y", "l", "p", "o", "s", "x", "m", "h", "u", "a")
         val STEP_KEYS = setOf("i", "n", "r", "u", "c")
         val RECURRENCE_KEYS = setOf("f", "s", "e", "c", "w", "t")
         val EXECUTION_KEYS = setOf("k", "a", "v", "t", "o")
-        val EXCEPTION_KEYS = linkedSetOf("i", "y", "c", "n", "r", "d", "l", "p", "o", "s", "m", "h", "u")
+        val EXCEPTION_KEYS = linkedSetOf("i", "y", "c", "n", "r", "d", "l", "p", "o", "s", "m", "h", "u", "a")
     }
 }

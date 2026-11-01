@@ -13,6 +13,7 @@ object StepFingerprint {
                 is com.ds.localtaskmanager.domain.execution.ExecutionSpec.Counter -> "COUNTER:${value.action.protocolValue}:${value.target}"
                 is com.ds.localtaskmanager.domain.execution.ExecutionSpec.Timer -> "TIMER:${value.targetSeconds}"
                 com.ds.localtaskmanager.domain.execution.ExecutionSpec.Information -> "INFORMATION"
+                com.ds.localtaskmanager.domain.execution.ExecutionSpec.Temperature -> "TEMPERATURE"
                 com.ds.localtaskmanager.domain.execution.ExecutionSpec.Mood -> "MOOD"
                 com.ds.localtaskmanager.domain.execution.ExecutionSpec.Steps -> "STEPS"
                 is com.ds.localtaskmanager.domain.execution.ExecutionSpec.Notice -> "NOTICE:${value.configJson()}"

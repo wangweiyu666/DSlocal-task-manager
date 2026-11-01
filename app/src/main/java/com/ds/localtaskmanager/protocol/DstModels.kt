@@ -47,6 +47,7 @@ data class DstTask(
     val execution: ExecutionSpec,
     val recurrence: RecurrenceSpec,
     val reminderMinutes: List<Int>,
+    val customReminder: String? = null,
 )
 
 data class DstStep(
@@ -73,11 +74,12 @@ data class DstOccurrenceException(
     val reminders: Field<List<Int>>,
     val execution: Field<ExecutionSpec>,
     val patchJson: String,
+    val customReminder: Field<LocalDateTime?> = Field.Missing,
 ) {
     val clearsException: Boolean
         get() = !cancelled && listOf(
             name, required, description, deadline, points, sortOrder, steps,
-            completionMessage, reminders, execution,
+            completionMessage, reminders, execution, customReminder,
         ).all { it is Field.Missing }
 }
 

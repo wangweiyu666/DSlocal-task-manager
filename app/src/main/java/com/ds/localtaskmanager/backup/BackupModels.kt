@@ -5,6 +5,7 @@ import com.ds.localtaskmanager.data.AppProfileEntity
 import com.ds.localtaskmanager.data.ExecutionProgressEntity
 import com.ds.localtaskmanager.data.ImportBatchEntity
 import com.ds.localtaskmanager.data.InformationSubmissionEntity
+import com.ds.localtaskmanager.data.TemperatureSubmissionEntity
 import com.ds.localtaskmanager.data.MoodSubmissionEntity
 import com.ds.localtaskmanager.data.InstanceStepEntity
 import com.ds.localtaskmanager.data.PointsLedgerEntity
@@ -19,7 +20,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class BackupPayload(
-    val schemaVersion: Int = 5,
+    val schemaVersion: Int = 7,
+    val reminders: List<ReminderBackup> = emptyList(),
     val settings: PortableSettings = PortableSettings(),
     val profiles: List<ProfileBackup> = emptyList(),
     val importBatches: List<ImportBatchBackup> = emptyList(),
@@ -31,6 +33,7 @@ data class BackupPayload(
     val instanceSteps: List<InstanceStepBackup> = emptyList(),
     val progress: List<ProgressBackup> = emptyList(),
     val information: List<InformationBackup> = emptyList(),
+    val temperatures: List<TemperatureBackup> = emptyList(),
     val moods: List<MoodBackup> = emptyList(),
     val notes: List<NoteBackup> = emptyList(),
     val ledger: List<LedgerBackup> = emptyList(),
@@ -50,7 +53,7 @@ data class BackupMetadata(
     val createdAtEpochMillis: Long,
     val appVersion: String,
     val sourceTimeZone: String,
-    val payloadSchemaVersion: Int = 5,
+    val payloadSchemaVersion: Int = 7,
     val counts: BackupCounts,
 )
 
@@ -103,6 +106,7 @@ data class DefinitionBackup(
     val executionTarget: Int? = null,
     val reminderMinutesJson: String? = null,
     val executionConfigJson: String? = null,
+    val customReminder: String? = null,
 )
 
 @Serializable data class DefinitionStepBackup(
@@ -148,6 +152,7 @@ data class InstanceBackup(
     val singleDayAdjusted: Boolean = false,
     val executionConfigJson: String? = null,
     val awardedPoints: Int? = points.takeIf { status == "COMPLETED" },
+    val customReminderAt: String? = null,
 )
 
 @Serializable data class InstanceStepBackup(
@@ -172,6 +177,7 @@ data class InstanceBackup(
     val conditionStepId: String? = null,
     val conditionOptionId: String? = null,
     val selectedOptionId: String? = null,
+    val temperatureTenthsC: Int? = null,
 )
 
 @Serializable data class ProgressBackup(
@@ -184,6 +190,18 @@ data class InstanceBackup(
     val updatedAtEpochMillis: Long,
     val selectedOptionId: String? = null,
 )
+
+@Serializable data class TemperatureBackup(
+    val taskId: String,
+    val occurrenceKey: String,
+    val temperatureTenthsC: Int?,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+    val submittedAtEpochMillis: Long?,
+)
+
+internal fun TemperatureSubmissionEntity.toBackup() = TemperatureBackup(taskId, occurrenceKey, temperatureTenthsC, createdAtEpochMillis, updatedAtEpochMillis, submittedAtEpochMillis)
+internal fun TemperatureBackup.toEntity() = TemperatureSubmissionEntity(taskId, occurrenceKey, temperatureTenthsC, createdAtEpochMillis, updatedAtEpochMillis, submittedAtEpochMillis)
 
 @Serializable data class MoodBackup(
     val taskId: String,
@@ -263,13 +281,13 @@ internal fun DefinitionStepBackup.toEntity() = TaskStepDefinitionEntity(
 )
 internal fun RecurrenceExceptionEntity.toBackup() = RecurrenceExceptionBackup(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
 internal fun RecurrenceExceptionBackup.toEntity() = RecurrenceExceptionEntity(taskId, occurrenceDate, cancelled, patchJson, createdAtEpochMillis, updatedAtEpochMillis)
-internal fun InstanceStepEntity.toBackup() = InstanceStepBackup(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis, stepId, executionKind, executionAction, executionTarget, stepStatus, counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId)
+internal fun InstanceStepEntity.toBackup() = InstanceStepBackup(taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis, stepId, executionKind, executionAction, executionTarget, stepStatus, counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId, temperatureTenthsC)
 internal fun InstanceStepBackup.toEntity() = InstanceStepEntity(
     taskId, occurrenceKey, position, name, required, completed, updatedAtEpochMillis,
     stepId.takeIf { it.isNotBlank() } ?: stableBackupStepId(taskId, position), executionKind,
     executionAction, executionTarget,
     if (stepId.isBlank()) (if (completed) "CONFIRMED" else "PENDING") else stepStatus,
-    counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId,
+    counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId, temperatureTenthsC,
 )
 
 private fun stableBackupStepId(taskId: String, position: Int): String =
@@ -292,7 +310,7 @@ internal fun TaskDefinitionEntity.toBackup() = DefinitionBackup(
     completionMessage, stepsFingerprint, cancelled, createdAtEpochMillis, updatedAtEpochMillis,
     recurrenceFrequency, recurrenceStartDate, recurrenceEndDate, recurrenceCount,
     recurrenceWeekdaysMask, recurrenceDeadlineTime, executionKind, executionAction,
-    executionTarget, reminderMinutesJson, executionConfigJson,
+    executionTarget, reminderMinutesJson, executionConfigJson, customReminder,
 )
 
 internal fun DefinitionBackup.toEntity() = TaskDefinitionEntity(
@@ -300,19 +318,34 @@ internal fun DefinitionBackup.toEntity() = TaskDefinitionEntity(
     completionMessage, stepsFingerprint, cancelled, createdAtEpochMillis, updatedAtEpochMillis,
     recurrenceFrequency, recurrenceStartDate, recurrenceEndDate, recurrenceCount,
     recurrenceWeekdaysMask, recurrenceDeadlineTime, executionKind, executionAction,
-    executionTarget, reminderMinutesJson, executionConfigJson,
+    executionTarget, reminderMinutesJson, executionConfigJson, customReminder,
 )
 
 internal fun TaskInstanceEntity.toBackup() = InstanceBackup(
     taskId, occurrenceKey, name, description, taskDate, deadline, groupId, required, points,
     sortOrder, completionMessage, status, completedAtEpochMillis, createdAtEpochMillis,
     updatedAtEpochMillis, category, executionKind, executionAction, executionTarget,
-    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted, executionConfigJson, awardedPoints,
+    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted, executionConfigJson, awardedPoints, customReminderAt,
 )
 
 internal fun InstanceBackup.toEntity() = TaskInstanceEntity(
     taskId, occurrenceKey, name, description, taskDate, deadline, groupId, required, points,
     sortOrder, completionMessage, status, completedAtEpochMillis, createdAtEpochMillis,
     updatedAtEpochMillis, category, executionKind, executionAction, executionTarget,
-    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted, executionConfigJson, awardedPoints ?: points.takeIf { status == "COMPLETED" },
+    reminderMinutesJson, publishedAtEpochMillis, groupNameSnapshot, singleDayAdjusted, executionConfigJson, awardedPoints ?: points.takeIf { status == "COMPLETED" }, customReminderAt,
+)
+
+
+@Serializable data class ReminderBackup(
+    val taskId: String, val occurrenceKey: String, val minutesBeforeDeadline: Int,
+    val scheduledForEpochMillis: Long, val state: String, val deliveredAtEpochMillis: Long?,
+    val createdAtEpochMillis: Long, val updatedAtEpochMillis: Long, val kind: String = "DEADLINE",
+)
+internal fun com.ds.localtaskmanager.data.ReminderRecordEntity.toBackup() = ReminderBackup(
+    taskId, occurrenceKey, minutesBeforeDeadline, scheduledForEpochMillis, state, deliveredAtEpochMillis,
+    createdAtEpochMillis, updatedAtEpochMillis, kind,
+)
+internal fun ReminderBackup.toEntity() = com.ds.localtaskmanager.data.ReminderRecordEntity(
+    taskId, occurrenceKey, minutesBeforeDeadline, scheduledForEpochMillis, state, deliveredAtEpochMillis,
+    createdAtEpochMillis, updatedAtEpochMillis, kind,
 )

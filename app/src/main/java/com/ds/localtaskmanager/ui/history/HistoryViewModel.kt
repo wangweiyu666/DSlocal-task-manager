@@ -255,6 +255,7 @@ class HistoryDetailViewModel(
                         execution = result.execution,
                         selectedOptionId = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Choice)?.selectedOptionId,
                         informationDraft = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Information)?.content.orEmpty(),
+                        temperatureTenthsC = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Temperature)?.temperatureTenthsC,
                         moodRating = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Mood)?.rating,
                         moodText = (result.execution as? com.ds.localtaskmanager.domain.execution.ExecutionState.Mood)?.text.orEmpty(),
                         noteDraft = result.note,

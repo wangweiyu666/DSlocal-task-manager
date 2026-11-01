@@ -34,6 +34,7 @@ class ConnectedSyncCoordinator internal constructor(
     }
 
     companion object {
+        const val KEY_PERIODIC = "periodic"
         const val KEY_ACCOUNT_ID = "accountId"
         const val KEY_MEMBERSHIP_ID = "membershipId"
         const val KEY_SPACE_ID = "spaceId"

@@ -69,6 +69,7 @@ data class TaskDefinitionEntity(
     val executionTarget: Int? = null,
     val reminderMinutesJson: String? = null,
     val executionConfigJson: String? = null,
+    val customReminder: String? = null,
 )
 
 @Entity(
@@ -172,6 +173,7 @@ data class TaskInstanceEntity(
     @ColumnInfo(defaultValue = "0") val singleDayAdjusted: Boolean = false,
     val executionConfigJson: String? = null,
     val awardedPoints: Int? = null,
+    val customReminderAt: String? = null,
 )
 
 @Entity(
@@ -210,6 +212,7 @@ data class InstanceStepEntity(
     val conditionStepId: String? = null,
     val conditionOptionId: String? = null,
     val selectedOptionId: String? = null,
+    val temperatureTenthsC: Int? = null,
 )
 
 @Entity(
@@ -369,7 +372,7 @@ data class ResultRevisionEntity(
 
 @Entity(
     tableName = "reminder_record",
-    primaryKeys = ["taskId", "occurrenceKey", "minutesBeforeDeadline"],
+    primaryKeys = ["taskId", "occurrenceKey", "minutesBeforeDeadline", "kind"],
     foreignKeys = [
         ForeignKey(
             entity = TaskInstanceEntity::class,
@@ -393,6 +396,7 @@ data class ReminderRecordEntity(
     val deliveredAtEpochMillis: Long?,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    @ColumnInfo(defaultValue = "'DEADLINE'") val kind: String = "DEADLINE",
 )
 
 private fun stableInstanceStepId(taskId: String, position: Int): String =

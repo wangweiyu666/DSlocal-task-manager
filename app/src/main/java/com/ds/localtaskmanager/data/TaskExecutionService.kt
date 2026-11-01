@@ -27,6 +27,9 @@ class TaskOperationException(
 ) : IllegalStateException(message)
 
 interface TaskExecutionService {
+    suspend fun saveTemperatureDraft(key: TaskInstanceKey, value: Int?): ExecutionState.Temperature { throw UnsupportedOperationException("temperature unsupported") }
+    suspend fun saveStepTemperature(key: TaskInstanceKey, stepId: String, value: Int?): StepState { throw UnsupportedOperationException("step temperature unsupported") }
+
     suspend fun saveChoice(key: TaskInstanceKey, optionId: String): ExecutionState.Choice { throw UnsupportedOperationException("choice unsupported") }
     suspend fun saveStepChoice(key: TaskInstanceKey, stepId: String, optionId: String): StepState { throw UnsupportedOperationException("step choice unsupported") }
     suspend fun getExecutionState(key: TaskInstanceKey): ExecutionState
@@ -297,6 +300,25 @@ class RoomTaskExecutionService(
         ExecutionState.Information(normalized, null)
     }
 
+    override suspend fun saveTemperatureDraft(key: TaskInstanceKey, value: Int?): ExecutionState.Temperature = database.withTransaction {
+        val instance = requirePending(key).also { if (it.executionKind != "TEMPERATURE") fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "任务不是体温询问") }
+        if (value != null && value !in 350..420) fail(TaskOperationCode.TEMPERATURE_OUT_OF_RANGE, "体温须在 35.0–42.0℃")
+        val old = executionDao.getTemperature(key.taskId, key.occurrenceKey)
+        val now = maxOf(nextMutationTime(instance), (old?.updatedAtEpochMillis ?: 0) + 1)
+        executionDao.upsertTemperature(TemperatureSubmissionEntity(key.taskId, key.occurrenceKey, value, old?.createdAtEpochMillis ?: now, now, null))
+        instanceDao.upsertInstances(listOf(instance.copy(updatedAtEpochMillis = now)))
+        ExecutionState.Temperature(value, null)
+    }
+
+    override suspend fun saveStepTemperature(key: TaskInstanceKey, stepId: String, value: Int?): StepState = database.withTransaction {
+        val instance = requirePending(key)
+        val step = requireEditableStep(key, stepId)
+        if (step.executionKind != "TEMPERATURE") fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "步骤不是体温询问")
+        if (value != null && value !in 350..420) fail(TaskOperationCode.TEMPERATURE_OUT_OF_RANGE, "体温须在 35.0–42.0℃")
+        val updated = step.copy(temperatureTenthsC = value, updatedAtEpochMillis = nextMutationTime(instance))
+        instanceDao.insertInstanceSteps(listOf(updated)); touchInstance(instance); updated.toStepState()
+    }
+
     override suspend fun saveMoodDraft(key: TaskInstanceKey, rating: Int?, text: String): ExecutionState.Mood = database.withTransaction {
         val instance = requirePending(key)
         if (instance.executionKind != "MOOD") fail(TaskOperationCode.EXECUTION_KIND_MISMATCH, "任务不是心情任务")
@@ -338,6 +360,10 @@ class RoomTaskExecutionService(
             val submission = executionDao.getSubmission(key.taskId, key.occurrenceKey)
                 ?: fail(TaskOperationCode.EXECUTION_TARGET_NOT_REACHED, "告知正文尚未填写")
             executionDao.upsertSubmission(submission.copy(submittedAtEpochMillis = now, updatedAtEpochMillis = now))
+        }
+        if (instance.executionKind == "TEMPERATURE") {
+            val temperature = requireNotNull(executionDao.getTemperature(key.taskId, key.occurrenceKey))
+            executionDao.upsertTemperature(temperature.copy(submittedAtEpochMillis = now, updatedAtEpochMillis = now))
         }
         if (instance.executionKind == "MOOD") {
             val mood = requireNotNull(executionDao.getMood(key.taskId, key.occurrenceKey))
@@ -388,6 +414,9 @@ class RoomTaskExecutionService(
             .lastOrNull { it.reason == "COMPLETED" }
             ?: fail(TaskOperationCode.COMPLETION_LEDGER_MISSING, "缺少完成积分流水")
         val now = nextMutationTime(instance)
+        if (instance.executionKind == "TEMPERATURE") executionDao.getTemperature(key.taskId, key.occurrenceKey)?.let {
+            executionDao.upsertTemperature(it.copy(submittedAtEpochMillis = null, updatedAtEpochMillis = now))
+        }
         val nextStatus = TaskStateMachine.statusAt(
             LocalDate.parse(instance.taskDate),
             instance.deadline?.let(LocalDateTime::parse),
@@ -479,6 +508,7 @@ class RoomTaskExecutionService(
             "STEPS" -> instanceDao.getInstanceSteps(instance.taskId, instance.occurrenceKey).let { steps ->
                 runCatching { validateStepSnapshot(steps) }.isSuccess && steps.completionSteps() != null
             }
+            "TEMPERATURE" -> executionDao.getTemperature(key.taskId, key.occurrenceKey)?.temperatureTenthsC in 350..420
             "MOOD" -> executionDao.getMood(key.taskId, key.occurrenceKey)?.let {
                 it.rating in 1..5 && it.text.codePointCount(0, it.text.length) <= 2000
             } ?: false
@@ -502,8 +532,11 @@ class RoomTaskExecutionService(
             "STEPS" -> ExecutionState.Steps(instanceDao.getInstanceSteps(instance.taskId, instance.occurrenceKey).map {
                 StepState(it.stepId, it.position, it.name, it.required, it.completed, it.executionKind,
                     it.executionAction, it.executionTarget, it.stepStatus, it.counterValue, it.elapsedMillis,
-                    it.informationContent, it.moodRating, it.moodText, it.executionConfigJson, it.conditionStepId, it.conditionOptionId, it.selectedOptionId)
+                    it.informationContent, it.moodRating, it.moodText, it.executionConfigJson, it.conditionStepId, it.conditionOptionId, it.selectedOptionId, it.temperatureTenthsC)
             })
+            "TEMPERATURE" -> executionDao.getTemperature(instance.taskId, instance.occurrenceKey).let {
+                ExecutionState.Temperature(it?.temperatureTenthsC, it?.submittedAtEpochMillis)
+            }
             "MOOD" -> executionDao.getMood(instance.taskId, instance.occurrenceKey).let {
                 ExecutionState.Mood(it?.rating, it?.text.orEmpty(), it?.submittedAtEpochMillis)
             }
@@ -589,13 +622,14 @@ class RoomTaskExecutionService(
         "COUNTER" -> (step.counterValue ?: 0) == (step.executionTarget ?: Int.MAX_VALUE)
         "TIMER" -> (step.elapsedMillis ?: 0L) == (step.executionTarget ?: Int.MAX_VALUE) * 1_000L
         "INFORMATION" -> !step.informationContent.isNullOrBlank() && step.informationContent!!.codePointCount(0, step.informationContent.length) <= INFORMATION_MAX_CODE_POINTS
+        "TEMPERATURE" -> step.temperatureTenthsC in 350..420
         "MOOD" -> step.moodRating in 1..5 && (step.moodText ?: "").codePointCount(0, (step.moodText ?: "").length) <= INFORMATION_MAX_CODE_POINTS
         else -> false
     }
 
     private fun InstanceStepEntity.toStepState() = StepState(
         stepId, position, name, required, completed, executionKind, executionAction, executionTarget, stepStatus,
-        counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId,
+        counterValue, elapsedMillis, informationContent, moodRating, moodText, executionConfigJson, conditionStepId, conditionOptionId, selectedOptionId, temperatureTenthsC,
     )
 
     private suspend fun currentGroup(taskId: String): String? {

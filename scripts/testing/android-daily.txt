@@ -5,3 +5,10 @@ com.ds.localtaskmanager.ui.execution.InformationAutoSaveTest
 com.ds.localtaskmanager.ui.execution.ChoiceAutoSaveTest
 com.ds.localtaskmanager.ui.today.TodayStartupTest
 com.ds.localtaskmanager.connected.ConnectedSyncEngineTest.startup*
+com.ds.localtaskmanager.connected.HourlySyncSchedulerTest
+com.ds.localtaskmanager.connected.ConnectedSyncEngineTest.hourly*
+com.ds.localtaskmanager.data.CustomReminderTest
+
+com.ds.localtaskmanager.data.TemperatureTaskTest
+com.ds.localtaskmanager.ui.execution.TemperatureAutoSaveTest
+com.ds.localtaskmanager.connected.TemperatureResultTest

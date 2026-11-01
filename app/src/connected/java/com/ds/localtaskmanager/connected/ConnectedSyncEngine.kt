@@ -94,6 +94,7 @@ internal data class ResultSnapshot(
     val mood: com.ds.localtaskmanager.data.MoodSubmissionEntity?,
     val steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>?,
     val selectedOptionId: String? = null,
+    val temperature: com.ds.localtaskmanager.data.TemperatureSubmissionEntity? = null,
 )
 
 open class ConnectedSyncEngine(
@@ -102,6 +103,7 @@ open class ConnectedSyncEngine(
     private val syncDatabase: ConnectedSyncDatabase = ConnectedSyncDatabase.create(application),
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
     private val enqueueWork: ((CloudSessionEntity) -> Unit)? = null,
+    private val hourlySync: HourlySyncScheduler = WorkManagerHourlySyncScheduler(application),
 ) {
     companion object {
         private val lock = Any()
@@ -149,7 +151,7 @@ open class ConnectedSyncEngine(
         val spaceId = requireNotNull(session.spaceId)
         val latest = dao.session() ?: return SyncAttemptResult.INVALID_IDENTITY
         if (latest.blockedReason != null) return SyncAttemptResult.USER_ACTION
-        if (input != null && dao.outbox(spaceId).none { it.state != "PERMANENT_FAILURE" } && !latest.needsSync) return SyncAttemptResult.COMPLETE
+        if (input != null && !input.getBoolean(ConnectedSyncCoordinator.KEY_PERIODIC, false) && dao.outbox(spaceId).none { it.state != "PERMANENT_FAILURE" } && !latest.needsSync) return SyncAttemptResult.COMPLETE
         if (latest.retryUntilEpochMillis > nowMillis()) {
             if (input == null) scheduleBackground(latest)
             return SyncAttemptResult.RETRY
@@ -235,12 +237,17 @@ open class ConnectedSyncEngine(
     fun recoverAfterStartup() {
         SyncTrace.event("PROCESS_RECOVERY")
         scope.launch {
-            catchSyncFailure { recoverPendingLocalWork(schedule = true) }
+            catchSyncFailure { recoverStartupWork() }
                 .onFailure {
                     SyncTrace.event("STARTUP_RECOVERY_FAILED", detail = it.javaClass.simpleName)
                     application.diagnosticEvents.record("CONNECTED_SYNC", "STARTUP_RECOVERY_FAILED", false)
                 }
         }
+    }
+
+    internal suspend fun recoverStartupWork() = sessionOperationMutex.withLock {
+        hourlySync.update(dao.session())
+        recoverPendingLocalWorkUnlocked(schedule = true)
     }
 
     suspend fun recoverPendingLocalWork(schedule: Boolean = true): Boolean = sessionOperationMutex.withLock { recoverPendingLocalWorkUnlocked(schedule) }
@@ -620,9 +627,12 @@ open class ConnectedSyncEngine(
             return
         }
         dao.saveSession(saved)
+        hourlySync.update(saved)
         val meta = dao.meta(membership.spaceId)
         mutableState.value = readyState(saved, meta?.lastSyncedAt, syncing = true)
         synchronize(saved, membership)
+        // Successful re-entry may have cleared a persisted privacy/sync block.
+        if (saved.blockedReason != null) hourlySync.update(dao.session())
     }
 
     private suspend fun synchronize(
@@ -897,6 +907,7 @@ open class ConnectedSyncEngine(
         val semantic = "result:${instance.taskId}:${instance.occurrenceKey}:${instance.updatedAtEpochMillis}"
         val prepared = application.database.withTransaction {
             val current = application.database.instanceDao().getInstance(instance.taskId, instance.occurrenceKey)
+            val temperature = if (instance.executionKind == "TEMPERATURE" && instance.status == "COMPLETED") application.database.executionDao().getTemperature(instance.taskId, instance.occurrenceKey) else null
             val mood = if (instance.executionKind == "MOOD" && instance.status == "COMPLETED") {
                 application.database.executionDao().getMood(instance.taskId, instance.occurrenceKey)
             } else null
@@ -906,7 +917,7 @@ open class ConnectedSyncEngine(
             val information = if (instance.executionKind == "INFORMATION") {
                 application.database.executionDao().getSubmission(instance.taskId, instance.occurrenceKey)
             } else null
-            prepareResultSnapshot(instance, current, information, mood, steps, application.database.executionDao().getProgress(instance.taskId, instance.occurrenceKey)?.selectedOptionId)
+            prepareResultSnapshot(instance, current, information, mood, steps, application.database.executionDao().getProgress(instance.taskId, instance.occurrenceKey)?.selectedOptionId, temperature)
         } ?: return
         prepared.information?.let { submission ->
             enqueue(
@@ -934,7 +945,7 @@ open class ConnectedSyncEngine(
                 payload = buildJsonObject {
                     put("assignmentId", assignmentId); put("occurrenceKey", occurrenceKey); put("taskRevision", revision)
                     put("eventType", "RESULT_SUBMITTED"); put("occurredAt", Instant.ofEpochMilli(instance.updatedAtEpochMillis).toString())
-                    put("data", buildExecutionResultData(prepared.instance, prepared.information?.content, prepared.mood, prepared.steps, prepared.selectedOptionId))
+                    put("data", buildExecutionResultData(prepared.instance, prepared.information?.content, prepared.mood, prepared.steps, prepared.selectedOptionId, prepared.temperature))
                 },
             ),
         )
@@ -1017,6 +1028,7 @@ open class ConnectedSyncEngine(
         }
         dao.clearSession()
         application.database.clearAllTables()
+        hourlySync.update(null)
         syncCoordinator.cancel(oldSession)
     }
 
@@ -1027,6 +1039,7 @@ open class ConnectedSyncEngine(
         application.database.clearAllTables()
         scheduledSignature = null
         visibleSessionGeneration = null
+        hourlySync.update(null)
         syncCoordinator.cancel(session)
     }
 
@@ -1095,8 +1108,11 @@ internal fun prepareResultSnapshot(
     mood: com.ds.localtaskmanager.data.MoodSubmissionEntity?,
     steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>?,
     selectedOptionId: String? = null,
+    temperature: com.ds.localtaskmanager.data.TemperatureSubmissionEntity? = null,
 ): ResultSnapshot? {
     if (current != expected) return null
+    if (expected.executionKind == "TEMPERATURE" && expected.status == "COMPLETED" &&
+        (temperature?.temperatureTenthsC !in 350..420 || temperature?.submittedAtEpochMillis != expected.completedAtEpochMillis)) return null
     if (expected.executionKind == "MOOD" && expected.status == "COMPLETED" &&
         (mood?.submittedAtEpochMillis == null || mood.submittedAtEpochMillis != expected.completedAtEpochMillis)
     ) return null
@@ -1104,7 +1120,7 @@ internal fun prepareResultSnapshot(
         steps?.takeIf(::hasFinalStepSnapshot) ?: return null
     } else null
     if (expected.executionKind == "CHOICE" && expected.status == "COMPLETED" && choiceOptions(expected.executionConfigJson).none { it.id == selectedOptionId }) return null
-    return ResultSnapshot(expected, information?.takeIf { it.submittedAtEpochMillis != null }, mood, finalSteps, selectedOptionId)
+    return ResultSnapshot(expected, information?.takeIf { it.submittedAtEpochMillis != null }, mood, finalSteps, selectedOptionId, temperature)
 }
 
 internal fun hasFinalStepSnapshot(steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>): Boolean {
@@ -1113,6 +1129,7 @@ internal fun hasFinalStepSnapshot(steps: List<com.ds.localtaskmanager.data.Insta
     if (ordered.map { it.position } != ordered.indices.toList()) return false
     if (ordered.any { it.stepId.isBlank() || it.stepStatus !in setOf("CONFIRMED", "SKIPPED", "NOT_APPLICABLE") }) return false
     if (ordered.any { it.required && it.stepStatus == "SKIPPED" }) return false
+    if (ordered.any { it.executionKind == "TEMPERATURE" && it.stepStatus == "CONFIRMED" && it.temperatureTenthsC !in 350..420 }) return false
     if (ordered.map { it.stepId }.distinct().size != ordered.size) return false
     val applicability = stepApplicability(ordered.map { it.branchState() })
     if (ordered.indices.any { i -> when (applicability[i]) {
@@ -1129,6 +1146,7 @@ internal fun buildExecutionResultData(
     mood: com.ds.localtaskmanager.data.MoodSubmissionEntity? = null,
     steps: List<com.ds.localtaskmanager.data.InstanceStepEntity>? = null,
     selectedOptionId: String? = null,
+    temperature: com.ds.localtaskmanager.data.TemperatureSubmissionEntity? = null,
 ): JsonObject = buildJsonObject {
     put("status", instance.status)
     put("localOccurrenceKey", instance.occurrenceKey)
@@ -1136,6 +1154,9 @@ internal fun buildExecutionResultData(
     put("taskDate", instance.taskDate)
     put("executionKind", instance.executionKind)
     if (instance.executionKind == "CHOICE" && instance.status == "COMPLETED") selectedOptionId?.let { put("selectedOptionId", it) }
+    if (instance.executionKind == "TEMPERATURE" && instance.status == "COMPLETED" && temperature?.submittedAtEpochMillis != null) {
+        put("temperatureTenthsC", requireNotNull(temperature.temperatureTenthsC))
+    }
     if (instance.executionKind == "MOOD" && instance.status == "COMPLETED" && mood?.submittedAtEpochMillis != null) {
         put("moodRating", requireNotNull(mood.rating))
         put("moodText", mood.text)
@@ -1152,6 +1173,7 @@ internal fun buildExecutionResultData(
                             "COUNTER" -> step.counterValue?.let { put("counterValue", it) }
                             "TIMER" -> step.elapsedMillis?.let { put("elapsedMillis", it) }
                             "INFORMATION" -> step.informationContent?.let { put("informationContent", it) }
+                            "TEMPERATURE" -> step.temperatureTenthsC?.let { put("temperatureTenthsC", it) }
                             "MOOD" -> { step.moodRating?.let { put("moodRating", it) }; step.moodText?.let { put("moodText", it) } }
                         }
                     }

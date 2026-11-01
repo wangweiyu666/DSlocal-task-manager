@@ -137,12 +137,16 @@ class RoomHistoryRepository(private val database: AppDatabase) : HistoryReposito
                 ExecutionState.Steps(database.instanceDao().getInstanceSteps(key.taskId, key.occurrenceKey).map {
                     StepState(it.stepId, it.position, it.name, it.required, it.completed, it.executionKind,
                         it.executionAction, it.executionTarget, it.stepStatus, it.counterValue, it.elapsedMillis,
-                        it.informationContent, it.moodRating, it.moodText, it.executionConfigJson, it.conditionStepId, it.conditionOptionId, it.selectedOptionId)
+                        it.informationContent, it.moodRating, it.moodText, it.executionConfigJson, it.conditionStepId, it.conditionOptionId, it.selectedOptionId, it.temperatureTenthsC)
                 })
             } else if (instance.executionKind == "NOTICE") {
                 ExecutionState.Notice((extendedExecution("NOTICE", instance.executionConfigJson) as ExecutionSpec.Notice).text)
             } else if (instance.executionKind == "CHOICE") {
                 ExecutionState.Choice(choiceOptions(instance.executionConfigJson), progress?.selectedOptionId)
+            } else if (instance.executionKind == "TEMPERATURE") {
+                database.executionDao().getTemperature(key.taskId, key.occurrenceKey).let {
+                    ExecutionState.Temperature(it?.temperatureTenthsC, it?.submittedAtEpochMillis)
+                }
             } else if (instance.executionKind == "MOOD") {
                 database.executionDao().getMood(key.taskId, key.occurrenceKey).let {
                     ExecutionState.Mood(it?.rating, it?.text.orEmpty(), it?.submittedAtEpochMillis)

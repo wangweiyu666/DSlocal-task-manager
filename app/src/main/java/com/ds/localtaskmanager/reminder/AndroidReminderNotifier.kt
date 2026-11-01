@@ -38,7 +38,7 @@ class AndroidReminderNotifier(context: Context) : ReminderNotifier {
     override fun post(instance: TaskInstanceEntity, key: ReminderKey) {
         if (!notificationsEnabled()) return
         val title = if (instance.required) "必做任务" else "选做任务"
-        val body = if (instance.required) "有一项必做任务即将截止" else "有一项选做任务即将截止"
+        val body = if (key.kind == "CUSTOM") "有一项任务到了提醒时间" else if (instance.required) "有一项必做任务即将截止" else "有一项选做任务即将截止"
         val intent = Intent(appContext, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra(EXTRA_TASK_ID, key.taskId)
@@ -57,7 +57,7 @@ class AndroidReminderNotifier(context: Context) : ReminderNotifier {
             Notification.Builder(appContext)
         }
         manager.notify(
-            "${key.taskId}|${key.occurrenceKey}|${key.minutesBeforeDeadline}".hashCode(),
+            "${key.taskId}|${key.occurrenceKey}|${key.kind}|${key.minutesBeforeDeadline}".hashCode(),
             builder
                 .setSmallIcon(R.drawable.ic_task_notification)
                 .setContentTitle(title)

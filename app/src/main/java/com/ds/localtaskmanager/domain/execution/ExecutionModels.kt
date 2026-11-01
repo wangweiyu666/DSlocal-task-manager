@@ -11,6 +11,7 @@ sealed interface ExecutionSpec {
     data class Timer(val targetSeconds: Int) : ExecutionSpec
 
     data object Information : ExecutionSpec
+    data object Temperature : ExecutionSpec
     data object Mood : ExecutionSpec
     data class Notice(val text: String) : ExecutionSpec
     data class Choice(val options: List<ChoiceOption>) : ExecutionSpec
@@ -31,6 +32,7 @@ data class TaskInstanceKey(
 sealed interface ExecutionState {
     data class Notice(val text: String) : ExecutionState
     data class Choice(val options: List<ChoiceOption>, val selectedOptionId: String?) : ExecutionState
+    data class Temperature(val temperatureTenthsC: Int?, val submittedAtEpochMillis: Long?) : ExecutionState
     data class Mood(
         val rating: Int?,
         val text: String,
@@ -77,6 +79,7 @@ data class StepState(
     val conditionStepId: String? = null,
     val conditionOptionId: String? = null,
     val selectedOptionId: String? = null,
+    val temperatureTenthsC: Int? = null,
 )
 
 data class ChoiceOption(val id: String, val name: String, val points: Int)
@@ -98,6 +101,7 @@ enum class TaskOperationCode {
     TIMER_OUT_OF_RANGE,
     INFORMATION_EMPTY,
     INFORMATION_TOO_LONG,
+    TEMPERATURE_OUT_OF_RANGE,
     MOOD_OUT_OF_RANGE,
     MOOD_TEXT_TOO_LONG,
     EXECUTION_TARGET_NOT_REACHED,

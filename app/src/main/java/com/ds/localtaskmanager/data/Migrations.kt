@@ -348,3 +348,25 @@ private val V3_INDEX_AND_NEW_TABLE_STATEMENTS = listOf(
     "CREATE INDEX `index_reminder_record_scheduledForEpochMillis` ON `reminder_record` (`scheduledForEpochMillis`)",
     "CREATE INDEX `index_reminder_record_state` ON `reminder_record` (`state`)",
 )
+
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE task_definition ADD COLUMN customReminder TEXT")
+        db.execSQL("ALTER TABLE task_instance ADD COLUMN customReminderAt TEXT")
+        db.execSQL("ALTER TABLE reminder_record RENAME TO reminder_record_v9")
+        db.execSQL("CREATE TABLE reminder_record (taskId TEXT NOT NULL, occurrenceKey TEXT NOT NULL, minutesBeforeDeadline INTEGER NOT NULL, scheduledForEpochMillis INTEGER NOT NULL, state TEXT NOT NULL, deliveredAtEpochMillis INTEGER, createdAtEpochMillis INTEGER NOT NULL, updatedAtEpochMillis INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'DEADLINE', PRIMARY KEY(taskId, occurrenceKey, minutesBeforeDeadline, kind), FOREIGN KEY(taskId, occurrenceKey) REFERENCES task_instance(taskId, occurrenceKey) ON UPDATE NO ACTION ON DELETE CASCADE)")
+        db.execSQL("INSERT INTO reminder_record SELECT *, 'DEADLINE' FROM reminder_record_v9")
+        db.execSQL("DROP TABLE reminder_record_v9")
+        db.execSQL("CREATE INDEX index_reminder_record_taskId_occurrenceKey ON reminder_record(taskId, occurrenceKey)")
+        db.execSQL("CREATE INDEX index_reminder_record_scheduledForEpochMillis ON reminder_record(scheduledForEpochMillis)")
+        db.execSQL("CREATE INDEX index_reminder_record_state ON reminder_record(state)")
+    }
+}
+
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS temperature_submission (taskId TEXT NOT NULL, occurrenceKey TEXT NOT NULL, temperatureTenthsC INTEGER, createdAtEpochMillis INTEGER NOT NULL, updatedAtEpochMillis INTEGER NOT NULL, submittedAtEpochMillis INTEGER, PRIMARY KEY(taskId, occurrenceKey), FOREIGN KEY(taskId, occurrenceKey) REFERENCES task_instance(taskId, occurrenceKey) ON UPDATE NO ACTION ON DELETE CASCADE)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_temperature_submission_taskId_occurrenceKey ON temperature_submission(taskId, occurrenceKey)")
+        db.execSQL("ALTER TABLE instance_step ADD COLUMN temperatureTenthsC INTEGER")
+    }
+}

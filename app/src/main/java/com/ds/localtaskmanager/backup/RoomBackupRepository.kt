@@ -30,6 +30,7 @@ class RoomBackupRepository(
         val dao = database.backupDao()
         val settings = settingsRepository.settings.value
         BackupPayload(
+            reminders = database.reminderDao().allRecords().map { it.toBackup() },
             settings = PortableSettings(
                 themeMode = settings.themeMode.name,
                 reduceMotion = settings.reduceMotion,
@@ -45,6 +46,7 @@ class RoomBackupRepository(
             instanceSteps = dao.instanceSteps().map { it.toBackup() },
             progress = dao.progress().map { it.toBackup() },
             information = dao.information().map { it.toBackup() },
+            temperatures = dao.temperatures().map { it.toBackup() },
             moods = dao.moods().map { it.toBackup() },
             notes = dao.notes().map { it.toBackup() },
             ledger = dao.ledger().map { it.toBackup() },
@@ -76,6 +78,7 @@ class RoomBackupRepository(
         dao.clearLedger()
         dao.clearNotes()
         dao.clearInformation()
+        dao.clearTemperatures()
         dao.clearMoods()
         dao.clearProgress()
         dao.clearInstanceSteps()
@@ -94,9 +97,11 @@ class RoomBackupRepository(
         dao.upsertDefinitionSteps(payload.definitionSteps.map { it.toEntity() })
         dao.upsertRecurrenceExceptions(payload.recurrenceExceptions.map { it.toEntity() })
         dao.upsertInstances(payload.instances.map { it.toEntity() })
+        database.reminderDao().upsertRecords(payload.reminders.map { it.toEntity() })
         dao.upsertInstanceSteps(payload.instanceSteps.map { it.toEntity() })
         dao.upsertProgress(payload.progress.map { it.toEntity() })
         dao.upsertInformation(payload.information.map { it.toEntity() })
+        dao.upsertTemperatures(payload.temperatures.map { it.toEntity() })
         dao.upsertMoods(payload.moods.map { it.toEntity() })
         dao.upsertNotes(payload.notes.map { it.toEntity() })
         dao.upsertLedger(payload.ledger.map { it.toEntity() })
@@ -190,6 +195,24 @@ internal object BackupMerger {
             local.information, backup.information, { "${it.taskId}|${it.occurrenceKey}" }, InformationBackup::updatedAtEpochMillis,
             "information", "告知正文", { it.taskId }, InformationBackup::content, state,
         )
+        val draftTemperatureKeys = instances.filter { it.executionKind == "TEMPERATURE" && it.status != "COMPLETED" }
+            .mapTo(hashSetOf()) { it.taskId to it.occurrenceKey }
+        val temperatureCandidates = updated(
+            local.temperatures.filter { (it.taskId to it.occurrenceKey) in draftTemperatureKeys },
+            backup.temperatures.filter { (it.taskId to it.occurrenceKey) in draftTemperatureKeys },
+            { "${it.taskId}|${it.occurrenceKey}" }, TemperatureBackup::updatedAtEpochMillis,
+            "temperature", "体温记录", { it.taskId }, { "${it.temperatureTenthsC ?: "未选择"}" }, state,
+        )
+        // Completed answers belong to the selected instance snapshot, not to a newer draft.
+        val temperatures = instances.filter { it.executionKind == "TEMPERATURE" }.mapNotNull { instance ->
+            val key = instance.taskId to instance.occurrenceKey
+            val source = if (instance.status == "COMPLETED") {
+                if (local.instances.any { it == instance }) local.temperatures else backup.temperatures
+            } else temperatureCandidates
+            source.firstOrNull { (it.taskId to it.occurrenceKey) == key }?.let {
+                if (instance.status == "COMPLETED") it else it.copy(submittedAtEpochMillis = null)
+            }
+        }
         val draftMoodKeys = instances.filter { it.executionKind == "MOOD" && it.status != "COMPLETED" }
             .mapTo(hashSetOf()) { it.taskId to it.occurrenceKey }
         val moodCandidates = updated(
@@ -227,6 +250,13 @@ internal object BackupMerger {
         return MergePreview(
             merged = BackupPayload(
                 settings = local.settings,
+                reminders = instances.flatMap { instance ->
+                    val matching = listOf(local, backup).filter { source -> instance in source.instances }
+                    matching.flatMap { source -> source.reminders.filter { it.taskId == instance.taskId && it.occurrenceKey == instance.occurrenceKey } }
+                        .groupBy { it.kind to it.minutesBeforeDeadline }.values.map { records ->
+                            records.maxWith(compareBy<ReminderBackup> { it.state == "DELIVERED" }.thenBy { it.updatedAtEpochMillis })
+                        }
+                },
                 profiles = profiles.sortedBy { it.id },
                 importBatches = importBatches.sortedBy { it.batchId },
                 groups = groups.sortedBy { it.groupId },
@@ -237,6 +267,7 @@ internal object BackupMerger {
                 instanceSteps = instanceSteps.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey }, { it.position })),
                 progress = progress.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 information = information.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
+                temperatures = temperatures.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 moods = moods.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 notes = notes.sortedWith(compareBy({ it.taskId }, { it.occurrenceKey })),
                 ledger = ledger.sortedBy { it.ledgerId },

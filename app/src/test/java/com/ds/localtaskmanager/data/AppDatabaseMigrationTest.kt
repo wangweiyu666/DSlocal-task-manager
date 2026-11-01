@@ -33,6 +33,41 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
+    fun version10PreservesExistingRowsAndAddsTemperatureStorage() {
+        createLegacyDatabase(V7_DATABASE, 10) { db ->
+            insertV1Task(db, "LegacyTaskV10001", "LegacyGroupV1001")
+            listOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).forEach { it.migrate(db) }
+        }
+        val database = openCurrent(V7_DATABASE)
+        database.openHelper.readableDatabase.query("SELECT executionKind,customReminderAt FROM task_instance").use {
+            assertTrue(it.moveToFirst()); assertEquals("NORMAL", it.getString(0)); assertTrue(it.isNull(1))
+        }
+        database.openHelper.readableDatabase.query("SELECT temperatureTenthsC FROM instance_step").use { assertEquals(0, it.count) }
+        database.openHelper.readableDatabase.query("SELECT * FROM temperature_submission").use { assertEquals(0, it.count) }
+        assertNoForeignKeyViolations(database)
+    }
+
+    @Test
+    fun version9PreservesDeliveredReminderIdentityAndAddsNullableCustomTime() {
+        createLegacyDatabase(V7_DATABASE, 9) { db ->
+            insertV1Task(db, "LegacyTaskV90001", "LegacyGroupV9001")
+            listOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).forEach { it.migrate(db) }
+            db.execSQL("INSERT INTO reminder_record VALUES ('LegacyTaskV90001','once',10,500,'DELIVERED',500,100,500)")
+        }
+        val database = openCurrent(V7_DATABASE)
+        database.openHelper.readableDatabase.query("SELECT kind,state,deliveredAtEpochMillis FROM reminder_record").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("DEADLINE", it.getString(0))
+            assertEquals("DELIVERED", it.getString(1))
+            assertEquals(500L, it.getLong(2))
+        }
+        database.openHelper.readableDatabase.query("SELECT customReminderAt FROM task_instance").use {
+            assertTrue(it.moveToFirst())
+            assertTrue(it.isNull(0))
+        }
+    }
+
+    @Test
     fun `version 8 migrates actual awards without converting old task types`() {
         createLegacyDatabase(V7_DATABASE, 8) { db ->
             insertV1Task(db, "LegacyTaskV80001", "LegacyGroupV8001")
@@ -316,7 +351,7 @@ class AppDatabaseMigrationTest {
 
     private fun openCurrent(name: String): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .allowMainThreadQueries()
             .build()
             .also {

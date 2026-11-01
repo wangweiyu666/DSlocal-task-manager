@@ -17,6 +17,8 @@
 
 ## 推送与部署流程
 
+用户于 2026-11-01 授予加密恢复归档的长期授权：在已获授权的生产部署中，可直接使用 GitHub 现有生产凭据读取两个 D1 恢复点、两个 Worker 当前部署及必要路由，在 runner 内加密后上传仅含密文的 GitHub artifact（保留 14 天），并下载到本机验证解密，无需每次重新询问归档权限。私钥只保存在本机，不上传 token 或未加密恢复信息。该长期授权不包含未来生产部署、数据库恢复／删除或凭据权限扩大。
+
 1. 按 [AGENTS.md](../AGENTS.md) 执行。检查工作区、分支、远程和已有发布，只提交相关文件并添加 DCO sign-off；正常推送，不强制覆盖。固定完整 SHA，已有提交和运行不重复创建。
 2. 仅执行 [最小测试方案](minimal-testing.md) 的活动集合；最终验证由同 SHA 的适用 CI 执行一次，不再本地全套后 CI 重跑。Web/CSS 改动不等待 Android CI。Cloud Connected 统一验证并生成 Web 产物，Dom Web Pages 复用；旧回归仅在正式截图或手动验收出问题后诊断。
 3. 沿用当次明确的 production 发布授权，不重复询问；push-only 或模型偏好不授权生产变更/未来发布。部署前私下记录两个生产 D1 的 Time Travel bookmark、两个 Worker 当前版本和必要路由配置。生产 CI 会在迁移前读取这些信息并用本机持有的 RSA 公钥加密，只上传密文 artifact，保留 14 天。先在本机生成至少 3072 位 RSA 密钥对，将私钥保存在 Git 忽略的 `release-output/` 私有目录；将 DER/SPKI 公钥 Base64 作为 `recovery_public_key` 输入。私钥不进入 GitHub、命令正文或日志。下载归档后在本机验证解密并保存；归档失败会阻止生产变更。

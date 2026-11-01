@@ -66,7 +66,7 @@ interface InstanceDao {
     @Query(
         """
         SELECT * FROM task_instance AS instance
-        WHERE instance.reminderMinutesJson IS NOT NULL
+        WHERE instance.reminderMinutesJson IS NOT NULL OR instance.customReminderAt IS NOT NULL
            OR EXISTS (
                SELECT 1 FROM reminder_record AS reminder
                WHERE reminder.taskId = instance.taskId

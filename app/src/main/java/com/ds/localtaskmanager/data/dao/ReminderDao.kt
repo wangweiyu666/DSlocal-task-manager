@@ -17,10 +17,10 @@ interface ReminderDao {
         """
         SELECT * FROM reminder_record
         WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey
-          AND minutesBeforeDeadline = :minutes
+          AND minutesBeforeDeadline = :minutes AND kind = :kind
         """,
     )
-    suspend fun getRecord(taskId: String, occurrenceKey: String, minutes: Int): ReminderRecordEntity?
+    suspend fun getRecord(taskId: String, occurrenceKey: String, minutes: Int, kind: String = "DEADLINE"): ReminderRecordEntity?
 
     @Query("SELECT * FROM reminder_record ORDER BY scheduledForEpochMillis")
     suspend fun allRecords(): List<ReminderRecordEntity>

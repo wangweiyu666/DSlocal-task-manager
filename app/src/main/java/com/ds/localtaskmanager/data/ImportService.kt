@@ -1,5 +1,7 @@
 package com.ds.localtaskmanager.data
 
+import com.ds.localtaskmanager.domain.reminder.resolveCustomReminder
+import com.ds.localtaskmanager.domain.reminder.validateCustomReminder
 import androidx.room.withTransaction
 import com.ds.localtaskmanager.data.dao.AuditDao
 import com.ds.localtaskmanager.data.dao.DefinitionDao
@@ -209,6 +211,7 @@ class RoomImportService(
             val oldInstance = oldInstances[task.taskId]
             val desired = desiredDefinitions.getValue(task.taskId)
             val updatePlan = updatePlans.getValue(task.taskId)
+            if (task.recurrence == RecurrenceSpec.None) validateCustomReminder(resolveCustomReminder(task.customReminder, updatePlan.taskDate), updatePlan.deadline)
             val singleToSingle = oldDefinition?.recurrenceFrequency == null && desired.recurrenceFrequency == null
             val types = linkedSetOf<ImportChangeType>()
             when {
@@ -360,6 +363,8 @@ class RoomImportService(
         val date = exception.occurrenceDate
         val existing = instanceDao.getInstance(exception.taskId, date.toString())
         val effectiveDeadline = exception.deadline.valueOr(definition.deadlineForOccurrence(date))
+        val effectiveCustomReminder = exception.customReminder.valueOr(resolveCustomReminder(definition.customReminder, date))
+        if (!exception.cancelled) validateCustomReminder(effectiveCustomReminder, effectiveDeadline, "e[$index].a")
         val effectiveReminders = exception.reminders.valueOr(definition.reminderMinutesJson.toReminderList())
         if (effectiveReminders.isNotEmpty() && effectiveDeadline == null) {
             throw Dst1ValidationException(
@@ -441,6 +446,7 @@ class RoomImportService(
         tasks.forEach { task ->
             val oldDefinition = oldDefinitions[task.taskId]
             val updatePlan = updatePlans.getValue(task.taskId)
+            if (task.recurrence == RecurrenceSpec.None) validateCustomReminder(resolveCustomReminder(task.customReminder, updatePlan.taskDate), updatePlan.deadline)
             if (task.recurrence !is RecurrenceSpec.None) {
                 val incomingExceptions = batch.exceptions.filter { it.taskId == task.taskId }.associateBy { it.occurrenceDate.toString() }
                 val storedExceptions = database.recurrenceExceptionDao().forTask(task.taskId)
@@ -450,6 +456,10 @@ class RoomImportService(
                         ?: storedExceptions[occurrenceDate]?.let { parser.parseExceptionJson(it.patchJson) }
                     if (exception != null && !exception.cancelled && !exception.clearsException) {
                         validateEffectiveException(task.execution, task.steps, exception)
+                        val targetDefinition = definitions.first { it.taskId == task.taskId }
+                        val date = exception.occurrenceDate
+                        validateCustomReminder(exception.customReminder.valueOr(resolveCustomReminder(task.customReminder, date)),
+                            exception.deadline.valueOr(targetDefinition.deadlineForOccurrence(date)), "e.a")
                     }
                 }
                 val mutableInstances = allOldInstances[task.taskId].orEmpty()
@@ -462,12 +472,18 @@ class RoomImportService(
                             val exception = incomingException ?: storedException?.let { parser.parseExceptionJson(it.patchJson) }
                             val effectiveExecution = exception?.let { it.execution.valueOr(task.execution) } ?: task.execution
                             if (exception != null && !exception.cancelled && !exception.clearsException) validateEffectiveException(task.execution, task.steps, exception)
+                            val custom = (exception?.customReminder ?: Field.Missing).valueOr(resolveCustomReminder(task.customReminder, LocalDate.parse(existing.taskDate)))
+                            val effectiveDeadline = if (exception?.clearsException == true)
+                                definitions.first { it.taskId == task.taskId }.deadlineForOccurrence(LocalDate.parse(existing.taskDate))
+                            else (exception?.deadline ?: Field.Missing).valueOr(existing.deadline?.let(LocalDateTime::parse))
+                            if (exception?.cancelled != true) validateCustomReminder(custom, effectiveDeadline)
                             existing.copy(
                                 executionKind = effectiveExecution.kindName(),
                                 executionAction = effectiveExecution.actionValue(),
                                 executionTarget = effectiveExecution.targetValue(),
                                 executionConfigJson = effectiveExecution.configJson(),
-                                reminderMinutesJson = task.reminderMinutes.toStorageJson(),
+                                reminderMinutesJson = (exception?.reminders ?: Field.Missing).valueOr(task.reminderMinutes).toStorageJson(),
+                                customReminderAt = custom?.toString(),
                                 updatedAtEpochMillis = now,
                             )
                         },
@@ -494,6 +510,7 @@ class RoomImportService(
                             instanceDao.deleteInstanceSteps(existing.taskId, existing.occurrenceKey)
                             executionDao.deleteProgress(existing.taskId, existing.occurrenceKey)
                             executionDao.deleteSubmission(existing.taskId, existing.occurrenceKey)
+                            executionDao.deleteTemperature(existing.taskId, existing.occurrenceKey)
                             executionDao.deleteMood(existing.taskId, existing.occurrenceKey)
                         }
                     }
@@ -546,6 +563,7 @@ class RoomImportService(
                     deadline = updatePlan.deadline?.toString(),
                     status = updatePlan.status.name,
                     reminderMinutesJson = task.reminderMinutes.toStorageJson(),
+                    customReminderAt = task.customReminder,
                     publishedAtEpochMillis = now,
                     updatedAtEpochMillis = now,
                 )
@@ -712,6 +730,9 @@ class RoomImportService(
         val reminderMinutes = if (clearing) definition.reminderMinutesJson.toReminderList() else {
             exception.reminders.valueOr(definition.reminderMinutesJson.toReminderList())
         }
+        val customReminder = if (clearing) resolveCustomReminder(definition.customReminder, date)
+            else exception.customReminder.valueOr(resolveCustomReminder(definition.customReminder, date))
+        if (!exception.cancelled) validateCustomReminder(customReminder, deadline)
         val status = when {
             !clearing && exception.cancelled -> TaskStatus.CANCELLED
             else -> TaskStateMachine.statusAt(date, deadline, nowDateTime())
@@ -731,6 +752,7 @@ class RoomImportService(
             executionTarget = execution.targetValue(),
             executionConfigJson = execution.configJson(),
             reminderMinutesJson = reminderMinutes.toStorageJson(),
+            customReminderAt = customReminder?.toString(),
             publishedAtEpochMillis = now,
             updatedAtEpochMillis = now,
             singleDayAdjusted = !clearing,
@@ -773,6 +795,7 @@ class RoomImportService(
             if (progress?.selectedOptionId != null && choiceOptions(updated.executionConfigJson).none { it.id == progress.selectedOptionId }) executionDao.deleteProgress(updated.taskId, updated.occurrenceKey)
         }
         if (updated.executionKind != "STEPS" && existing.executionKind != updated.executionKind) {
+            executionDao.deleteTemperature(existing.taskId, existing.occurrenceKey)
             executionDao.deleteMood(existing.taskId, existing.occurrenceKey)
         }
         if (clearing || exception.cancelled || exception.execution is Field.Value) {
@@ -824,6 +847,7 @@ class RoomImportService(
         )
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
+        "TEMPERATURE" -> ExecutionSpec.Temperature
         "MOOD" -> ExecutionSpec.Mood
         "NOTICE", "CHOICE" -> extendedExecution(executionKind, executionConfigJson)
         "STEPS" -> ExecutionSpec.Steps
@@ -867,6 +891,7 @@ class RoomImportService(
         )
         "TIMER" -> ExecutionSpec.Timer(checkNotNull(executionTarget))
         "INFORMATION" -> ExecutionSpec.Information
+        "TEMPERATURE" -> ExecutionSpec.Temperature
         "MOOD" -> ExecutionSpec.Mood
         "NOTICE", "CHOICE" -> extendedExecution(executionKind, executionConfigJson)
         "STEPS" -> ExecutionSpec.Steps
@@ -972,6 +997,7 @@ class RoomImportService(
             executionTarget = execution.targetValue(),
             executionConfigJson = execution.configJson(),
             reminderMinutesJson = reminderMinutes.toStorageJson(),
+            customReminder = customReminder,
         )
     }
 
@@ -1002,6 +1028,7 @@ class RoomImportService(
             executionTarget = execution.targetValue(),
             executionConfigJson = execution.configJson(),
             reminderMinutesJson = reminderMinutes.toStorageJson(),
+            customReminderAt = customReminder,
             publishedAtEpochMillis = if (updatePlan.reopened || old == null) now else old.publishedAtEpochMillis,
             groupNameSnapshot = groupNameSnapshot,
         )
@@ -1056,7 +1083,7 @@ class RoomImportService(
         val keepChoice = oldInstance.executionKind == "CHOICE" && task.execution is ExecutionSpec.Choice &&
             task.execution.options.any { it.id == progress?.selectedOptionId }
         if (!convertingToSteps && !keepChoice) executionDao.deleteProgress(oldInstance.taskId, oldInstance.occurrenceKey)
-        if (!convertingToSteps) executionDao.deleteMood(oldInstance.taskId, oldInstance.occurrenceKey)
+        if (!convertingToSteps) { executionDao.deleteTemperature(oldInstance.taskId, oldInstance.occurrenceKey); executionDao.deleteMood(oldInstance.taskId, oldInstance.occurrenceKey) }
         if (!convertingToSteps && oldDefinition.executionKind == "INFORMATION" && task.execution.kindName() != "INFORMATION") {
             executionDao.deleteSubmission(oldInstance.taskId, oldInstance.occurrenceKey)
         }
@@ -1075,6 +1102,7 @@ class RoomImportService(
         val old = instanceDao.getInstanceSteps(taskId, occurrenceKey).associateBy { it.stepId }
         val legacyProgress = executionDao.getProgress(taskId, occurrenceKey)
         val legacyInformation = executionDao.getSubmission(taskId, occurrenceKey)
+        val legacyTemperature = executionDao.getTemperature(taskId, occurrenceKey)
         val legacyMood = executionDao.getMood(taskId, occurrenceKey)
         val forceReset = oldInstance?.executionKind != null && oldInstance.executionKind != "STEPS" && targetExecutionKind == "STEPS"
         val changedAt = if (forceReset) 0 else imported.indices.firstOrNull { index ->
@@ -1115,13 +1143,14 @@ class RoomImportService(
                 counterValue = previous?.counterValue?.takeIf { compatible },
                 elapsedMillis = previous?.elapsedMillis?.takeIf { compatible },
                 informationContent = previous?.informationContent?.takeIf { compatible },
+                temperatureTenthsC = previous?.temperatureTenthsC?.takeIf { compatible },
                 moodRating = previous?.moodRating?.takeIf { compatible },
                 moodText = previous?.moodText?.takeIf { compatible },
                 selectedOptionId = previous?.selectedOptionId?.takeIf { id -> compatible && (step.execution as? ExecutionSpec.Choice)?.options?.any { it.id == id } == true },
             )
         })
         val rootIndex = imported.indexOfFirst { it.id == rootStepId(taskId) }
-        val hasLegacyExecution = legacyProgress != null || legacyInformation != null || legacyMood != null
+        val hasLegacyExecution = legacyProgress != null || legacyInformation != null || legacyMood != null || legacyTemperature != null
         if (rootIndex >= 0 && hasLegacyExecution) {
             val root = instanceDao.getInstanceSteps(taskId, occurrenceKey).first { it.position == rootIndex }
             val compatibleRoot = oldInstance != null &&
@@ -1132,12 +1161,14 @@ class RoomImportService(
                 counterValue = legacyProgress?.counterValue?.takeIf { compatibleRoot && root.executionKind == "COUNTER" && legacyProgress.executionKind == "COUNTER" },
                 elapsedMillis = legacyProgress?.elapsedMillis?.takeIf { compatibleRoot && root.executionKind == "TIMER" && legacyProgress.executionKind == "TIMER" },
                 informationContent = legacyInformation?.content?.takeIf { compatibleRoot && root.executionKind == "INFORMATION" },
+                temperatureTenthsC = legacyTemperature?.temperatureTenthsC?.takeIf { compatibleRoot && root.executionKind == "TEMPERATURE" },
                 moodRating = legacyMood?.rating?.takeIf { compatibleRoot && root.executionKind == "MOOD" },
                 moodText = legacyMood?.text?.takeIf { compatibleRoot && root.executionKind == "MOOD" },
                 selectedOptionId = legacyProgress?.selectedOptionId?.takeIf { id -> compatibleRoot && root.executionKind == "CHOICE" && choiceOptions(root.executionConfigJson).any { it.id == id } },
             )))
             executionDao.deleteProgress(taskId, occurrenceKey)
             executionDao.deleteSubmission(taskId, occurrenceKey)
+            executionDao.deleteTemperature(taskId, occurrenceKey)
             executionDao.deleteMood(taskId, occurrenceKey)
         }
     }
@@ -1274,6 +1305,7 @@ class RoomImportService(
         is ExecutionSpec.Counter -> "COUNTER"
         is ExecutionSpec.Timer -> "TIMER"
         ExecutionSpec.Information -> "INFORMATION"
+        ExecutionSpec.Temperature -> "TEMPERATURE"
         ExecutionSpec.Mood -> "MOOD"
         is ExecutionSpec.Notice -> "NOTICE"
         is ExecutionSpec.Choice -> "CHOICE"

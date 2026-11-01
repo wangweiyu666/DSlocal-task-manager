@@ -432,7 +432,7 @@ class ConnectedSyncEngineTest {
     private suspend fun checkCachedStartup(status: Int, blockedReason: String?) {
         seedCompletedTask()
         if (status == 401) {
-            androidx.work.WorkManager.initialize(application, androidx.work.Configuration.Builder().build())
+            ensureWorkManager()
         }
         syncDatabase.dao().saveSession(session().copy(blockedReason = blockedReason))
         val entered = CountDownLatch(1)
@@ -482,6 +482,87 @@ class ConnectedSyncEngineTest {
             assertEquals("private draft answer", application.database.executionDao().getSubmission(INFO_TASK_ID, "once")?.content)
         }
     }
+
+    @Test fun hourlyPullsWithoutPendingUploads() = runBlocking {
+        val active = session()
+        syncDatabase.dao().saveSession(active)
+        syncDatabase.dao().saveMeta(CloudSyncMetaEntity(SPACE_ID, "cursor-1", null, "Asia/Hong_Kong", 1))
+        val requests = AtomicInteger()
+        val engine = ConnectedSyncEngine(application, scriptedApi(requests, "accepted"), syncDatabase, { NOW }, {})
+        assertEquals(SyncAttemptResult.COMPLETE, engine.runBackground(validInput(active)))
+        assertEquals(0, requests.get())
+        assertEquals(SyncAttemptResult.COMPLETE, engine.runBackground(hourlyInput(active)))
+        assertEquals(3, requests.get())
+        assertEquals("cursor-2", syncDatabase.dao().meta(SPACE_ID)?.changesCursor)
+        assertEquals(false, syncDatabase.dao().session()?.needsSync)
+        assertTrue(syncDatabase.dao().outbox(SPACE_ID).isEmpty())
+    }
+
+    @Test fun hourlyHonorsIdentityCooldownAndBlocks() = runBlocking {
+        val active = session(retryUntilEpochMillis = NOW + 60_000)
+        syncDatabase.dao().saveSession(active)
+        val requests = AtomicInteger()
+        val engine = ConnectedSyncEngine(application, CloudApi("https://example.invalid") { url ->
+            requests.incrementAndGet()
+            object : HttpURLConnection(url) {
+                override fun connect() = Unit
+                override fun usingProxy() = false
+                override fun disconnect() = Unit
+                override fun getResponseCode() = 503
+                override fun getErrorStream() = ByteArrayInputStream("{}".toByteArray())
+            }
+        }, syncDatabase, { NOW }, {})
+        assertEquals(SyncAttemptResult.INVALID_IDENTITY, engine.runBackground(hourlyInput(active.copy(sessionGeneration = "old"))))
+        assertEquals(SyncAttemptResult.RETRY, engine.runBackground(hourlyInput(active)))
+        syncDatabase.dao().saveSession(active.copy(blockedReason = "PRIVACY_ACK_REQUIRED"))
+        assertEquals(SyncAttemptResult.USER_ACTION, engine.runBackground(hourlyInput(active)))
+        assertEquals(NOW + 60_000, syncDatabase.dao().session()?.retryUntilEpochMillis)
+        assertEquals(0, requests.get())
+        syncDatabase.dao().saveSession(active.copy(retryUntilEpochMillis = 0))
+        assertEquals(SyncAttemptResult.RETRY, engine.runBackground(hourlyInput(active)))
+        assertEquals(1, requests.get())
+        assertEquals(true, syncDatabase.dao().session()?.needsSync)
+        assertTrue(requireNotNull(syncDatabase.dao().session()).retryUntilEpochMillis > NOW)
+    }
+
+    @Test fun hourlyRegistrationRestoresAndCancelsOnLogout() = runBlocking {
+        ensureWorkManager()
+        val active = session()
+        syncDatabase.dao().saveSession(active)
+        syncDatabase.dao().saveMeta(CloudSyncMetaEntity(SPACE_ID, "cursor-1", null, "Asia/Hong_Kong", 1))
+        val scheduled = java.util.concurrent.CopyOnWriteArrayList<CloudSessionEntity?>()
+        val engine = ConnectedSyncEngine(application, scriptedApi(AtomicInteger(), "accepted"), syncDatabase,
+            { NOW }, {}, HourlySyncScheduler { scheduled += it })
+        engine.recoverStartupWork()
+        assertEquals(listOf(active), scheduled.toList())
+        engine.restore()
+        withTimeout(10_000) { engine.state.first { it is ConnectedState.Ready && !it.syncing } }
+        assertEquals(2, scheduled.size)
+        assertEquals(active.sessionGeneration, scheduled.last()?.sessionGeneration)
+        syncDatabase.dao().saveSession(active.copy(blockedReason = "PRIVACY_ACK_REQUIRED"))
+        engine.restore()
+        withTimeout(10_000) {
+            while (scheduled.size < 4) kotlinx.coroutines.delay(10)
+        }
+        assertEquals("PRIVACY_ACK_REQUIRED", scheduled[2]?.blockedReason)
+        assertEquals(null, scheduled[3]?.blockedReason)
+        assertEquals(active.sessionGeneration, scheduled[3]?.sessionGeneration)
+        engine.logout()
+        withTimeout(10_000) { engine.state.first { it == ConnectedState.SignedOut } }
+        assertEquals(null, scheduled.last())
+        assertEquals(null, syncDatabase.dao().session())
+    }
+
+    private fun ensureWorkManager() {
+        try {
+            androidx.work.WorkManager.getInstance(application)
+        } catch (_: IllegalStateException) {
+            androidx.work.WorkManager.initialize(application, androidx.work.Configuration.Builder().build())
+        }
+    }
+
+    private fun hourlyInput(session: CloudSessionEntity) = Data.Builder().putAll(validInput(session))
+        .putBoolean(ConnectedSyncCoordinator.KEY_PERIODIC, true).build()
 
     private fun engine(enqueue: ((CloudSessionEntity) -> Unit)?): ConnectedSyncEngine = ConnectedSyncEngine(
         application = application,
@@ -640,6 +721,8 @@ class ConnectedSyncEngineTest {
         requests.incrementAndGet()
         val path = url.path + url.query?.let { "?$it" }.orEmpty()
         val response = when {
+            path == "/v1/invitations" -> "{\"invitations\":[]}"
+            path == "/v1/auth/logout" -> "{}"
             path == "/v1/account" -> "{\"account\":{\"status\":\"ACTIVE\",\"privacyNoticeVersion\":1,\"requiredPrivacyNoticeVersion\":1}}"
             path == "/v1/bootstrap" -> "{\"service\":{\"autoSyncIntervalSeconds\":15},\"account\":{\"id\":\"$ACCOUNT_ID\"},\"memberships\":[{\"id\":\"$MEMBERSHIP_ID\",\"role\":\"EXECUTOR\",\"space\":{\"id\":\"$SPACE_ID\",\"name\":\"测试空间\",\"timeZone\":\"Asia/Hong_Kong\",\"timeZoneVersion\":1}}]}"
             path == "/v1/spaces/$SPACE_ID/notifications" -> {

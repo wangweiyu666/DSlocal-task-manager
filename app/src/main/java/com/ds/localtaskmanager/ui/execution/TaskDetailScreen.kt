@@ -124,6 +124,9 @@ fun TaskDetailRoute(
         onStepUndo = viewModel::undoStep,
         onStepInformationChange = viewModel::updateStepInformation,
         onStepChoiceChange = viewModel::updateStepChoice,
+        onStepTemperatureChange = viewModel::updateStepTemperature,
+        onTemperatureChange = viewModel::updateTemperature,
+        onTemperatureRetry = viewModel::retryTemperatureSave,
         onStepMoodChange = viewModel::updateStepMood,
         onStepCounterChange = viewModel::updateStepCounter,
         onStepTimerToggle = { stepId -> if (state.activeStepTimerId == stepId) viewModel.pauseStepTimer(stepId) else viewModel.startStepTimer(stepId) },
@@ -185,6 +188,9 @@ fun TaskDetailScreen(
     onStepUndo: (String) -> Unit = {},
     onStepChoiceChange: (String, String) -> Unit = { _, _ -> },
     onStepInformationChange: (String, String) -> Unit = { _, _ -> },
+    onStepTemperatureChange: (String, Int) -> Unit = { _, _ -> },
+    onTemperatureChange: (Int) -> Unit = {},
+    onTemperatureRetry: () -> Unit = {},
     onStepMoodChange: (String, Int?, String) -> Unit = { _, _, _ -> },
     onStepCounterChange: (String, Int) -> Unit = { _, _ -> },
     onStepTimerToggle: (String) -> Unit = {},
@@ -265,6 +271,9 @@ fun TaskDetailScreen(
                 onStepUndo = onStepUndo,
                 onStepInformationChange = onStepInformationChange,
                 onStepChoiceChange = onStepChoiceChange,
+                onStepTemperatureChange = onStepTemperatureChange,
+                onTemperatureChange = onTemperatureChange,
+                onTemperatureRetry = onTemperatureRetry,
                 onStepMoodChange = onStepMoodChange,
                 onStepCounterChange = onStepCounterChange,
                 onStepTimerToggle = onStepTimerToggle,
@@ -333,6 +342,9 @@ private fun TaskDetailContent(
     onStepUndo: (String) -> Unit,
     onStepChoiceChange: (String, String) -> Unit = { _, _ -> },
     onStepInformationChange: (String, String) -> Unit,
+    onStepTemperatureChange: (String, Int) -> Unit,
+    onTemperatureChange: (Int) -> Unit,
+    onTemperatureRetry: () -> Unit,
     onStepMoodChange: (String, Int?, String) -> Unit,
     onStepCounterChange: (String, Int) -> Unit,
     onStepTimerToggle: (String) -> Unit,
@@ -376,6 +388,9 @@ private fun TaskDetailContent(
                 }
             }
         }
+        if (state.execution is ExecutionState.Temperature) {
+            TemperatureSection(state.temperatureTenthsC, editable && !state.working, state.temperatureSaveState, onTemperatureChange, onTemperatureRetry)
+        }
         if (state.execution is ExecutionState.Mood) {
             MoodSection(state.moodRating, state.moodText, editable, state.working, state.moodSaveState,
                 onMoodRatingChange, onMoodTextChange, onMoodRetry)
@@ -392,6 +407,7 @@ private fun TaskDetailContent(
                 onUndo = onStepUndo,
                 onInformationChange = onStepInformationChange,
                 onChoiceChange = onStepChoiceChange,
+                onTemperatureChange = onStepTemperatureChange,
                 onMoodChange = onStepMoodChange,
                 onCounterChange = onStepCounterChange,
                 onTimerToggle = onStepTimerToggle,
@@ -652,7 +668,7 @@ private fun ExecutionSection(
                 )
             }
         }
-        is ExecutionState.Mood, ExecutionState.Normal, null -> Unit
+        is ExecutionState.Temperature, is ExecutionState.Mood, ExecutionState.Normal, null -> Unit
     }
 }
 
@@ -668,6 +684,7 @@ private fun StepsExecutionSection(
     onUndo: (String) -> Unit,
     onChoiceChange: (String, String) -> Unit,
     onInformationChange: (String, String) -> Unit,
+    onTemperatureChange: (String, Int) -> Unit,
     onMoodChange: (String, Int?, String) -> Unit,
     onCounterChange: (String, Int) -> Unit,
     onTimerToggle: (String) -> Unit,
@@ -688,7 +705,7 @@ private fun StepsExecutionSection(
                 }
                 if (!confirmed && !skipped && index != openIndex) Text("请先处理前一步", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 if (step.required) Text("必需步骤", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (confirmed || index == openIndex) StepAnswerEditor(step, editable && !working && index == openIndex, activeTimerId, step.stepId?.let { stepSaveStates[it] }, onChoiceChange, onInformationChange, onMoodChange, onCounterChange, onTimerToggle, onRetrySave)
+                if (confirmed || index == openIndex) StepAnswerEditor(step, editable && !working && index == openIndex, activeTimerId, step.stepId?.let { stepSaveStates[it] }, onChoiceChange, onInformationChange, onTemperatureChange, onMoodChange, onCounterChange, onTimerToggle, onRetrySave)
                 if (confirmed || skipped) OutlinedButton(onClick = { onUndo(step.stepId ?: "") }, enabled = editable && !working && step.stepId != null) { Text(if (skipped) "重新处理此步骤" else "撤销此步骤") }
                 if (index == openIndex && !step.required && editable) OutlinedButton(onClick = { onSkip(step.position) }, enabled = !working) { Text("跳过选做步骤") }
                 if (index == openIndex && editable && step.stepId != null) Button(onClick = { onConfirm(step.stepId) }, enabled = !working && stepSatisfiedForUi(step)) { Text(if (step.executionKind == "NOTICE") "确认已知晓" else "完成此步骤") }
@@ -706,6 +723,7 @@ private fun StepAnswerEditor(
     saveState: NoteSaveState?,
     onChoiceChange: (String, String) -> Unit,
     onInformationChange: (String, String) -> Unit,
+    onTemperatureChange: (String, Int) -> Unit,
     onMoodChange: (String, Int?, String) -> Unit,
     onCounterChange: (String, Int) -> Unit,
     onTimerToggle: (String) -> Unit,
@@ -752,6 +770,8 @@ private fun StepAnswerEditor(
             label = { Text("填写信息") },
             supportingText = { Text("${step.informationContent.orEmpty().codePointCount(0, step.informationContent.orEmpty().length)} / 2000") },
         )
+        "TEMPERATURE" -> TemperatureSection(step.temperatureTenthsC, true, saveState ?: NoteSaveState.SAVED,
+            { value -> step.stepId?.let { onTemperatureChange(it, value) } }, { step.stepId?.let(onRetrySave) })
         "MOOD" -> {
             MoodSection(step.moodRating, step.moodText.orEmpty(), true, false, saveState ?: NoteSaveState.SAVED,
                 onRatingChange = { rating -> step.stepId?.let { onMoodChange(it, rating, step.moodText.orEmpty()) } },
@@ -772,6 +792,7 @@ private fun stepAnswerSummary(step: InstanceStepEntity): String = when (step.exe
     "COUNTER" -> "计数：${step.counterValue ?: 0} / ${step.executionTarget ?: 0}"
     "TIMER" -> "计时：${formatDuration(step.elapsedMillis ?: 0)} / ${formatDuration((step.executionTarget ?: 0) * 1000L)}"
     "INFORMATION" -> "填写：${step.informationContent.orEmpty().ifBlank { "未填写" }}"
+    "TEMPERATURE" -> "体温：${formatTemperature(step.temperatureTenthsC)}"
     "MOOD" -> "心情：${step.moodRating?.toString() ?: "未选择"}${step.moodText.orEmpty().takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""}"
     else -> "直接完成"
 }
@@ -788,6 +809,7 @@ private fun stepSatisfiedForUi(step: InstanceStepEntity): Boolean = when (step.e
     "COUNTER" -> (step.counterValue ?: 0) >= (step.executionTarget ?: Int.MAX_VALUE)
     "TIMER" -> (step.elapsedMillis ?: 0L) >= (step.executionTarget ?: Int.MAX_VALUE) * 1_000L
     "INFORMATION" -> !step.informationContent.isNullOrBlank() && step.informationContent!!.codePointCount(0, step.informationContent!!.length) <= 2000
+    "TEMPERATURE" -> step.temperatureTenthsC in 350..420
     "MOOD" -> step.moodRating in 1..5
     else -> true
 }
@@ -813,6 +835,7 @@ private fun ErrorContent(onRetry: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 private fun completionHint(state: ExecutionUiState): String = when {
+    state.instance?.executionKind == "TEMPERATURE" && state.temperatureTenthsC == null -> "请滑动选择体温。"
     state.instance?.executionKind == "MOOD" && state.moodRating == null ->
         if (!state.requiredStepsComplete) "请选择今天的心情，并完成所有必需步骤。" else "请选择今天的心情。"
     state.instance?.executionKind == "MOOD" && state.moodText.codePointCount(0, state.moodText.length) > 2000 -> "感受不能超过 2000 个字符。"

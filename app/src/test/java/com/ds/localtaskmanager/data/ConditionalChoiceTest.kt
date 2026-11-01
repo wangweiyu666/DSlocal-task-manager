@@ -131,7 +131,7 @@ class ConditionalChoiceTest {
         assertEquals(3, db.auditDao().getLedger(key.taskId).sumOf { it.delta })
     }
 
-    @Test fun `backup v5 roundtrip and replace preserve inactive drafts and immutable award`() = runTest {
+    @Test fun `backup v7 roundtrip and replace preserve inactive drafts and immutable award`() = runTest {
         branch()
         service.saveStepChoice(key, first, b); service.confirmStep(key, first)
         service.saveStepChoice(key, second, a)
@@ -139,7 +139,7 @@ class ConditionalChoiceTest {
         service.saveStepChoice(key, first, a); service.confirmStep(key, first); service.complete(key)
         val backup = RoomBackupRepository(db, AppSettingsRepository(ApplicationProvider.getApplicationContext()))
         val payload = backup.snapshot()
-        assertEquals(5, payload.schemaVersion)
+        assertEquals(7, payload.schemaVersion)
         val metadata = BackupMetadata(clock.millis(), "test", "UTC", counts = BackupCounts(payload.groups.size,payload.definitions.size,payload.instances.size,payload.ledger.size,payload.actionLogs.size,payload.resultRevisions.size))
         val decoded = DstbCodec.decode(DstbCodec.encode(metadata, payload))
         BackupValidator.validate(decoded)

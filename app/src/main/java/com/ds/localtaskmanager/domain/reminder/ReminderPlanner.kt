@@ -18,6 +18,7 @@ data class ReminderPlan(
     val minutesBeforeDeadline: Int,
     val scheduledForEpochMillis: Long,
     val state: ReminderState,
+    val kind: String = "DEADLINE",
 )
 
 object ReminderPlanner {
@@ -28,18 +29,21 @@ object ReminderPlanner {
         status: TaskStatus,
         now: Instant,
         zoneId: ZoneId,
+        customReminder: LocalDateTime? = null,
     ): List<ReminderPlan> {
-        if (deadline == null || reminderMinutes.isEmpty()) return emptyList()
         val active = status == TaskStatus.NOT_STARTED || status == TaskStatus.PENDING
-        return reminderMinutes.map { minutes ->
-            val scheduled = deadline.minusMinutes(minutes.toLong()).atZone(zoneId).toInstant().toEpochMilli()
+        val times = (if (deadline == null) emptyList() else reminderMinutes.map {
+            Triple("DEADLINE", it, deadline.minusMinutes(it.toLong()))
+        }) + listOfNotNull(customReminder?.let { Triple("CUSTOM", 0, it) })
+        return times.map { (kind, minutes, time) ->
+            val scheduled = time.atZone(zoneId).toInstant().toEpochMilli()
             val state = when {
                 !active -> ReminderState.CANCELLED
                 scheduled < publishedAtEpochMillis -> ReminderState.SKIPPED_BEFORE_PUBLISHED
                 scheduled <= now.toEpochMilli() -> ReminderState.SKIPPED_PAST
                 else -> ReminderState.SCHEDULED
             }
-            ReminderPlan(minutes, scheduled, state)
+            ReminderPlan(minutes, scheduled, state, kind)
         }
     }
 }

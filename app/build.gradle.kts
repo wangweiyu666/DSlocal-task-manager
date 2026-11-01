@@ -19,8 +19,8 @@ android {
         applicationId = "com.ds.localtaskmanager"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.1.0-alpha.12"
+        versionCode = 14
+        versionName = "0.1.0-alpha.13"
         buildConfigField("boolean", "SYNC_DIAGNOSTICS", providers.gradleProperty("syncDiagnostics").orElse("false").get().toBoolean().toString())
         manifestPlaceholders["appLabel"] = "@string/app_name"
 
@@ -75,8 +75,8 @@ android {
         create("production") {
             dimension = "connectivity"
             applicationIdSuffix = ".connected.production"
-            versionCode = 17
-            versionName = "0.1.0-alpha.16"
+            versionCode = 18
+            versionName = "0.1.0-alpha.17"
             versionNameSuffix = "-executor"
             manifestPlaceholders["appLabel"] = "@string/app_name"
             buildConfigField("boolean", "CONNECTED_BUILD", "true")

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Query
 import androidx.room.Upsert
+import com.ds.localtaskmanager.data.TemperatureSubmissionEntity
 import com.ds.localtaskmanager.data.MoodSubmissionEntity
 import com.ds.localtaskmanager.data.ExecutionProgressEntity
 import com.ds.localtaskmanager.data.InformationSubmissionEntity
@@ -11,6 +12,12 @@ import com.ds.localtaskmanager.data.TaskNoteEntity
 
 @Dao
 interface ExecutionDao {
+    @Query("SELECT * FROM temperature_submission WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
+    suspend fun getTemperature(taskId: String, occurrenceKey: String): TemperatureSubmissionEntity?
+    @Upsert suspend fun upsertTemperature(value: TemperatureSubmissionEntity)
+    @Query("DELETE FROM temperature_submission WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
+    suspend fun deleteTemperature(taskId: String, occurrenceKey: String)
+
     @Query("SELECT * FROM mood_submission WHERE taskId = :taskId AND occurrenceKey = :occurrenceKey")
     suspend fun getMood(taskId: String, occurrenceKey: String): MoodSubmissionEntity?
 
